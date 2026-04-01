@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package zone;
+
+option go_package = "github.com/dnsscience/dnsscienced/internal/zone";
+
+import "google/protobuf/timestamp.proto";
+
+// CompiledZone is the binary format for pre-compiled DNS zones (.dzc files)
+// This format is optimized for fast loading and query performance.
+message CompiledZone {
+  // Zone metadata
+  string name = 1;           // Fully qualified zone name (e.g., "example.com.")
+  string origin = 2;         // Same as name (for compatibility)
+  uint32 class = 3;          // DNS class (typically 1 = IN)
+
+  // SOA record (always present)
+  SOARecord soa = 4;
+
+  // All records organized by owner name for fast lookup
+  // Map: owner name -> RecordSet
+  map<string, RecordSet> records = 5;
+
+  // Owner name index (sorted for wildcard matching)
+  repeated string owner_index = 6;
+
+  // Compilation metadata
+  CompilationMeta metadata = 7;
+
+  // DNSSEC configuration (if enabled)
+  CompiledDNSSECConfig dnssec = 8;
+
+  // Pre-computed zone statistics
+  ZoneStats stats = 9;
+}
+
+// SOARecord stores Start of Authority information
+message SOARecord {
+  string primary_ns = 1;      // Primary nameserver
+  string admin_email = 2;     // Admin email (in DNS format: admin.example.com.)
+  uint32 serial = 3;          // Zone serial number
+  uint32 refresh = 4;         // Refresh interval (seconds)
+  uint32 retry = 5;           // Retry interval (seconds)
+  uint32 expire = 6;          // Expire time (seconds)
+  uint32 minimum_ttl = 7;     // Negative caching TTL
+  uint32 ttl = 8;             // SOA record TTL
+}
+
+// RecordSet contains all records for a specific owner name
+message RecordSet {
+  // Map: record type (uint16) -> list of records
+  // Type as string for protobuf compatibility
+  map<string, RecordList> records = 1;
+}
+
+// RecordList contains multiple records of the same type
+message RecordList {
+  repeated Record records = 1;
+}
+
+// Record represents a single DNS resource record
+message Record {
+  string name = 1;            // Owner name (FQDN)
+  uint32 type = 2;            // Record type (uint16)
+  uint32 class = 3;           // Record class (uint16)
+  uint32 ttl = 4;             // Time to live (seconds)
+
+  // Wire-format record data (RDATA section)
+  bytes rdata = 5;
+
+  // Human-readable representation (for debugging)
+  string text = 6;
+}
+
+// CompilationMeta tracks compilation information
+message CompilationMeta {
+  // Format version (for backward compatibility)
+  uint32 format_version = 1;   // Current: 1
+
+  // Source file information
+  string source_file = 2;      // Original zone file path
+  string source_format = 3;    // "dnszone", "bind", etc.
+  bytes source_sha256 = 4;     // SHA-256 hash of source file
+
+  // Compilation timestamps
+  google.protobuf.Timestamp compiled_at = 5;
+  google.protobuf.Timestamp source_modified_at = 6;
+
+  // Compiler information
+  string compiler_version = 7; // dnsscienced version
+
+  // Compilation options
+  map<string, string> options = 8;
+}
+
+// CompiledDNSSECConfig stores DNSSEC settings in compiled format
+message CompiledDNSSECConfig {
+  bool enabled = 1;
+  uint32 algorithm = 2;         // DNSSEC algorithm number
+  uint64 ksk_lifetime_seconds = 3;
+  uint64 zsk_lifetime_seconds = 4;
+
+  // NSEC3 parameters
+  NSEC3Params nsec3 = 5;
+}
+
+// NSEC3Params stores NSEC3 configuration
+message NSEC3Params {
+  bool enabled = 1;
+  uint32 iterations = 2;
+  uint32 salt_length = 3;
+  bytes salt = 4;               // Current salt value
+}
+
+// ZoneStats pre-computed zone statistics
+message ZoneStats {
+  uint32 record_sets = 1;       // Number of unique (owner, type) pairs
+  uint32 total_records = 2;     // Total number of records
+  uint32 unique_owners = 3;     // Number of unique owner names
+  uint64 size_bytes = 4;        // Compiled zone size in bytes
+
+  // Record type distribution (for analytics)
+  map<string, uint32> type_counts = 5;  // Type -> count
+}
