@@ -93,6 +93,10 @@ func main() {
 	fmt.Printf("  Authoritative:    %v\n", cfg.EnableAuthoritative)
 	fmt.Printf("  DNS Cookies:      %v\n", cfg.EnableCookies)
 	fmt.Printf("  RRL:              %v\n", cfg.EnableRRL)
+	fmt.Printf("  Experimental:     %v\n", cfg.Experimental.Enabled)
+	if cfg.Experimental.IsAnyEnabled() {
+		fmt.Printf("   └─ Active:       %d feature(s)\n", len(cfg.Experimental.EnabledFeatures()))
+	}
 	fmt.Println()
 
 	// Create server

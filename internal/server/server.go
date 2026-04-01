@@ -11,6 +11,7 @@ import (
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
+	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
@@ -42,6 +43,9 @@ type Config struct {
 
 	EnableRRL bool       `yaml:"enable_rrl"`
 	RRLConfig rrl.Config `yaml:"rrl"`
+
+	// Experimental IETF draft protocols
+	Experimental experimental.Config `yaml:"experimental"`
 
 	// Performance tuning
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
@@ -81,6 +85,8 @@ func DefaultConfig() Config {
 
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
+
+		Experimental: experimental.DefaultConfig(),
 
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -144,6 +150,16 @@ func New(cfg Config) (*Server, error) {
 			cancel()
 			return nil, fmt.Errorf("init cookies: %w", err)
 		}
+	}
+
+	// Log experimental features if enabled
+	if cfg.Experimental.IsAnyEnabled() {
+		features := cfg.Experimental.EnabledFeatures()
+		fmt.Printf("⚠️  Experimental Features Enabled (%d):\n", len(features))
+		for _, feature := range features {
+			fmt.Printf("   • %s\n", feature)
+		}
+		fmt.Println()
 	}
 
 	// Initialize RRL if enabled

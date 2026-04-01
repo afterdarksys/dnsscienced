@@ -17,9 +17,11 @@ DNSScienced is a production-ready DNS server written in Go, providing both **rec
 - ✅ Response Rate Limiting (RRL) for DDoS protection
 - ✅ DNS Cookies (RFC 7873/9018) with SipHash-2-4
 - ✅ Modern .dnszone YAML format + BIND compatibility
+- ✅ Compiled zones (.dzc) for 2-5x faster loading
 - ✅ SO_REUSEPORT multi-listener architecture
 - ✅ Zero-allocation buffer pooling
 - ✅ Crypto-secure randomization
+- ⚡ **Experimental**: IETF draft protocols (DNS-SD, DoQ, DSO, DELEG, DID, IoT DNS)
 
 ## Quick Start
 
@@ -63,6 +65,23 @@ dig @127.0.0.1 google.com
 dig @127.0.0.1 www.example.com
 ```
 
+### Compile Zones for Performance
+
+Compile zone files to binary format for 2-5x faster loading:
+
+```bash
+# Build compiler tool
+go build -o dnsscienced-compile ./cmd/dnsscienced-compile/
+
+# Compile a zone file
+./dnsscienced-compile -input example.com.dnszone
+
+# Server automatically uses .dzc if available
+./dnsscienced -zone example.com.dnszone -authoritative
+```
+
+See [Compiled Zones Documentation](docs/COMPILED_ZONES.md) for details.
+
 ## Features
 
 ### Core DNS
@@ -85,10 +104,22 @@ dig @127.0.0.1 www.example.com
 
 - **Modern .dnszone Format** - Human-readable YAML syntax
 - **BIND Compatibility** - Full RFC 1035 zone file support
+- **Compiled Zones (.dzc)** - Binary format with 2-5x faster loading
 - **Bidirectional Conversion** - Convert between formats
 - **Comprehensive Validation** - SOA, NS, glue, CNAME conflict checks
 - **Wildcard Support** - *.example.com matching
 - **Auto-serial** - Automatic YYYYMMDD00 serial generation
+
+### Experimental Features (IETF Drafts)
+
+- **DNS-SD SRP (RFC 9665)** - Service registration for IoT devices
+- **DNS over QUIC (RFC 9250)** - Modern encrypted transport with 0-RTT
+- **DSO (RFC 8490)** - Stateful operations with push notifications
+- **DELEG (draft)** - Extensible delegation records
+- **DNS DID (draft)** - Decentralized identifiers
+- **IoT DNS (draft)** - Optimizations for constrained devices
+
+See [Experimental Features Documentation](docs/EXPERIMENTAL_FEATURES.md) for details.
 
 ## Performance
 
@@ -98,6 +129,8 @@ dig @127.0.0.1 www.example.com
 |-----------|-------------|-------|
 | DNS Packet Parse | 303 ns/op | CVE-2024-8508 protected |
 | DNS Cookie Gen | 214 ns/op | SipHash-2-4 |
+| Zone Load (text) | 229 µs | .dnszone YAML format |
+| Zone Load (compiled) | 104 µs | .dzc binary format (2.2x faster) |
 | Buffer Pool | 38 ns/op | 26M ops/sec |
 | Worker Submit | 193 ns/op | 5.2M jobs/sec |
 | Recursive Resolve | 1,761 ns/op | 568k qps (cache hit) |

@@ -1,0 +1,118 @@
+# DNSScienced Configuration - Experimental Features Example
+# This file demonstrates how to enable IETF draft/experimental protocols
+
+server:
+  udp_addr: ":53"
+  tcp_addr: ":53"
+  udp_listeners: 8
+
+  enable_recursive: true
+  enable_authoritative: true
+  enable_cookies: true
+  enable_rrl: true
+
+  # Experimental IETF draft protocols configuration
+  experimental:
+    # Global enable/disable for all experimental features
+    # Set to 'true' to enable experimental protocol support
+    enabled: true
+
+    # DNS-SD Service Registration Protocol (RFC 9665)
+    # Allows IoT devices and services to register themselves dynamically
+    dns_sd:
+      enabled: true
+      allow_registration: true
+      default_ttl: 3600s
+      max_services_per_client: 10
+      lease_timeout: 7200s
+      require_auth: true
+      browse_domains:
+        - "local."
+        - "_services._dns-sd._udp.local."
+
+    # DNS over QUIC (RFC 9250)
+    # Modern encrypted DNS transport using QUIC protocol
+    doq:
+      enabled: true
+      address: ":853"
+      cert_file: "/etc/dnsscienced/tls/cert.pem"
+      key_file: "/etc/dnsscienced/tls/key.pem"
+      max_streams: 100
+      idle_timeout: 30s
+      enable_0rtt: false  # Disable 0-RTT for security
+
+    # DNS Stateful Operations (RFC 8490)
+    # Long-lived DNS connections with push notifications
+    dso:
+      enabled: true
+      keep_alive: 60s
+      inactivity_timeout: 300s
+      max_sessions: 1000
+      enable_push: true
+      enable_subscribe: true
+
+    # DELEG Record Support (draft-ietf-dnsop-deleg)
+    # Extensible delegation mechanism for DNS
+    deleg:
+      enabled: true
+      allow_in_zones: true
+      enable_caching: true
+      cache_ttl: 3600s
+      supported_types:
+        - "ipv4"
+        - "ipv6"
+        - "dohpath"
+        - "svcb"
+
+    # DNS DID - Decentralized Identifiers (draft-duda-dnsop-dns-did)
+    # Support for decentralized identity in DNS
+    did:
+      enabled: true
+      supported_methods:
+        - "did:dns"
+        - "did:web"
+      resolution_timeout: 5s
+      enable_caching: true
+      cache_ttl: 3600s
+      verify_signatures: true
+      trust_anchor: ""  # Optional trust anchor for DID verification
+
+    # IoT DNS Guidelines (draft-ietf-iotops-iot-dns-guidelines)
+    # Optimizations for IoT and constrained devices
+    iot_dns:
+      enabled: true
+      aggressive_ncaching: true
+      min_ttl: 300s   # 5 minutes - prevent battery drain
+      max_ttl: 86400s # 24 hours
+      optimize_udp_size: true
+      max_udp_payload: 512  # Conservative for IoT devices
+      minimal_responses: true
+      enable_push: true
+      coap_optimization: false
+
+  # Standard recursive resolver config
+  recursive:
+    cache:
+      shard_count: 256
+      max_entries: 100000
+    workers: 1000
+    query_timeout: 5s
+    max_iterations: 20
+
+  # Response Rate Limiting
+  rrl:
+    enabled: true
+    responses_per_second: 10
+    window: 15s
+    slip: 2
+
+  # DNS Cookies
+  cookies:
+    enabled: true
+
+# Example disabled configuration (production-safe defaults)
+# Uncomment to use conservative settings
+#
+# server:
+#   experimental:
+#     enabled: false  # Disable all experimental features
