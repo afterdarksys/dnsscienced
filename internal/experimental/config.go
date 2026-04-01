@@ -8,12 +8,13 @@ type Config struct {
 	Enabled bool `yaml:"enabled"`
 
 	// Individual protocol enablement flags
-	DNSSD  DnssdConfig  `yaml:"dns_sd"`
-	DoQ    DoQConfig    `yaml:"doq"`
-	DSO    DSOConfig    `yaml:"dso"`
-	DELEG  DelegConfig  `yaml:"deleg"`
-	DID    DIDConfig    `yaml:"did"`
-	IoTDNS IoTDNSConfig `yaml:"iot_dns"`
+	DNSSD   DnssdConfig   `yaml:"dns_sd"`
+	DoQ     DoQConfig     `yaml:"doq"`
+	DSO     DSOConfig     `yaml:"dso"`
+	DELEG   DelegConfig   `yaml:"deleg"`
+	DID     DIDConfig     `yaml:"did"`
+	IoTDNS  IoTDNSConfig  `yaml:"iot_dns"`
+	PROXYv2 PROXYv2Config `yaml:"proxyv2"`
 }
 
 // DnssdConfig holds DNS-SD Service Registration Protocol configuration
@@ -163,6 +164,33 @@ type IoTDNSConfig struct {
 	CoAPOptimization bool `yaml:"coap_optimization"`
 }
 
+// PROXYv2Config holds PROXY protocol v2 configuration
+// Enables DNSScienced to run behind HAProxy/nginx and preserve client IPs
+type PROXYv2Config struct {
+	// Enable PROXY protocol v2 support
+	Enabled bool `yaml:"enabled"`
+
+	// Trusted proxy addresses (CIDR format)
+	// Only accept PROXY headers from these sources
+	TrustedProxies []string `yaml:"trusted_proxies"`
+
+	// Require PROXY header on all connections
+	// If false, connections without PROXY header are accepted
+	RequireHeader bool `yaml:"require_header"`
+
+	// Timeout for reading PROXY header
+	HeaderTimeout time.Duration `yaml:"header_timeout"`
+
+	// Use X-Forwarded-For fallback if PROXY header missing
+	AllowXFF bool `yaml:"allow_xff"`
+
+	// Log proxy header parsing for debugging
+	LogHeaders bool `yaml:"log_headers"`
+
+	// Reject connections from non-proxied sources when required
+	RejectNonProxied bool `yaml:"reject_non_proxied"`
+}
+
 // DefaultConfig returns default experimental features configuration
 func DefaultConfig() Config {
 	return Config{
@@ -218,6 +246,15 @@ func DefaultConfig() Config {
 			EnablePush:         false,
 			CoAPOptimization:   false,
 		},
+		PROXYv2: PROXYv2Config{
+			Enabled:          false,
+			TrustedProxies:   []string{"127.0.0.1/8", "::1/128"},
+			RequireHeader:    false,
+			HeaderTimeout:    5 * time.Second,
+			AllowXFF:         false,
+			LogHeaders:       false,
+			RejectNonProxied: false,
+		},
 	}
 }
 
@@ -227,7 +264,7 @@ func (c *Config) IsAnyEnabled() bool {
 		return false
 	}
 	return c.DNSSD.Enabled || c.DoQ.Enabled || c.DSO.Enabled ||
-		c.DELEG.Enabled || c.DID.Enabled || c.IoTDNS.Enabled
+		c.DELEG.Enabled || c.DID.Enabled || c.IoTDNS.Enabled || c.PROXYv2.Enabled
 }
 
 // EnabledFeatures returns a list of enabled experimental features
@@ -254,6 +291,9 @@ func (c *Config) EnabledFeatures() []string {
 	}
 	if c.IoTDNS.Enabled {
 		features = append(features, "IoT DNS Guidelines (draft-ietf-iotops-iot-dns-guidelines)")
+	}
+	if c.PROXYv2.Enabled {
+		features = append(features, "PROXY Protocol v2 (HAProxy Support)")
 	}
 	return features
 }

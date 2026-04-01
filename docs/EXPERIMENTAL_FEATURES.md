@@ -473,3 +473,120 @@ For questions or issues with experimental features:
 - GitHub Issues: https://github.com/dnsscience/dnsscienced/issues
 - Tag with: `experimental`
 - Provide: Config file, logs, DNS queries
+
+---
+
+### 7. PROXY Protocol v2 (HAProxy Support)
+
+**Status**: Industry Standard
+**Use Case**: Running DNS behind load balancers while preserving client IPs
+
+PROXY protocol v2 allows DNSScienced to run behind HAProxy, nginx, or other load balancers while preserving the original client IP address for logging, ACLs, and rate limiting.
+
+**Key Features**:
+- Client IP preservation behind load balancers
+- Trusted proxy verification
+- Mixed mode support (proxied + direct connections)
+- X-Forwarded-For fallback (optional)
+- Header timeout protection
+
+**Configuration**:
+```yaml
+experimental:
+  proxyv2:
+    enabled: true
+    trusted_proxies:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.1/8"
+      - "::1/128"
+    require_header: false
+    header_timeout: 5s
+    allow_xff: false
+    log_headers: false
+    reject_non_proxied: false
+```
+
+**HAProxy Configuration**:
+```
+frontend dns_frontend
+    bind :53
+    mode tcp
+    option tcplog
+    default_backend dns_backend
+
+backend dns_backend
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    
+    # Enable PROXY protocol
+    server dns1 10.0.1.10:53 send-proxy-v2 check
+    server dns2 10.0.1.11:53 send-proxy-v2 check
+    server dns3 10.0.1.12:53 send-proxy-v2 check
+```
+
+**nginx Stream Configuration**:
+```nginx
+stream {
+    upstream dns_backend {
+        server 10.0.1.10:53;
+        server 10.0.1.11:53;
+        server 10.0.1.12:53;
+    }
+
+    server {
+        listen 53;
+        proxy_pass dns_backend;
+        proxy_protocol on;
+    }
+}
+```
+
+**Security Considerations**:
+- **Always** restrict `trusted_proxies` to known load balancer IPs
+- Consider `require_header: true` for dedicated proxy deployments
+- Use `reject_non_proxied: true` to block direct connections
+- Monitor for PROXY header spoofing attempts
+
+**Deployment Scenarios**:
+
+1. **High Availability**:
+   - HAProxy frontend on multiple nodes
+   - DNSScienced backends receive PROXY headers
+   - Client IP preserved for ACLs and RRL
+
+2. **DDoS Protection**:
+   - Cloudflare/AWS Shield → nginx → DNSScienced
+   - Real client IPs available for rate limiting
+   - PROXY protocol preserves source address
+
+3. **Multi-Datacenter**:
+   - GeoDNS load balancer
+   - Regional HAProxy instances
+   - Central DNSScienced cluster
+
+**Performance Impact**:
+- Negligible CPU overhead
+- +16 bytes per TCP connection header
+- No impact on UDP (not supported by PROXY protocol)
+
+**Limitations**:
+- TCP only (PROXY protocol doesn't support UDP)
+- Requires trusted network between proxy and DNS server
+- Additional parsing latency (~100-200ns)
+
+---
+
+## Updated Protocol Summary
+
+| Feature | Status | Port | Protocol | Use Case |
+|---------|--------|------|----------|----------|
+| DNS-SD SRP | RFC 9665 | 53 | UDP/TCP | IoT service registration |
+| DoQ | RFC 9250 | 853 | QUIC/UDP | Encrypted DNS with 0-RTT |
+| DSO | RFC 8490 | 53 | TCP | Push notifications |
+| DELEG | Draft | 53 | UDP/TCP | Extensible delegation |
+| DID | Draft | 53 | UDP/TCP | Decentralized identity |
+| IoT DNS | Draft | 53 | UDP/TCP | IoT optimizations |
+| **PROXYv2** | **Standard** | **any** | **TCP** | **Load balancer support** |

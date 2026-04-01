@@ -90,6 +90,23 @@ server:
       enable_push: true
       coap_optimization: false
 
+    # PROXY Protocol v2 - HAProxy/nginx Support
+    # Allows DNSScienced to run behind load balancers while preserving client IPs
+    proxyv2:
+      enabled: true
+      # Only accept PROXY headers from these trusted sources
+      trusted_proxies:
+        - "10.0.0.0/8"      # Private network
+        - "172.16.0.0/12"   # Private network
+        - "192.168.0.0/16"  # Private network
+        - "127.0.0.1/8"     # Localhost
+        - "::1/128"         # IPv6 localhost
+      require_header: false     # Don't require PROXY header (mixed mode)
+      header_timeout: 5s
+      allow_xff: false          # Don't use X-Forwarded-For fallback
+      log_headers: false        # Enable for debugging
+      reject_non_proxied: false # Allow direct connections
+
   # Standard recursive resolver config
   recursive:
     cache:
