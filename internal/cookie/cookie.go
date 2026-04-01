@@ -2,6 +2,7 @@ package cookie
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"sync"
@@ -25,7 +26,7 @@ var (
 	ErrInvalidClientCookie = errors.New("invalid client cookie")
 	ErrInvalidServerCookie = errors.New("invalid server cookie")
 	ErrExpiredCookie       = errors.New("server cookie expired")
-	ErrBadCookie          = errors.New("bad cookie")
+	ErrBadCookie           = errors.New("bad cookie")
 )
 
 const (
@@ -65,14 +66,14 @@ type Manager struct {
 // Config holds cookie manager configuration
 type Config struct {
 	// Enable DNS cookies
-	Enabled bool
+	Enabled bool `yaml:"enabled"`
 
 	// Require valid server cookie (BADCOOKIE if missing/invalid)
-	RequireValid bool
+	RequireValid bool `yaml:"require_valid"`
 
 	// Cluster secret for load-balanced deployments
 	// All servers in cluster must use same secret
-	ClusterSecret []byte
+	ClusterSecret []byte `yaml:"cluster_secret"`
 }
 
 // NewManager creates a new DNS cookie manager
@@ -268,16 +269,11 @@ func FormatCookie(clientCookie [8]byte, serverCookie []byte) []byte {
 }
 
 // subtle_compare does constant-time comparison
-// Note: We should use crypto/subtle.ConstantTimeCompare in production
 func subtle_compare(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	var result byte
-	for i := 0; i < len(a); i++ {
-		result |= a[i] ^ b[i]
-	}
-	return result == 0
+	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
 // ValidateQueryCookie validates the cookie in a DNS query

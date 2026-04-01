@@ -168,28 +168,50 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// 1. Access Control Check
 	if !s.acl.IsAllowed(clientIP) {
-		// Silently drop or return REFUSED
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeRefused)
+		appendEDE(m, 15, "Blocked by ACL") // 15 = Blocked
 		w.WriteMsg(m)
 		return
 	}
 
 	// 2. Rate Limiting Check
 	if !s.limiter.Allow(clientIP) {
-		// Return REFUSED or use SLIP (probabilistic)
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeRefused)
+		appendEDE(m, 15, "Rate Limited") // 15 = Blocked
 		w.WriteMsg(m)
 		return
 	}
 
-	// 3. RPZ Check (pre-resolution)
+	// 3. DNS Type ANY Amplification & DLP Check
 	if len(r.Question) > 0 {
-		rule, action := s.rpz.Check(r.Question[0].Name)
+		q := r.Question[0]
+		
+		if q.Qtype == dns.TypeANY {
+			m := new(dns.Msg)
+			m.SetRcode(r, dns.RcodeNotImplemented)
+			appendEDE(m, 15, "ANY queries unsupported") // 15 = Blocked
+			w.WriteMsg(m)
+			return
+		}
+
+		if len(q.Name) > 60 && engine.IsDataExfiltration(q.Name) {
+			m := new(dns.Msg)
+			m.SetRcode(r, dns.RcodeRefused)
+			appendEDE(m, 4, "Exfiltration Blocked") // 4 = Forged Answer
+			w.WriteMsg(m)
+			return
+		}
+
+		// 4. RPZ Check (pre-resolution)
+		rule, action := s.rpz.Check(q.Name)
 		if rule != nil && action != engine.RPZActionPassthru {
 			m := s.handleRPZAction(r, rule, action)
-			w.WriteMsg(m)
+			if m != nil {
+				appendEDE(m, 17, "RPZ Filtered") // 17 = Filtered
+				w.WriteMsg(m)
+			}
 			return
 		}
 	}
@@ -273,4 +295,21 @@ func (s *Server) handleRPZAction(req *dns.Msg, rule *engine.RPZRule, action engi
 
 	m.SetReply(req)
 	return m
+}
+
+// appendEDE helper attaches RFC 8914 Extended DNS Error options
+func appendEDE(m *dns.Msg, code uint16, msg string) {
+	opt := m.IsEdns0()
+	if opt == nil {
+		opt = new(dns.OPT)
+		opt.Hdr.Name = "."
+		opt.Hdr.Rrtype = dns.TypeOPT
+		opt.SetUDPSize(4096)
+		m.Extra = append(m.Extra, opt)
+	}
+
+	ede := new(dns.EDNS0_EDE)
+	ede.InfoCode = code
+	ede.ExtraText = msg
+	opt.Option = append(opt.Option, ede)
 }

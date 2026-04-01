@@ -1,0 +1,106 @@
+Based on my exploration, dnsscienced already has extensive security features built in. Here are additional security capabilities we can add:
+
+  High-Priority Security Enhancements
+
+  1. DNSSEC Validation (Critical Gap)
+
+  - Full DNSSEC signature verification
+  - Algorithm downgrade protection
+  - Trust anchor management
+  - NSEC3 iteration limits
+  - Key rollover handling
+
+  Impact: Ensures DNS responses haven't been tampered with in transit
+
+  2. Extended DNS Errors (RFC 8914)
+
+  - Detailed error codes for security events
+  - Better debugging and forensics
+  - Client-side security awareness
+
+  Impact: Improves troubleshooting and security visibility
+
+  3. Query Name Minimization (RFC 7816)
+
+  - The function exists in internal/engine/security.go:114 but isn't integrated
+  - Would reduce query exposure to intermediate nameservers
+
+  Impact: Enhanced privacy protection
+
+  4. TSIG Authentication (RFC 8945)
+
+  - Cryptographic authentication for zone transfers
+  - Secure dynamic updates
+  - Peer-to-peer authentication
+
+  Impact: Prevents unauthorized zone modifications
+
+  Advanced Security Features
+
+  5. DNS Firewall Enhancements
+
+  - Behavioral anomaly detection: ML-based detection of unusual query patterns
+  - Geofencing: Block/allow queries based on GeoIP
+  - Regex-based RPZ rules: More flexible filtering patterns
+  - Real-time threat feed integration: Multiple TI providers with scoring aggregation
+
+  6. Zero-Trust Architecture
+
+  - Per-client authentication: mTLS for DoT/DoH clients
+  - JWT-based query authorization: API-style access control
+  - Audit logging: Comprehensive query logs with security context
+
+  7. Network Protocol Security
+
+  - DNS over QUIC (DoQ) - RFC 9250 (more efficient than DoT)
+  - Oblivious DoH (ODoH) - RFC 9230 (zero-knowledge privacy)
+  - TLS 1.3 with 0-RTT for DoT/DoH (performance + security)
+
+  8. Advanced DDoS Protection
+
+  - SYN flood protection: TCP connection rate limiting
+  - Query complexity scoring: Penalize expensive queries (wildcards, ANY)
+  - Proof-of-work challenges: For clients during attack
+  - IP reputation scoring: Dynamic rate limits based on past behavior
+
+  9. Data Loss Prevention & Exfiltration Detection
+
+  - DNS tunneling detection: Statistical analysis of payload sizes
+  - Subdomain enumeration detection: Track excessive NXDOMAIN patterns
+  - Data exfiltration alerts: Detect base64/hex-encoded subdomains
+
+  10. Compliance & Forensics
+
+  - Query auditing: GDPR-compliant logging with PII redaction
+  - Forensic query replay: Reconstruct attack timelines
+  - Compliance reporting: SOC2/ISO27001 audit trails
+  - SIEM integration: Syslog/JSON output to security platforms
+
+  Quick Wins (Low Effort, High Value)
+
+  11. Security Headers & Best Practices
+
+  - Integrate crypto/subtle.ConstantTimeCompare for TSIG (mentioned in internal/cookie/cookie.go:8)
+  - Add query ID randomization to outbound queries
+  - Implement aggressive NSEC/NSEC3 caching (RFC 8198)
+
+  12. Monitoring & Alerting
+
+  - Prometheus metrics for security events
+  - Alert on RRL threshold breaches
+  - Dashboard for threat intelligence hits
+  - Real-time DGA detection alerts
+
+  Experimental/Research
+
+  13. Post-Quantum Cryptography
+
+  - Quantum-resistant DNSSEC algorithms (SPHINCS+)
+  - Hybrid classical+PQC signatures
+
+  14. Blockchain Integration
+
+  - Decentralized trust anchors (Ethereum/Solana)
+  - Immutable audit logs
+  - Handshake DNS integration
+

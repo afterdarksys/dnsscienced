@@ -23,7 +23,15 @@ func NewThreatScorer(darkAPIKey string) *ThreatScorer {
 		providers = append(providers, NewDarkAPIProvider(darkAPIKey))
 	}
 
-	// Add other providers here...
+	// Add Async Lock-Free OSINT Aggregator
+	osintProvider := NewInMemoryFeedProvider(
+		"osint-aggregator",
+		[]string{
+			"https://urlhaus.abuse.ch/downloads/hostfile/", // Industry standard malware domain sinkhole
+		},
+		6*time.Hour,
+	)
+	providers = append(providers, osintProvider)
 
 	var p ThreatProvider
 	if len(providers) > 0 {
@@ -33,6 +41,14 @@ func NewThreatScorer(darkAPIKey string) *ThreatScorer {
 	return &ThreatScorer{
 		provider: p,
 	}
+}
+
+// CheckURL delegates url-specific lookups to the underlying threat provider.
+func (ts *ThreatScorer) CheckURL(ctx context.Context, u string) (int32, []string, error) {
+	if ts.provider != nil {
+		return ts.provider.CheckURL(ctx, u)
+	}
+	return 0, nil, nil
 }
 
 // Enrich calculates threat metadata for a given domain/IP and updates the CacheEntry

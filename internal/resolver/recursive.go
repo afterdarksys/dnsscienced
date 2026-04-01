@@ -20,19 +20,19 @@ import (
 var (
 	// Root hints (simplified - real version would load from file)
 	rootServers = []string{
-		"198.41.0.4:53",      // a.root-servers.net
-		"199.9.14.201:53",    // b.root-servers.net
-		"192.33.4.12:53",     // c.root-servers.net
-		"199.7.91.13:53",     // d.root-servers.net
-		"192.203.230.10:53",  // e.root-servers.net
-		"192.5.5.241:53",     // f.root-servers.net
-		"192.112.36.4:53",    // g.root-servers.net
-		"198.97.190.53:53",   // h.root-servers.net
-		"192.36.148.17:53",   // i.root-servers.net
-		"192.58.128.30:53",   // j.root-servers.net
-		"193.0.14.129:53",    // k.root-servers.net
-		"199.7.83.42:53",     // l.root-servers.net
-		"202.12.27.33:53",    // m.root-servers.net
+		"198.41.0.4:53",     // a.root-servers.net
+		"199.9.14.201:53",   // b.root-servers.net
+		"192.33.4.12:53",    // c.root-servers.net
+		"199.7.91.13:53",    // d.root-servers.net
+		"192.203.230.10:53", // e.root-servers.net
+		"192.5.5.241:53",    // f.root-servers.net
+		"192.112.36.4:53",   // g.root-servers.net
+		"198.97.190.53:53",  // h.root-servers.net
+		"192.36.148.17:53",  // i.root-servers.net
+		"192.58.128.30:53",  // j.root-servers.net
+		"193.0.14.129:53",   // k.root-servers.net
+		"199.7.83.42:53",    // l.root-servers.net
+		"202.12.27.33:53",   // m.root-servers.net
 	}
 
 	ErrMaxIterations = errors.New("max iterations reached")
@@ -43,24 +43,24 @@ var (
 // Config holds resolver configuration
 type Config struct {
 	// Cache configuration
-	CacheConfig cache.Config
+	CacheConfig cache.Config `yaml:"cache"`
 
 	// Worker pool for concurrent queries
-	Workers int
+	Workers int `yaml:"workers"`
 
 	// Query timeout
-	QueryTimeout time.Duration
+	QueryTimeout time.Duration `yaml:"query_timeout"`
 
 	// Max iterations for iterative resolution
-	MaxIterations int
+	MaxIterations int `yaml:"max_iterations"`
 
 	// Enable DNS cookies
-	EnableCookies bool
-	CookieConfig  cookie.Config
+	EnableCookies bool          `yaml:"enable_cookies"`
+	CookieConfig  cookie.Config `yaml:"cookies"`
 
 	// Enable RRL
-	EnableRRL bool
-	RRLConfig rrl.Config
+	EnableRRL bool       `yaml:"enable_rrl"`
+	RRLConfig rrl.Config `yaml:"rrl"`
 }
 
 // Recursive implements a full recursive DNS resolver

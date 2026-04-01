@@ -1,0 +1,35 @@
+# DNS Netfilter Kernel Module (Reforged with RPZ)
+
+This directory contains a Linux Kernel Module that integrates with Netfilter to inspect, mark, and **filter (RPZ)** DNS packets directly in the kernel.
+
+## Features
+
+- **Low Latency Check**: Parses QNAME in O(n) and checks Hash Table (O(1)).
+- **Action Support**:
+    - `DROP`: Silently drops packet.
+    - `MARK`: Sets `skb->mark` for userspace tools.
+- **Dynamic Policy**: Manage rules via `/proc/dns_firewall_rules`.
+
+## Build & Load
+
+### Option 1: Out-of-Tree (Easiest)
+Requires kernel headers installed.
+
+```bash
+make
+sudo insmod dns_firewall.ko
+```
+
+### Option 2: In-Tree (Kernel Patch)
+To compile this module directly into your kernel (e.g. for a custom router firmware):
+1.  Run `tools/generate_patch.sh` in the project root to create `dns_netfilter.patch`.
+2.  Run `tools/install_to_kernel.sh <path-to-kernel-src>` to apply it.
+3.  Run `make menuconfig` in your kernel source and enable **"DNS Packet Firewall (RPZ)"** (under Networking -> Netfilter).
+
+## Userspace Integration
+
+**Does `dnsscienced` see the markings?**
+Not directly. Standard UDP sockets isolate applications from lower-level Netfilter marks.
+- **Current Flow**: The driver acts as a "Bouncer". It Drops bad traffic *before* `dnsscienced` sees it, saving CPU.
+- **Future**: To read marks in userspace, we would need to switch to using `NFQUEUE` (passing the full packet verdict to userspace), or use eBPF.
+- **Benefit**: Even without reading marks, `dnsscienced` benefits from reduced load (bad packets are dropped at the driver level).

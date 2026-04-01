@@ -7,6 +7,7 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/ports"
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
+	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 )
 
@@ -34,13 +35,16 @@ func RegisterAll(s *grpc.Server) {
 	})
 
 	// Still using mocks for unimplemented managers
-	cache := &mock.CacheMgr{}
+	cacheMgr := &mock.CacheMgr{}
 	control := &mock.ControlMgr{}
 	dnssec := &mock.DNSSECMgr{}
+	
+	// Native Threat Intel Engine
+	threatScorer := cache.NewThreatScorer("")
 
 	pb.RegisterDNSServiceServer(s, services.NewDNSService(resolver))
 	pb.RegisterZoneServiceServer(s, services.NewZoneService(zone))
-	pb.RegisterCacheServiceServer(s, services.NewCacheService(cache))
+	pb.RegisterCacheServiceServer(s, services.NewCacheService(cacheMgr, threatScorer))
 	pb.RegisterServerServiceServer(s, services.NewServerService(control))
 	pb.RegisterDNSSECServiceServer(s, services.NewDNSSECService(dnssec))
 }

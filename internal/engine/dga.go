@@ -32,6 +32,22 @@ func IsDGA(domain string) bool {
 	return false
 }
 
+// IsDataExfiltration checks if a domain looks like a DNS tunnel or exfiltration attempt.
+// It is designed to run only on queries exceeding a length threshold (e.g., 60 chars) 
+// and leverages the lock-free entropy bounds.
+func IsDataExfiltration(domain string) bool {
+	if len(domain) < 60 {
+		return false
+	}
+	
+	// Entropy > 4.5 across a 60+ char domain indicates structural randomness like base64 / hex encoding
+	if calculateEntropy(domain) > 4.5 {
+		return true
+	}
+
+	return false
+}
+
 // calculateEntropy calculates Shannon entropy of the string
 func calculateEntropy(s string) float64 {
 	if len(s) == 0 {

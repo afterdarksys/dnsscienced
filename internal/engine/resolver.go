@@ -63,13 +63,19 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype string, class
 	originalName := dns.Fqdn(name)
 	queryName := originalName
 
+	// Apply QNAME minimization if enabled
+	if r.Config.EnableQNAMEMin {
+		queryName = ApplyQNAMEMinimization(queryName, extractZone(originalName))
+	}
+
 	// Apply 0x20 encoding if enabled
 	if r.Config.Enable0x20 {
-		queryName = Apply0x20Encoding(originalName)
+		queryName = Apply0x20Encoding(queryName)
 	}
 
 	// 2. Construct the query message
 	m := new(dns.Msg)
+	m.Id = dns.Id()
 	t, ok := dns.StringToType[qtype]
 	if !ok {
 		t = dns.TypeA
@@ -151,13 +157,19 @@ func (r *Resolver) ResolveRaw(ctx context.Context, name string, qtype uint16, qc
 	originalName := dns.Fqdn(name)
 	queryName := originalName
 
+	// Apply QNAME minimization if enabled
+	if r.Config.EnableQNAMEMin {
+		queryName = ApplyQNAMEMinimization(queryName, extractZone(originalName))
+	}
+
 	// Apply 0x20 encoding if enabled (this allocates, but is required for security)
 	if r.Config.Enable0x20 {
-		queryName = Apply0x20Encoding(originalName)
+		queryName = Apply0x20Encoding(queryName)
 	}
 
 	// 2. Construct the query message efficiently
 	m := new(dns.Msg)
+	m.Id = dns.Id()
 	m.SetQuestion(queryName, qtype)
 	m.Question[0].Qclass = qclass
 	m.RecursionDesired = true

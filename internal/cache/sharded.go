@@ -119,21 +119,21 @@ type ShardedCache struct {
 // Config holds cache configuration
 type Config struct {
 	// Total cache size (distributed across shards)
-	MaxEntries int
+	MaxEntries int `yaml:"max_entries"`
 
 	// Number of shards (default 256)
-	ShardCount int
+	ShardCount int `yaml:"shard_count"`
 
 	// Serve stale configuration
-	ServeStale   bool
-	MaxStaleTTL  time.Duration
-	StaleRefresh bool // Whether to trigger background refresh
+	ServeStale   bool          `yaml:"serve_stale"`
+	MaxStaleTTL  time.Duration `yaml:"max_stale_ttl"`
+	StaleRefresh bool          `yaml:"stale_refresh"` // Whether to trigger background refresh
 
 	// DNSSEC Validation Mode
-	ValidationMode ValidationMode
+	ValidationMode ValidationMode `yaml:"validation_mode"`
 
 	// Threat Intelligence
-	DarkAPIKey string
+	DarkAPIKey string `yaml:"darkapi_key"`
 }
 
 // NewShardedCache creates a new sharded cache

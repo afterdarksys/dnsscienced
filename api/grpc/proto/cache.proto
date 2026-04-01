@@ -15,6 +15,9 @@ service CacheService {
   // Lookup retrieves specific cache entries
   rpc Lookup(CacheLookupRequest) returns (CacheLookupResponse);
   
+  // CheckURL retrieves threat intel dynamically on full paths
+  rpc CheckURL(CheckURLRequest) returns (CheckURLResponse);
+  
   // Flush clears cache entries
   rpc Flush(FlushCacheRequest) returns (FlushCacheResponse);
   
@@ -76,6 +79,19 @@ message CacheLookupResponse {
   repeated CacheEntry entries = 1;
   int32 count = 2;
   ResponseMeta meta = 3;
+}
+
+// CheckURLRequest
+message CheckURLRequest {
+  string url = 1;
+}
+
+// CheckURLResponse
+message CheckURLResponse {
+  bool blocked = 1;
+  int32 threat_score = 2;
+  string category = 3;
+  ResponseMeta meta = 4;
 }
 
 // FlushCacheRequest

@@ -74,7 +74,7 @@ func (x FlushCacheRequest_FlushScope) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FlushCacheRequest_FlushScope.Descriptor instead.
 func (FlushCacheRequest_FlushScope) EnumDescriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{5, 0}
+	return file_cache_proto_rawDescGZIP(), []int{7, 0}
 }
 
 type CacheEvent_EventType int32
@@ -138,7 +138,7 @@ func (x CacheEvent_EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CacheEvent_EventType.Descriptor instead.
 func (CacheEvent_EventType) EnumDescriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{10, 0}
+	return file_cache_proto_rawDescGZIP(), []int{12, 0}
 }
 
 // GetCacheStatsRequest
@@ -515,6 +515,120 @@ func (x *CacheLookupResponse) GetMeta() *ResponseMeta {
 	return nil
 }
 
+// CheckURLRequest
+type CheckURLRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckURLRequest) Reset() {
+	*x = CheckURLRequest{}
+	mi := &file_cache_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckURLRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckURLRequest) ProtoMessage() {}
+
+func (x *CheckURLRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cache_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckURLRequest.ProtoReflect.Descriptor instead.
+func (*CheckURLRequest) Descriptor() ([]byte, []int) {
+	return file_cache_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CheckURLRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+// CheckURLResponse
+type CheckURLResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Blocked       bool                   `protobuf:"varint,1,opt,name=blocked,proto3" json:"blocked,omitempty"`
+	ThreatScore   int32                  `protobuf:"varint,2,opt,name=threat_score,json=threatScore,proto3" json:"threat_score,omitempty"`
+	Category      string                 `protobuf:"bytes,3,opt,name=category,proto3" json:"category,omitempty"`
+	Meta          *ResponseMeta          `protobuf:"bytes,4,opt,name=meta,proto3" json:"meta,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckURLResponse) Reset() {
+	*x = CheckURLResponse{}
+	mi := &file_cache_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckURLResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckURLResponse) ProtoMessage() {}
+
+func (x *CheckURLResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cache_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckURLResponse.ProtoReflect.Descriptor instead.
+func (*CheckURLResponse) Descriptor() ([]byte, []int) {
+	return file_cache_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CheckURLResponse) GetBlocked() bool {
+	if x != nil {
+		return x.Blocked
+	}
+	return false
+}
+
+func (x *CheckURLResponse) GetThreatScore() int32 {
+	if x != nil {
+		return x.ThreatScore
+	}
+	return 0
+}
+
+func (x *CheckURLResponse) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *CheckURLResponse) GetMeta() *ResponseMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
 // FlushCacheRequest
 type FlushCacheRequest struct {
 	state             protoimpl.MessageState       `protogen:"open.v1"`
@@ -528,7 +642,7 @@ type FlushCacheRequest struct {
 
 func (x *FlushCacheRequest) Reset() {
 	*x = FlushCacheRequest{}
-	mi := &file_cache_proto_msgTypes[5]
+	mi := &file_cache_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -540,7 +654,7 @@ func (x *FlushCacheRequest) String() string {
 func (*FlushCacheRequest) ProtoMessage() {}
 
 func (x *FlushCacheRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[5]
+	mi := &file_cache_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -553,7 +667,7 @@ func (x *FlushCacheRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlushCacheRequest.ProtoReflect.Descriptor instead.
 func (*FlushCacheRequest) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{5}
+	return file_cache_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *FlushCacheRequest) GetScope() FlushCacheRequest_FlushScope {
@@ -597,7 +711,7 @@ type FlushCacheResponse struct {
 
 func (x *FlushCacheResponse) Reset() {
 	*x = FlushCacheResponse{}
-	mi := &file_cache_proto_msgTypes[6]
+	mi := &file_cache_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -609,7 +723,7 @@ func (x *FlushCacheResponse) String() string {
 func (*FlushCacheResponse) ProtoMessage() {}
 
 func (x *FlushCacheResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[6]
+	mi := &file_cache_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -622,7 +736,7 @@ func (x *FlushCacheResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlushCacheResponse.ProtoReflect.Descriptor instead.
 func (*FlushCacheResponse) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{6}
+	return file_cache_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *FlushCacheResponse) GetEntriesRemoved() int32 {
@@ -665,7 +779,7 @@ type PrefetchRequest struct {
 
 func (x *PrefetchRequest) Reset() {
 	*x = PrefetchRequest{}
-	mi := &file_cache_proto_msgTypes[7]
+	mi := &file_cache_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +791,7 @@ func (x *PrefetchRequest) String() string {
 func (*PrefetchRequest) ProtoMessage() {}
 
 func (x *PrefetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[7]
+	mi := &file_cache_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +804,7 @@ func (x *PrefetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrefetchRequest.ProtoReflect.Descriptor instead.
 func (*PrefetchRequest) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{7}
+	return file_cache_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PrefetchRequest) GetNames() []string {
@@ -726,7 +840,7 @@ type PrefetchResponse struct {
 
 func (x *PrefetchResponse) Reset() {
 	*x = PrefetchResponse{}
-	mi := &file_cache_proto_msgTypes[8]
+	mi := &file_cache_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -738,7 +852,7 @@ func (x *PrefetchResponse) String() string {
 func (*PrefetchResponse) ProtoMessage() {}
 
 func (x *PrefetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[8]
+	mi := &file_cache_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -751,7 +865,7 @@ func (x *PrefetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrefetchResponse.ProtoReflect.Descriptor instead.
 func (*PrefetchResponse) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{8}
+	return file_cache_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PrefetchResponse) GetQueued() int32 {
@@ -786,7 +900,7 @@ type WatchCacheRequest struct {
 
 func (x *WatchCacheRequest) Reset() {
 	*x = WatchCacheRequest{}
-	mi := &file_cache_proto_msgTypes[9]
+	mi := &file_cache_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +912,7 @@ func (x *WatchCacheRequest) String() string {
 func (*WatchCacheRequest) ProtoMessage() {}
 
 func (x *WatchCacheRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[9]
+	mi := &file_cache_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +925,7 @@ func (x *WatchCacheRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchCacheRequest.ProtoReflect.Descriptor instead.
 func (*WatchCacheRequest) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{9}
+	return file_cache_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *WatchCacheRequest) GetTypes() []string {
@@ -848,7 +962,7 @@ type CacheEvent struct {
 
 func (x *CacheEvent) Reset() {
 	*x = CacheEvent{}
-	mi := &file_cache_proto_msgTypes[10]
+	mi := &file_cache_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -860,7 +974,7 @@ func (x *CacheEvent) String() string {
 func (*CacheEvent) ProtoMessage() {}
 
 func (x *CacheEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cache_proto_msgTypes[10]
+	mi := &file_cache_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -873,7 +987,7 @@ func (x *CacheEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CacheEvent.ProtoReflect.Descriptor instead.
 func (*CacheEvent) Descriptor() ([]byte, []int) {
-	return file_cache_proto_rawDescGZIP(), []int{10}
+	return file_cache_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CacheEvent) GetType() CacheEvent_EventType {
@@ -967,7 +1081,14 @@ const file_cache_proto_rawDesc = "" +
 	"\x13CacheLookupResponse\x123\n" +
 	"\aentries\x18\x01 \x03(\v2\x19.dnsscience.v1.CacheEntryR\aentries\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x05R\x05count\x12/\n" +
-	"\x04meta\x18\x03 \x01(\v2\x1b.dnsscience.v1.ResponseMetaR\x04meta\"\xb7\x02\n" +
+	"\x04meta\x18\x03 \x01(\v2\x1b.dnsscience.v1.ResponseMetaR\x04meta\"#\n" +
+	"\x0fCheckURLRequest\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"\x9c\x01\n" +
+	"\x10CheckURLResponse\x12\x18\n" +
+	"\ablocked\x18\x01 \x01(\bR\ablocked\x12!\n" +
+	"\fthreat_score\x18\x02 \x01(\x05R\vthreatScore\x12\x1a\n" +
+	"\bcategory\x18\x03 \x01(\tR\bcategory\x12/\n" +
+	"\x04meta\x18\x04 \x01(\v2\x1b.dnsscience.v1.ResponseMetaR\x04meta\"\xb7\x02\n" +
 	"\x11FlushCacheRequest\x12A\n" +
 	"\x05scope\x18\x01 \x01(\x0e2+.dnsscience.v1.FlushCacheRequest.FlushScopeR\x05scope\x12\x16\n" +
 	"\x06domain\x18\x02 \x01(\tR\x06domain\x12\x12\n" +
@@ -1016,10 +1137,11 @@ const file_cache_proto_rawDesc = "" +
 	"\x10EVENT_TYPE_STORE\x10\x04\x12\x15\n" +
 	"\x11EVENT_TYPE_DELETE\x10\x05\x12\x17\n" +
 	"\x13EVENT_TYPE_PREFETCH\x10\x06\x12 \n" +
-	"\x1cEVENT_TYPE_PREFETCH_COMPLETE\x10\a2\x9e\x03\n" +
+	"\x1cEVENT_TYPE_PREFETCH_COMPLETE\x10\a2\xeb\x03\n" +
 	"\fCacheService\x12U\n" +
 	"\bGetStats\x12#.dnsscience.v1.GetCacheStatsRequest\x1a$.dnsscience.v1.GetCacheStatsResponse\x12O\n" +
-	"\x06Lookup\x12!.dnsscience.v1.CacheLookupRequest\x1a\".dnsscience.v1.CacheLookupResponse\x12L\n" +
+	"\x06Lookup\x12!.dnsscience.v1.CacheLookupRequest\x1a\".dnsscience.v1.CacheLookupResponse\x12K\n" +
+	"\bCheckURL\x12\x1e.dnsscience.v1.CheckURLRequest\x1a\x1f.dnsscience.v1.CheckURLResponse\x12L\n" +
 	"\x05Flush\x12 .dnsscience.v1.FlushCacheRequest\x1a!.dnsscience.v1.FlushCacheResponse\x12K\n" +
 	"\bPrefetch\x12\x1e.dnsscience.v1.PrefetchRequest\x1a\x1f.dnsscience.v1.PrefetchResponse\x12K\n" +
 	"\n" +
@@ -1038,7 +1160,7 @@ func file_cache_proto_rawDescGZIP() []byte {
 }
 
 var file_cache_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cache_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_cache_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_cache_proto_goTypes = []any{
 	(FlushCacheRequest_FlushScope)(0), // 0: dnsscience.v1.FlushCacheRequest.FlushScope
 	(CacheEvent_EventType)(0),         // 1: dnsscience.v1.CacheEvent.EventType
@@ -1047,48 +1169,53 @@ var file_cache_proto_goTypes = []any{
 	(*GetCacheStatsResponse)(nil),     // 4: dnsscience.v1.GetCacheStatsResponse
 	(*CacheLookupRequest)(nil),        // 5: dnsscience.v1.CacheLookupRequest
 	(*CacheLookupResponse)(nil),       // 6: dnsscience.v1.CacheLookupResponse
-	(*FlushCacheRequest)(nil),         // 7: dnsscience.v1.FlushCacheRequest
-	(*FlushCacheResponse)(nil),        // 8: dnsscience.v1.FlushCacheResponse
-	(*PrefetchRequest)(nil),           // 9: dnsscience.v1.PrefetchRequest
-	(*PrefetchResponse)(nil),          // 10: dnsscience.v1.PrefetchResponse
-	(*WatchCacheRequest)(nil),         // 11: dnsscience.v1.WatchCacheRequest
-	(*CacheEvent)(nil),                // 12: dnsscience.v1.CacheEvent
-	nil,                               // 13: dnsscience.v1.CacheStats.ByTypeEntry
-	nil,                               // 14: dnsscience.v1.CacheStats.EvictionsByReasonEntry
-	(*timestamppb.Timestamp)(nil),     // 15: google.protobuf.Timestamp
-	(*ResponseMeta)(nil),              // 16: dnsscience.v1.ResponseMeta
-	(*CacheEntry)(nil),                // 17: dnsscience.v1.CacheEntry
+	(*CheckURLRequest)(nil),           // 7: dnsscience.v1.CheckURLRequest
+	(*CheckURLResponse)(nil),          // 8: dnsscience.v1.CheckURLResponse
+	(*FlushCacheRequest)(nil),         // 9: dnsscience.v1.FlushCacheRequest
+	(*FlushCacheResponse)(nil),        // 10: dnsscience.v1.FlushCacheResponse
+	(*PrefetchRequest)(nil),           // 11: dnsscience.v1.PrefetchRequest
+	(*PrefetchResponse)(nil),          // 12: dnsscience.v1.PrefetchResponse
+	(*WatchCacheRequest)(nil),         // 13: dnsscience.v1.WatchCacheRequest
+	(*CacheEvent)(nil),                // 14: dnsscience.v1.CacheEvent
+	nil,                               // 15: dnsscience.v1.CacheStats.ByTypeEntry
+	nil,                               // 16: dnsscience.v1.CacheStats.EvictionsByReasonEntry
+	(*timestamppb.Timestamp)(nil),     // 17: google.protobuf.Timestamp
+	(*ResponseMeta)(nil),              // 18: dnsscience.v1.ResponseMeta
+	(*CacheEntry)(nil),                // 19: dnsscience.v1.CacheEntry
 }
 var file_cache_proto_depIdxs = []int32{
-	13, // 0: dnsscience.v1.CacheStats.by_type:type_name -> dnsscience.v1.CacheStats.ByTypeEntry
-	14, // 1: dnsscience.v1.CacheStats.evictions_by_reason:type_name -> dnsscience.v1.CacheStats.EvictionsByReasonEntry
-	15, // 2: dnsscience.v1.CacheStats.measured_at:type_name -> google.protobuf.Timestamp
+	15, // 0: dnsscience.v1.CacheStats.by_type:type_name -> dnsscience.v1.CacheStats.ByTypeEntry
+	16, // 1: dnsscience.v1.CacheStats.evictions_by_reason:type_name -> dnsscience.v1.CacheStats.EvictionsByReasonEntry
+	17, // 2: dnsscience.v1.CacheStats.measured_at:type_name -> google.protobuf.Timestamp
 	3,  // 3: dnsscience.v1.GetCacheStatsResponse.stats:type_name -> dnsscience.v1.CacheStats
-	16, // 4: dnsscience.v1.GetCacheStatsResponse.meta:type_name -> dnsscience.v1.ResponseMeta
-	17, // 5: dnsscience.v1.CacheLookupResponse.entries:type_name -> dnsscience.v1.CacheEntry
-	16, // 6: dnsscience.v1.CacheLookupResponse.meta:type_name -> dnsscience.v1.ResponseMeta
-	0,  // 7: dnsscience.v1.FlushCacheRequest.scope:type_name -> dnsscience.v1.FlushCacheRequest.FlushScope
-	15, // 8: dnsscience.v1.FlushCacheResponse.flushed_at:type_name -> google.protobuf.Timestamp
-	16, // 9: dnsscience.v1.FlushCacheResponse.meta:type_name -> dnsscience.v1.ResponseMeta
-	16, // 10: dnsscience.v1.PrefetchResponse.meta:type_name -> dnsscience.v1.ResponseMeta
-	1,  // 11: dnsscience.v1.CacheEvent.type:type_name -> dnsscience.v1.CacheEvent.EventType
-	15, // 12: dnsscience.v1.CacheEvent.timestamp:type_name -> google.protobuf.Timestamp
-	17, // 13: dnsscience.v1.CacheEvent.entry:type_name -> dnsscience.v1.CacheEntry
-	2,  // 14: dnsscience.v1.CacheService.GetStats:input_type -> dnsscience.v1.GetCacheStatsRequest
-	5,  // 15: dnsscience.v1.CacheService.Lookup:input_type -> dnsscience.v1.CacheLookupRequest
-	7,  // 16: dnsscience.v1.CacheService.Flush:input_type -> dnsscience.v1.FlushCacheRequest
-	9,  // 17: dnsscience.v1.CacheService.Prefetch:input_type -> dnsscience.v1.PrefetchRequest
-	11, // 18: dnsscience.v1.CacheService.WatchCache:input_type -> dnsscience.v1.WatchCacheRequest
-	4,  // 19: dnsscience.v1.CacheService.GetStats:output_type -> dnsscience.v1.GetCacheStatsResponse
-	6,  // 20: dnsscience.v1.CacheService.Lookup:output_type -> dnsscience.v1.CacheLookupResponse
-	8,  // 21: dnsscience.v1.CacheService.Flush:output_type -> dnsscience.v1.FlushCacheResponse
-	10, // 22: dnsscience.v1.CacheService.Prefetch:output_type -> dnsscience.v1.PrefetchResponse
-	12, // 23: dnsscience.v1.CacheService.WatchCache:output_type -> dnsscience.v1.CacheEvent
-	19, // [19:24] is the sub-list for method output_type
-	14, // [14:19] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	18, // 4: dnsscience.v1.GetCacheStatsResponse.meta:type_name -> dnsscience.v1.ResponseMeta
+	19, // 5: dnsscience.v1.CacheLookupResponse.entries:type_name -> dnsscience.v1.CacheEntry
+	18, // 6: dnsscience.v1.CacheLookupResponse.meta:type_name -> dnsscience.v1.ResponseMeta
+	18, // 7: dnsscience.v1.CheckURLResponse.meta:type_name -> dnsscience.v1.ResponseMeta
+	0,  // 8: dnsscience.v1.FlushCacheRequest.scope:type_name -> dnsscience.v1.FlushCacheRequest.FlushScope
+	17, // 9: dnsscience.v1.FlushCacheResponse.flushed_at:type_name -> google.protobuf.Timestamp
+	18, // 10: dnsscience.v1.FlushCacheResponse.meta:type_name -> dnsscience.v1.ResponseMeta
+	18, // 11: dnsscience.v1.PrefetchResponse.meta:type_name -> dnsscience.v1.ResponseMeta
+	1,  // 12: dnsscience.v1.CacheEvent.type:type_name -> dnsscience.v1.CacheEvent.EventType
+	17, // 13: dnsscience.v1.CacheEvent.timestamp:type_name -> google.protobuf.Timestamp
+	19, // 14: dnsscience.v1.CacheEvent.entry:type_name -> dnsscience.v1.CacheEntry
+	2,  // 15: dnsscience.v1.CacheService.GetStats:input_type -> dnsscience.v1.GetCacheStatsRequest
+	5,  // 16: dnsscience.v1.CacheService.Lookup:input_type -> dnsscience.v1.CacheLookupRequest
+	7,  // 17: dnsscience.v1.CacheService.CheckURL:input_type -> dnsscience.v1.CheckURLRequest
+	9,  // 18: dnsscience.v1.CacheService.Flush:input_type -> dnsscience.v1.FlushCacheRequest
+	11, // 19: dnsscience.v1.CacheService.Prefetch:input_type -> dnsscience.v1.PrefetchRequest
+	13, // 20: dnsscience.v1.CacheService.WatchCache:input_type -> dnsscience.v1.WatchCacheRequest
+	4,  // 21: dnsscience.v1.CacheService.GetStats:output_type -> dnsscience.v1.GetCacheStatsResponse
+	6,  // 22: dnsscience.v1.CacheService.Lookup:output_type -> dnsscience.v1.CacheLookupResponse
+	8,  // 23: dnsscience.v1.CacheService.CheckURL:output_type -> dnsscience.v1.CheckURLResponse
+	10, // 24: dnsscience.v1.CacheService.Flush:output_type -> dnsscience.v1.FlushCacheResponse
+	12, // 25: dnsscience.v1.CacheService.Prefetch:output_type -> dnsscience.v1.PrefetchResponse
+	14, // 26: dnsscience.v1.CacheService.WatchCache:output_type -> dnsscience.v1.CacheEvent
+	21, // [21:27] is the sub-list for method output_type
+	15, // [15:21] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_cache_proto_init() }
@@ -1103,7 +1230,7 @@ func file_cache_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cache_proto_rawDesc), len(file_cache_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

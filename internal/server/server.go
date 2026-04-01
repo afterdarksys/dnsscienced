@@ -21,36 +21,36 @@ import (
 // Config holds DNS server configuration
 type Config struct {
 	// Listen addresses
-	UDPAddr string
-	TCPAddr string
+	UDPAddr string `yaml:"udp_addr"`
+	TCPAddr string `yaml:"tcp_addr"`
 
 	// Number of UDP listeners (SO_REUSEPORT)
 	// Set to runtime.NumCPU() for maximum performance
-	UDPListeners int
+	UDPListeners int `yaml:"udp_listeners"`
 
 	// Enable recursive resolver
-	EnableRecursive bool
-	RecursiveConfig resolver.Config
+	EnableRecursive bool            `yaml:"enable_recursive"`
+	RecursiveConfig resolver.Config `yaml:"recursive"`
 
 	// Enable authoritative server
-	EnableAuthoritative bool
-	Zones               map[string]*zone.Zone
+	EnableAuthoritative bool                  `yaml:"enable_authoritative"`
+	Zones               map[string]*zone.Zone `yaml:"-"` // Zones are loaded separately or via a different config mechanism
 
 	// Security features
-	EnableCookies bool
-	CookieConfig  cookie.Config
+	EnableCookies bool          `yaml:"enable_cookies"`
+	CookieConfig  cookie.Config `yaml:"cookies"`
 
-	EnableRRL bool
-	RRLConfig rrl.Config
+	EnableRRL bool       `yaml:"enable_rrl"`
+	RRLConfig rrl.Config `yaml:"rrl"`
 
 	// Performance tuning
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration // TCP only
+	ReadTimeout  time.Duration `yaml:"read_timeout"`
+	WriteTimeout time.Duration `yaml:"write_timeout"`
+	IdleTimeout  time.Duration `yaml:"idle_timeout"` // TCP only
 
 	// UDP buffer sizes
-	UDPReadBuffer  int
-	UDPWriteBuffer int
+	UDPReadBuffer  int `yaml:"udp_read_buffer"`
+	UDPWriteBuffer int `yaml:"udp_write_buffer"`
 }
 
 // DefaultConfig returns default server configuration

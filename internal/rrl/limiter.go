@@ -34,29 +34,32 @@ const (
 // Config holds RRL configuration
 type Config struct {
 	// Per-category limits (queries per second)
-	ResponsesPerSecond int
-	ErrorsPerSecond    int
-	NXDOMAINsPerSecond int
-	ReferralsPerSecond int
-	NodataPerSecond    int
-	AllPerSecond       int // Global limit across all categories
+	ResponsesPerSecond int `yaml:"responses_per_second"`
+	ErrorsPerSecond    int `yaml:"errors_per_second"`
+	NXDOMAINsPerSecond int `yaml:"nxdomains_per_second"`
+	ReferralsPerSecond int `yaml:"referrals_per_second"`
+	NodataPerSecond    int `yaml:"nodata_per_second"`
+	AllPerSecond       int `yaml:"all_per_second"` // Global limit across all categories
 
 	// Window for rate calculation (seconds)
-	Window int
+	Window int `yaml:"window"`
 
 	// Slip: 1 in N limited responses get TC bit instead of drop
 	// slip=0: drop all, slip=1: TC all, slip=2: TC 50%
-	Slip int
+	Slip int `yaml:"slip"`
 
 	// Exempt prefixes (no rate limiting)
-	ExemptPrefixes []*net.IPNet
+	ExemptPrefixes []*net.IPNet `yaml:"-"` // Handled separately or needs custom unmarshaler
+
+	// Exempt CIDRs for YAML unmarshaling
+	ExemptCIDRs []string `yaml:"exempt_cidrs"`
 
 	// IPv4 and IPv6 prefix lengths for bucketing
-	IPv4PrefixLen int // Default: 24
-	IPv6PrefixLen int // Default: 56
+	IPv4PrefixLen int `yaml:"ipv4_prefix_len"` // Default: 24
+	IPv6PrefixLen int `yaml:"ipv6_prefix_len"` // Default: 56
 
 	// Enable/disable
-	Enabled bool
+	Enabled bool `yaml:"enabled"`
 }
 
 // DefaultConfig returns recommended RRL configuration
@@ -335,10 +338,10 @@ func (l *Limiter) Close() {
 
 // Stats returns RRL statistics
 type Stats struct {
-	Allowed uint64
-	Dropped uint64
-	Slipped uint64
-	Total   uint64
+	Allowed  uint64
+	Dropped  uint64
+	Slipped  uint64
+	Total    uint64
 	DropRate float64
 }
 

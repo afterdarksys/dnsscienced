@@ -187,6 +187,23 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		if err := parseSRVRecords(zone, fqdn, section.SRV, recordTTL); err != nil {
 			return nil, fmt.Errorf("parse SRV records for %s: %w", owner, err)
 		}
+		if section.PTR != "" {
+			if err := parsePTR(zone, fqdn, section.PTR, recordTTL); err != nil {
+				return nil, fmt.Errorf("parse PTR for %s: %w", owner, err)
+			}
+		}
+		if err := parseCAARecords(zone, fqdn, section.CAA, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse CAA records for %s: %w", owner, err)
+		}
+		if err := parseTLSARecords(zone, fqdn, section.TLSA, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse TLSA records for %s: %w", owner, err)
+		}
+		if err := parseSVCBHTTPRecords(zone, fqdn, section.HTTPS, recordTTL, "HTTPS"); err != nil {
+			return nil, fmt.Errorf("parse HTTPS records for %s: %w", owner, err)
+		}
+		if err := parseSVCBHTTPRecords(zone, fqdn, section.SVCB, recordTTL, "SVCB"); err != nil {
+			return nil, fmt.Errorf("parse SVCB records for %s: %w", owner, err)
+		}
 	}
 
 	// Apply templates
@@ -513,6 +530,179 @@ func parseSRVRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 		zone.AddRecord(rr)
 	}
 
+	return nil
+}
+
+// parsePTR parses a PTR record
+func parsePTR(zone *Zone, owner, target string, ttl uint32) error {
+	rr := &dns.PTR{
+		Hdr: dns.RR_Header{
+			Name:   owner,
+			Rrtype: dns.TypePTR,
+			Class:  dns.ClassINET,
+			Ttl:    ttl,
+		},
+		Ptr: dns.Fqdn(target),
+	}
+	return zone.AddRecord(rr)
+}
+
+// parseCAARecords parses CAA records
+func parseCAARecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	caaList := []CAARecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if caaMap, ok := item.(map[string]interface{}); ok {
+				caa := CAARecord{}
+				// Handle both int and float64 (YAML parser uses float64 for ints sometimes)
+				if flags, ok := caaMap["flags"].(int); ok {
+					caa.Flags = flags
+				} else if flagsF, ok := caaMap["flags"].(float64); ok {
+                    caa.Flags = int(flagsF)
+                }
+				if tag, ok := caaMap["tag"].(string); ok {
+					caa.Tag = tag
+				}
+				if value, ok := caaMap["value"].(string); ok {
+					caa.Value = value
+				}
+				caaList = append(caaList, caa)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid CAA record format")
+	}
+
+	for _, caa := range caaList {
+		s := fmt.Sprintf("%s %d IN CAA %d %s \"%s\"", owner, ttl, caa.Flags, caa.Tag, caa.Value)
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse CAA string: %w", err)
+		}
+		if rr != nil {
+		    zone.AddRecord(rr)
+        }
+	}
+	return nil
+}
+
+// parseTLSARecords parses TLSA records
+func parseTLSARecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	tlsaList := []TLSARecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if tlsaMap, ok := item.(map[string]interface{}); ok {
+				tlsa := TLSARecord{}
+				if usage, ok := tlsaMap["usage"].(int); ok {
+					tlsa.Usage = usage
+				} else if usageF, ok := tlsaMap["usage"].(float64); ok {
+                    tlsa.Usage = int(usageF)
+                }
+				if selector, ok := tlsaMap["selector"].(int); ok {
+					tlsa.Selector = selector
+				} else if selectorF, ok := tlsaMap["selector"].(float64); ok {
+                    tlsa.Selector = int(selectorF)
+                }
+				if matching, ok := tlsaMap["matching"].(int); ok {
+					tlsa.Matching = matching
+				} else if matchingF, ok := tlsaMap["matching"].(float64); ok {
+                    tlsa.Matching = int(matchingF)
+                }
+				if d, ok := tlsaMap["data"].(string); ok {
+					tlsa.Data = d
+				}
+				tlsaList = append(tlsaList, tlsa)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid TLSA record format")
+	}
+
+	for _, tlsa := range tlsaList {
+		s := fmt.Sprintf("%s %d IN TLSA %d %d %d %s", owner, ttl, tlsa.Usage, tlsa.Selector, tlsa.Matching, tlsa.Data)
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse TLSA string: %w", err)
+		}
+		if rr != nil {
+		    zone.AddRecord(rr)
+        }
+	}
+	return nil
+}
+
+// parseSVCBHTTPRecords parses SVCB or HTTPS records
+func parseSVCBHTTPRecords(zone *Zone, owner string, data interface{}, ttl uint32, recType string) error {
+	if data == nil {
+		return nil
+	}
+
+	recList := []HTTPSRecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if recMap, ok := item.(map[string]interface{}); ok {
+				rec := HTTPSRecord{}
+				if priority, ok := recMap["priority"].(int); ok {
+					rec.Priority = priority
+				} else if priorityF, ok := recMap["priority"].(float64); ok {
+                    rec.Priority = int(priorityF)
+                }
+				if target, ok := recMap["target"].(string); ok {
+					rec.Target = target
+				}
+				if params, ok := recMap["params"].(map[string]interface{}); ok {
+					rec.Params = params
+				}
+				recList = append(recList, rec)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid %s record format", recType)
+	}
+
+	for _, rec := range recList {
+		var paramsStr strings.Builder
+		for k, v := range rec.Params {
+			paramsStr.WriteString(" ")
+			paramsStr.WriteString(k)
+			paramsStr.WriteString("=")
+			switch val := v.(type) {
+			case []interface{}:
+				paramsStr.WriteString("\"")
+				for i, elem := range val {
+					if i > 0 {
+						paramsStr.WriteString(",")
+					}
+					paramsStr.WriteString(fmt.Sprintf("%v", elem))
+				}
+				paramsStr.WriteString("\"")
+			case string:
+				paramsStr.WriteString(fmt.Sprintf("\"%s\"", val))
+			default:
+				paramsStr.WriteString(fmt.Sprintf("\"%v\"", val))
+			}
+		}
+
+		s := fmt.Sprintf("%s %d IN %s %d %s%s", owner, ttl, recType, rec.Priority, dns.Fqdn(rec.Target), paramsStr.String())
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse %s string: %w: %s", recType, err, s)
+		}
+		if rr != nil {
+		    zone.AddRecord(rr)
+        }
+	}
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/server"
 )
 
@@ -22,6 +23,7 @@ var (
 	authoritative = flag.Bool("authoritative", false, "Enable authoritative server")
 	// Deduplication handled in previous lines
 
+	configFile = flag.String("config", "", "Path to YAML configuration file")
 	stats      = flag.Bool("stats", true, "Print statistics periodically")
 	darkApiKey = flag.String("darkapi-key", "", "API Key for darkapi.io threat intelligence")
 )
@@ -38,13 +40,49 @@ func main() {
 
 	// Create server config
 	cfg := server.DefaultConfig()
-	cfg.UDPAddr = *udpAddr
-	cfg.TCPAddr = *tcpAddr
-	cfg.UDPListeners = *udpListeners
-	cfg.EnableRecursive = *recursive
-	// Deduplication handled in previous lines
 
-	cfg.RecursiveConfig.CacheConfig.DarkAPIKey = *darkApiKey
+	// Load config file if specified
+	if *configFile != "" {
+		fmt.Printf("Loading configuration from %s\n", *configFile)
+		loadedCfg, err := config.Load(*configFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			os.Exit(1)
+		}
+		// Merge loaded config into default config
+		// For now, we just replace the server config section entirely
+		// A proper merge should look at which fields were set, but since we are unmarshaling
+		// entire structs, we can just take the loaded struct if it's not zero-value.
+		// However, config.Load starts with defaults? No, we implemented it to decode into defaults there?
+		// Wait, let's restart. config.Load returns a *config.Config which CONTAINS server.Config.
+		// So we should take cfg = loadedCfg.Server.
+		cfg = loadedCfg.Server
+
+		// Check if DHCP config was loaded
+		if loadedCfg.DHCP.Enabled {
+			fmt.Println("DHCP Configuration detected (Feature coming soon)")
+		}
+	}
+
+	// CLI flags override config file
+	if isFlagPassed("udp") {
+		cfg.UDPAddr = *udpAddr
+	}
+	if isFlagPassed("tcp") {
+		cfg.TCPAddr = *tcpAddr
+	}
+	if isFlagPassed("listeners") {
+		cfg.UDPListeners = *udpListeners
+	}
+	if isFlagPassed("recursive") {
+		cfg.EnableRecursive = *recursive
+	}
+	if isFlagPassed("authoritative") {
+		cfg.EnableAuthoritative = *authoritative
+	}
+	if isFlagPassed("darkapi-key") {
+		cfg.RecursiveConfig.CacheConfig.DarkAPIKey = *darkApiKey
+	}
 
 	fmt.Printf("Configuration:\n")
 	fmt.Printf("  UDP Address:      %s\n", cfg.UDPAddr)
@@ -147,4 +185,15 @@ func printStats(srv *server.Server) {
 		lastQueries = stats.Queries
 		lastTime = now
 	}
+}
+
+// isFlagPassed checks if a flag was passed on the command line
+func isFlagPassed(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
