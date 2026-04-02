@@ -11,6 +11,7 @@ import (
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
+	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
@@ -43,6 +44,9 @@ type Config struct {
 
 	EnableRRL bool       `yaml:"enable_rrl"`
 	RRLConfig rrl.Config `yaml:"rrl"`
+
+	// Defensive DNS manager (set separately to avoid import cycle)
+	DefensiveManager *defensive.Manager `yaml:"-"`
 
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
@@ -105,6 +109,7 @@ type Server struct {
 	recursive *resolver.Recursive
 	cookies   *cookie.Manager
 	rrl       *rrl.Limiter
+	defensive *defensive.Manager
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -166,6 +171,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.EnableRRL {
 		s.rrl = rrl.NewLimiter(cfg.RRLConfig)
 	}
+
+	// Set defensive manager if provided
+	s.defensive = cfg.DefensiveManager
 
 	// Create UDP servers (SO_REUSEPORT)
 	for i := 0; i < cfg.UDPListeners; i++ {
@@ -260,6 +268,9 @@ func (s *Server) Stop() error {
 	if s.rrl != nil {
 		s.rrl.Close()
 	}
+	if s.defensive != nil {
+		s.defensive.Close()
+	}
 
 	fmt.Println("DNS server stopped")
 	return nil
@@ -277,13 +288,37 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		clientIP = addr.IP
 	}
 
+	// Check blackhole/ACL first
+	if s.defensive != nil {
+		if block, action := s.defensive.CheckBlackhole(clientIP); block {
+			if action == "drop" {
+				// Silent drop - no response
+				return
+			} else if action == "refused" {
+				// Send REFUSED response
+				m := pool.GetMessage()
+				defer pool.PutMessage(m)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeRefused
+				w.WriteMsg(m)
+				return
+			}
+		}
+	}
+
 	// Create response message
 	m := pool.GetMessage()
 	defer pool.PutMessage(m)
 
 	m.SetReply(r)
-	m.Compress = true
 	m.RecursionAvailable = s.cfg.EnableRecursive
+
+	// Apply compression controls
+	if s.defensive != nil {
+		s.defensive.ApplyCompression(m)
+	} else {
+		m.Compress = true
+	}
 
 	// Validate query
 	if len(r.Question) == 0 {
@@ -291,6 +326,13 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		s.errors.Add(1)
 		w.WriteMsg(m)
 		return
+	}
+
+	question := r.Question[0]
+
+	// Log query if enabled
+	if s.defensive != nil {
+		s.defensive.LogQuery("queries", clientIP, question.Name, question.Qtype, dns.RcodeSuccess)
 	}
 
 	// Check DNS cookies if enabled
@@ -314,11 +356,20 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		// Validate if we have a server cookie
 		valid := false
-		if serverCookie != [8]byte{} {
+		hasServerCookie := serverCookie != [8]byte{}
+		if hasServerCookie {
 			valid = s.cookies.ValidateServerCookie(clientCookie, serverCookie, clientIP) == nil
 		}
 
-		if !valid && s.cfg.CookieConfig.RequireValid && serverCookie != [8]byte{} {
+		// Apply defensive cookie policy
+		cookieValid := true
+		if s.defensive != nil {
+			cookieValid = s.defensive.ValidateCookie(hasServerCookie, valid)
+		} else if !valid && s.cfg.CookieConfig.RequireValid && hasServerCookie {
+			cookieValid = false
+		}
+
+		if !cookieValid {
 			// Send BADCOOKIE response
 			m.Rcode = dns.RcodeBadCookie
 
@@ -359,6 +410,18 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = resp.Rcode
 			m.Authoritative = true
 
+			// Apply defensive features to response
+			if s.defensive != nil {
+				// Order RRsets
+				m.Answer = s.defensive.OrderRRset(m.Answer)
+
+				// Apply EDNS controls
+				s.defensive.ApplyEDNSControls(m, r)
+
+				// Log response
+				s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, m.Rcode)
+			}
+
 			w.WriteMsg(m)
 			return
 		}
@@ -370,6 +433,12 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			m.Rcode = dns.RcodeServerFailure
 			s.errors.Add(1)
+
+			// Log error if enabled
+			if s.defensive != nil {
+				s.defensive.LogQuery("errors", clientIP, question.Name, question.Qtype, dns.RcodeServerFailure)
+			}
+
 			w.WriteMsg(m)
 			return
 		}
@@ -383,6 +452,18 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		s.answers.Add(1)
 		if resp.Rcode == dns.RcodeNameError {
 			s.nxdomain.Add(1)
+		}
+
+		// Apply defensive features to recursive response
+		if s.defensive != nil {
+			// Order RRsets
+			resp.Answer = s.defensive.OrderRRset(resp.Answer)
+
+			// Apply EDNS controls
+			s.defensive.ApplyEDNSControls(resp, r)
+
+			// Log response
+			s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, resp.Rcode)
 		}
 
 		w.WriteMsg(resp)
@@ -564,6 +645,16 @@ func (s *Server) RemoveZone(origin string) {
 // GetZone returns a zone by origin
 func (s *Server) GetZone(origin string) *zone.Zone {
 	return s.cfg.Zones[origin]
+}
+
+// EnableAuthoritative enables authoritative mode
+func (s *Server) EnableAuthoritative() {
+	s.cfg.EnableAuthoritative = true
+}
+
+// DisableAuthoritative disables authoritative mode
+func (s *Server) DisableAuthoritative() {
+	s.cfg.EnableAuthoritative = false
 }
 
 // addCookieToResponse adds DNS cookie to response

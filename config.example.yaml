@@ -1,0 +1,151 @@
+# DNSScienced Configuration Example
+# Comprehensive configuration showing all defensive DNS features
+
+server:
+  listen: "0.0.0.0:53"
+  tcp_listen: "0.0.0.0:53"
+  workers: 4
+
+  # Enable authoritative mode
+  authoritative: true
+
+  # Enable recursive resolution
+  recursive: true
+
+# Admin gRPC API for control and monitoring
+admin:
+  enabled: true
+  listen: "0.0.0.0:9091"
+
+# Zone file directory
+zones_dir: /opt/dnsscienced/zones
+
+# Defensive DNS Configuration
+# These features help handle broken clients, firewalls, and edge cases
+defensive:
+
+  # Stale Answer Support (RFC 8767)
+  # Serve expired cache entries when upstream servers are unreachable
+  # Improves resilience against slow or broken upstream servers
+  stale_answers:
+    enabled: true
+    max_stale_time: 168h        # 1 week - maximum age of stale records to serve
+    client_timeout: 1800ms      # 1.8 seconds - timeout before serving stale
+    serve_on_error: true        # Serve stale on SERVFAIL from upstream
+
+  # EDNS UDP Size Controls
+  # Broken firewalls and clients often drop large UDP packets (>512 bytes)
+  # or fail at EDNS negotiation. Lower sizes help bypass these issues.
+  edns:
+    enabled: true
+    udp_size: 1232              # Conservative size that works through most networks
+                                 # Options: 512 (safest), 1232 (recommended), 4096 (optimal)
+    max_udp_size: 4096          # Maximum UDP response size
+
+  # DNSSEC Validation Controls
+  dnssec:
+    validation: true            # Enable DNSSEC validation
+    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf
+    break_validation: false     # DANGER: Bypass validation (troubleshooting only!)
+    permissive_mode: false      # Log but don't fail on validation errors
+    negative_trust_anchors: []  # Domains to skip validation (for broken DNSSEC)
+      # - example.com             # Example: broken DNSSEC domain
+
+  # Fetch Quotas and Rate Limiting
+  # Control number of simultaneous queries sent to authoritative servers
+  # Mitigates DoS to broken servers, even if caused by misconfiguration
+  fetch_quotas:
+    enabled: true
+    fetches_per_server: 100     # Max concurrent queries to one server
+    fetches_per_zone: 200       # Max concurrent queries per zone
+    spillover_quota: 50         # Additional quota when server is slow
+
+  # DNS Name Compression
+  # Disable for compatibility with very old or broken clients
+  compression:
+    enabled: true               # Enable DNS name compression (RFC 1035)
+    no_case_compress: false     # Set true for clients that don't support case-preserving compression
+
+  # DNS Cookies (RFC 7873)
+  # Protect against amplification attacks and spoofed queries
+  cookies:
+    require_server_cookie: false # Require valid cookie for recursive queries
+    strict_validation: false     # Strict cookie validation (reject invalid)
+
+  # Blackhole / ACLs
+  # Explicitly drop or refuse queries from known broken or malicious clients
+  blackhole:
+    enabled: false
+    action: drop                # "drop" (silent) or "refused" (send REFUSED response)
+    cidrs:
+      # - 192.0.2.0/24          # Example: blackhole RFC 5737 TEST-NET-1
+      # - 198.51.100.0/24       # Example: blackhole RFC 5737 TEST-NET-2
+
+  # Query Logging
+  # Highly flexible logging to track down non-compliant client queries
+  query_logging:
+    enabled: false
+    log_file: /var/log/dnsscienced/queries.log
+    categories:
+      - queries                 # All queries
+      - errors                  # Query errors
+      # - unmatched             # Queries that don't match any zone
+    # include_clients:          # Only log from these networks
+    #   - 10.0.0.0/8
+    # exclude_clients:          # Don't log from these networks
+    #   - 127.0.0.0/8
+    log_noncompliant: true      # Log queries with protocol violations
+
+  # RRset Ordering
+  # Control order of records in responses
+  # Useful for clients that arbitrarily pick the first IP in a list
+  rrset_order:
+    method: random              # "random", "cyclic", "fixed", "none"
+    seed: 0                     # Random seed (0 = time-based)
+
+  # Views / Split-Horizon DNS
+  # Serve different responses to different client groups
+  # Useful for internal vs external clients with different requirements
+  views: []
+    # - name: internal
+    #   match_clients:
+    #     - 10.0.0.0/8
+    #     - 172.16.0.0/12
+    #     - 192.168.0.0/16
+    #   zones_dir: /opt/dnsscienced/zones/internal
+    #   recursion: true
+    #   priority: 100
+    #
+    # - name: external
+    #   match_clients:
+    #     - 0.0.0.0/0
+    #   zones_dir: /opt/dnsscienced/zones/external
+    #   recursion: false
+    #   priority: 10
+
+# Cache Configuration
+cache:
+  enabled: true
+  max_size: 10000
+  ttl: 300
+
+# Logging
+logging:
+  level: info
+  file: /opt/dnsscienced/logs/dnsscienced.log
+
+# DNS Cookie Configuration (server.Config level)
+# Note: Additional cookie policies can be set in defensive.cookies above
+# cookies:
+#   enabled: true
+#   secret: ""  # Auto-generated if empty
+
+# Rate Limiting Configuration
+# rrl:
+#   enabled: true
+#   responses_per_second: 10
+#   window: 15s
+#   slip_ratio: 2
+#   ipv4_prefix_length: 24
+#   ipv6_prefix_length: 56
+#   exempt_cidrs: []

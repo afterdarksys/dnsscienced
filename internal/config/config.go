@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"gopkg.in/yaml.v3"
@@ -16,8 +17,23 @@ type Config struct {
 	Server   server.Config   `yaml:"server"`
 	Resolver resolver.Config `yaml:"resolver"`
 
+	// Zone loading configuration
+	ZonesDir string `yaml:"zones_dir"`
+
+	// Admin API configuration
+	Admin AdminConfig `yaml:"admin"`
+
+	// Defensive DNS configuration for handling broken clients and edge cases
+	Defensive defensive.Config `yaml:"defensive"`
+
 	// DHCP Configuration (Placeholder for future implementation)
 	DHCP DHCPConfig `yaml:"dhcp"`
+}
+
+// AdminConfig holds admin API configuration
+type AdminConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
 }
 
 // DHCPConfig holds DHCP server configuration

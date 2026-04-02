@@ -3,14 +3,22 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/api/grpc/registry"
+	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/server"
+	"github.com/dnsscience/dnsscienced/internal/zone"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -40,11 +48,13 @@ func main() {
 
 	// Create server config
 	cfg := server.DefaultConfig()
+	var loadedCfg *config.Config
 
 	// Load config file if specified
 	if *configFile != "" {
 		fmt.Printf("Loading configuration from %s\n", *configFile)
-		loadedCfg, err := config.Load(*configFile)
+		var err error
+		loadedCfg, err = config.Load(*configFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
 			os.Exit(1)
@@ -57,6 +67,16 @@ func main() {
 		// Wait, let's restart. config.Load returns a *config.Config which CONTAINS server.Config.
 		// So we should take cfg = loadedCfg.Server.
 		cfg = loadedCfg.Server
+
+		// Initialize defensive features if configured
+		if hasDefensiveFeatures(loadedCfg.Defensive) {
+			defensiveMgr, err := defensive.New(loadedCfg.Defensive)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error initializing defensive features: %v\n", err)
+				os.Exit(1)
+			}
+			cfg.DefensiveManager = defensiveMgr
+		}
 
 		// Check if DHCP config was loaded
 		if loadedCfg.DHCP.Enabled {
@@ -99,6 +119,11 @@ func main() {
 	}
 	fmt.Println()
 
+	// Log defensive DNS features if any are enabled
+	if loadedCfg != nil {
+		printDefensiveFeatures(loadedCfg.Defensive)
+	}
+
 	// Create server
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -106,7 +131,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load zone file if specified
+	// Load zone file if specified via CLI flag
 	if *zoneFile != "" {
 		fmt.Printf("Loading zone: %s (format: %s)\n", *zoneFile, *zoneFormat)
 		if err := srv.LoadZone(*zoneFile, *zoneFormat); err != nil {
@@ -116,7 +141,25 @@ func main() {
 		fmt.Println()
 	}
 
-	// Start server
+	// Load zones from zones_dir if specified in config
+	if loadedCfg != nil && loadedCfg.ZonesDir != "" {
+		fmt.Printf("Loading zones from directory: %s\n", loadedCfg.ZonesDir)
+		zonesLoaded, zonesFailedCount := loadZonesFromDir(srv, loadedCfg.ZonesDir)
+		fmt.Printf("Loaded %d zones successfully", zonesLoaded)
+		if zonesFailedCount > 0 {
+			fmt.Printf(" (%d failed)", zonesFailedCount)
+		}
+		fmt.Println()
+
+		// Enable authoritative mode if zones were loaded
+		if zonesLoaded > 0 {
+			srv.EnableAuthoritative()
+			fmt.Println("Authoritative mode: ENABLED (zones loaded)")
+		}
+		fmt.Println()
+	}
+
+	// Start DNS server
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
 		os.Exit(1)
@@ -124,6 +167,38 @@ func main() {
 
 	fmt.Println("DNS server started successfully!")
 	fmt.Println()
+
+	// Start admin gRPC server if enabled
+	var grpcSrv *grpc.Server
+	var grpcListener net.Listener
+	if loadedCfg != nil && loadedCfg.Admin.Enabled {
+		fmt.Printf("Starting admin gRPC API on %s\n", loadedCfg.Admin.Listen)
+
+		grpcCfg := grpcserver.Config{
+			ListenAddr: loadedCfg.Admin.Listen,
+		}
+
+		grpcDeps := grpcserver.Deps{
+			Register: func(s *grpc.Server) {
+				registry.RegisterAll(s)
+			},
+		}
+
+		var err error
+		grpcSrv, grpcListener, err = grpcserver.New(grpcCfg, grpcDeps)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating gRPC server: %v\n", err)
+		} else {
+			// Start gRPC server in background
+			go func() {
+				fmt.Printf("Admin gRPC API listening on %s\n", loadedCfg.Admin.Listen)
+				if err := grpcSrv.Serve(grpcListener); err != nil {
+					fmt.Fprintf(os.Stderr, "gRPC server error: %v\n", err)
+				}
+			}()
+		}
+		fmt.Println()
+	}
 
 	// Start stats printer if enabled
 	if *stats {
@@ -138,10 +213,81 @@ func main() {
 	fmt.Println()
 
 	// Graceful shutdown
+	fmt.Println("Shutting down...")
+
+	// Stop gRPC server if running
+	if grpcSrv != nil {
+		fmt.Println("Stopping admin gRPC API...")
+		grpcSrv.GracefulStop()
+	}
+
+	// Stop DNS server
 	if err := srv.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error stopping server: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// loadZonesFromDir scans a directory and loads all .dzc (compiled) zone files
+// Falls back to .dnszone (YAML) files if .dzc loading fails
+func loadZonesFromDir(srv *server.Server, dir string) (int, int) {
+	loaded := 0
+	failed := 0
+
+	// Read directory
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading zones directory %s: %v\n", dir, err)
+		return 0, 0
+	}
+
+	// Process all .dzc files
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		if !strings.HasSuffix(filename, ".dzc") {
+			continue
+		}
+
+		zonePath := filepath.Join(dir, filename)
+		zoneName := strings.TrimSuffix(filename, ".dzc")
+
+		// Try loading compiled zone
+		z, err := zone.LoadCompiledZone(zonePath)
+		if err != nil {
+			fmt.Printf("  Warning: Failed to load compiled zone %s: %v\n", filename, err)
+
+			// Try YAML failback
+			yamlPath := filepath.Join(dir, zoneName+".dnszone")
+			if _, statErr := os.Stat(yamlPath); statErr == nil {
+				fmt.Printf("  Attempting YAML failback for %s...\n", zoneName)
+				z, err = zone.ParseDNSZone(yamlPath, zone.DefaultConfig())
+				if err != nil {
+					fmt.Printf("  Error: YAML failback also failed for %s: %v\n", zoneName, err)
+					failed++
+					continue
+				}
+				fmt.Printf("  Success: Loaded %s from YAML failback\n", zoneName)
+			} else {
+				failed++
+				continue
+			}
+		}
+
+		// Add zone to server
+		if err := srv.AddZone(z); err != nil {
+			fmt.Printf("  Error: Failed to add zone %s: %v\n", zoneName, err)
+			failed++
+			continue
+		}
+
+		loaded++
+	}
+
+	return loaded, failed
 }
 
 func printStats(srv *server.Server) {
@@ -200,4 +346,73 @@ func isFlagPassed(name string) bool {
 		}
 	})
 	return found
+}
+
+// hasDefensiveFeatures checks if any defensive features are enabled
+func hasDefensiveFeatures(cfg defensive.Config) bool {
+	return cfg.Blackhole.Enabled ||
+		cfg.EDNS.Enabled ||
+		cfg.QueryLogging.Enabled ||
+		cfg.Cookies.RequireServerCookie ||
+		(cfg.RRsetOrder.Method != "" && cfg.RRsetOrder.Method != "none") ||
+		cfg.StaleAnswers.Enabled ||
+		cfg.FetchQuotas.Enabled ||
+		len(cfg.Views) > 0
+}
+
+// printDefensiveFeatures prints enabled defensive DNS features
+func printDefensiveFeatures(cfg defensive.Config) {
+	features := []string{}
+
+	// Check each defensive feature
+	if cfg.Blackhole.Enabled {
+		features = append(features, fmt.Sprintf("Blackhole ACL (%d CIDRs, action=%s)", len(cfg.Blackhole.CIDRs), cfg.Blackhole.Action))
+	}
+
+	if cfg.EDNS.Enabled {
+		features = append(features, fmt.Sprintf("EDNS Controls (UDP size=%d, max=%d)", cfg.EDNS.UDPSize, cfg.EDNS.MaxUDPSize))
+	}
+
+	if cfg.Cookies.RequireServerCookie {
+		strictness := "permissive"
+		if cfg.Cookies.StrictValidation {
+			strictness = "strict"
+		}
+		features = append(features, fmt.Sprintf("Cookie Policy (require=%v, %s)", cfg.Cookies.RequireServerCookie, strictness))
+	}
+
+	if !cfg.Compression.Enabled {
+		features = append(features, "Compression Disabled")
+	} else if cfg.Compression.NoCaseCompress {
+		features = append(features, "Compression (no-case)")
+	}
+
+	if cfg.QueryLogging.Enabled {
+		features = append(features, fmt.Sprintf("Query Logging (%s, categories=%v)", cfg.QueryLogging.LogFile, cfg.QueryLogging.Categories))
+	}
+
+	if cfg.RRsetOrder.Method != "" && cfg.RRsetOrder.Method != "none" {
+		features = append(features, fmt.Sprintf("RRset Ordering (%s)", cfg.RRsetOrder.Method))
+	}
+
+	if cfg.StaleAnswers.Enabled {
+		features = append(features, fmt.Sprintf("Stale Answers (max=%s)", cfg.StaleAnswers.MaxStaleTime))
+	}
+
+	if cfg.FetchQuotas.Enabled {
+		features = append(features, fmt.Sprintf("Fetch Quotas (server=%d, zone=%d)", cfg.FetchQuotas.FetchesPerServer, cfg.FetchQuotas.FetchesPerZone))
+	}
+
+	if len(cfg.Views) > 0 {
+		features = append(features, fmt.Sprintf("Views/Split-Horizon (%d views)", len(cfg.Views)))
+	}
+
+	// Print features if any are enabled
+	if len(features) > 0 {
+		fmt.Println("Defensive DNS Features:")
+		for _, feature := range features {
+			fmt.Printf("  • %s\n", feature)
+		}
+		fmt.Println()
+	}
 }
