@@ -33,6 +33,9 @@ type Config struct {
 
 	// View/Split-Horizon Support
 	Views []ViewConfig
+
+	// Broken Record Handling
+	BrokenRecords BrokenRecordConfig
 }
 
 // StaleAnswerConfig controls serving of stale/expired cache entries (RFC 8767)
@@ -109,4 +112,21 @@ type ViewConfig struct {
 	ZonesDir     string   `yaml:"zones_dir"`     // Alternative zones directory for this view
 	Recursion    bool     `yaml:"recursion"`     // Allow recursion for this view
 	Priority     int      `yaml:"priority"`      // View priority (higher = checked first)
+}
+
+// BrokenRecordConfig controls handling of non-RFC-compliant records
+// Useful for migrating from broken DNS providers (looking at you, OCI!)
+type BrokenRecordConfig struct {
+	// Maximum TXT record string length (RFC 1035 says 255, but some providers violate this)
+	// Default: 255 (RFC compliant)
+	// Set higher (e.g., 512, 1024) to accept broken records from cloud providers
+	TXTByteMax int `yaml:"txt_byte_max"`
+
+	// Log warnings when broken records are encountered
+	LogBroken bool `yaml:"log_broken"`
+
+	// Reject broken records instead of accepting them
+	// If false: Accept and serve broken records (compatibility mode)
+	// If true: Reject broken records (strict RFC compliance)
+	RejectBroken bool `yaml:"reject_broken"`
 }

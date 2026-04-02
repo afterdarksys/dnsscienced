@@ -468,6 +468,11 @@ func parseTXTRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 	}
 
 	for _, txt := range txtRecords {
+		// RFC 1035 limits each TXT string to 255 bytes
+		// Some broken DNS providers (OCI!) violate this
+		// Split oversized strings into chunks
+		chunks := chunkTXTString(txt, 255)
+
 		rr := &dns.TXT{
 			Hdr: dns.RR_Header{
 				Name:   owner,
@@ -475,12 +480,31 @@ func parseTXTRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 				Class:  dns.ClassINET,
 				Ttl:    ttl,
 			},
-			Txt: []string{txt},
+			Txt: chunks,
 		}
 		zone.AddRecord(rr)
 	}
 
 	return nil
+}
+
+// chunkTXTString splits a TXT string into RFC-compliant chunks
+// RFC 1035 limits each string in a TXT record to 255 bytes
+func chunkTXTString(s string, maxChunkSize int) []string {
+	if len(s) <= maxChunkSize {
+		return []string{s}
+	}
+
+	var chunks []string
+	for len(s) > 0 {
+		chunkSize := maxChunkSize
+		if len(s) < chunkSize {
+			chunkSize = len(s)
+		}
+		chunks = append(chunks, s[:chunkSize])
+		s = s[chunkSize:]
+	}
+	return chunks
 }
 
 // parseSRVRecords parses SRV records

@@ -167,7 +167,21 @@ def oci_to_dnszone(path: str) -> Dict[str, Any]:
         elif rtype == 'SRV':
             records[owner]['SRV'].append(rdata.rstrip('.'))
         elif rtype == 'CAA':
-            records[owner]['CAA'].append(rdata)
+            # CAA format: flags tag "value"
+            # Example: 0 issue "letsencrypt.org"
+            parts = rdata.split(None, 2)
+            if len(parts) == 3:
+                flags = int(parts[0])
+                tag = parts[1]
+                value = parts[2].strip('"')
+                records[owner]['CAA'].append({
+                    'flags': flags,
+                    'tag': tag,
+                    'value': value
+                })
+            else:
+                # Fallback for malformed CAA
+                records[owner]['CAA'].append(rdata)
         elif rtype == 'PTR':
             records[owner]['PTR'].append(rdata.rstrip('.'))
         else:
@@ -194,12 +208,14 @@ def oci_to_dnszone(path: str) -> Dict[str, Any]:
         doc['mx'] = sorted(mx_list, key=lambda x: (x['priority'], x['host']))
 
     # Convert records dict, simplifying single-value lists
+    # Exception: CAA records must always be lists (parser expects list format)
     if records:
         final_records = {}
         for owner, rtypes in records.items():
             final_records[owner] = {}
             for rtype, values in rtypes.items():
-                if len(values) == 1:
+                # CAA records must always be a list, even with one item
+                if len(values) == 1 and rtype != 'CAA':
                     final_records[owner][rtype] = values[0]
                 else:
                     final_records[owner][rtype] = values

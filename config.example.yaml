@@ -123,6 +123,15 @@ defensive:
     #   recursion: false
     #   priority: 10
 
+  # Broken Record Handling
+  # For dealing with non-RFC-compliant records from broken DNS providers
+  broken_records:
+    txt_byte_max: 255           # RFC 1035 limit (increase for broken providers)
+                                 # OCI had records up to 500+ bytes!
+                                 # Set to 1024 to handle most broken records
+    log_broken: true            # Log warnings when broken records encountered
+    reject_broken: false        # false = accept broken records, true = reject them
+
 # Cache Configuration
 cache:
   enabled: true
