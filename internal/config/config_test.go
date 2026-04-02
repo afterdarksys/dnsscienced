@@ -178,3 +178,189 @@ dhcp:
 	// Verify Subnet Override
 	assert.Equal(t, 12*time.Hour, cfg.DHCP.Subnets[0].Lease.Default)
 }
+
+func TestMastersAndForwarders(t *testing.T) {
+	yamlContent := `
+masters:
+  internal:
+    - "10.0.1.10:53"
+    - "10.0.1.11:53"
+  external:
+    - "8.8.8.8:53"
+    - "1.1.1.1:53"
+
+forwarders:
+  "":
+    - "8.8.8.8:53"
+    - "1.1.1.1:53"
+  "corp.example.com":
+    - "10.0.1.53:53"
+`
+	tmpfile, err := os.CreateTemp("", "dnsscienced-config-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	_, err = tmpfile.Write([]byte(yamlContent))
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	cfg, err := Load(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Verify Masters
+	assert.Len(t, cfg.Masters, 2)
+	assert.Len(t, cfg.Masters["internal"], 2)
+	assert.Equal(t, "10.0.1.10:53", cfg.Masters["internal"][0])
+	assert.Equal(t, "10.0.1.11:53", cfg.Masters["internal"][1])
+	assert.Len(t, cfg.Masters["external"], 2)
+
+	// Verify Forwarders
+	assert.Len(t, cfg.Forwarders, 2)
+	assert.Len(t, cfg.Forwarders[""], 2) // Global forwarders
+	assert.Equal(t, "8.8.8.8:53", cfg.Forwarders[""][0])
+	assert.Len(t, cfg.Forwarders["corp.example.com"], 1)
+	assert.Equal(t, "10.0.1.53:53", cfg.Forwarders["corp.example.com"][0])
+}
+
+func TestZoneConfigs(t *testing.T) {
+	yamlContent := `
+zones:
+  - name: "example.com"
+    type: "primary"
+    file: "/etc/dnsscienced/zones/example.com.zone"
+    enable_0x20: true
+    enable_dnssec: true
+    enable_scrubbing: true
+    allow_transfer:
+      - "192.0.2.0/24"
+    also_notify:
+      - "192.0.2.53:53"
+    dnssec_signing:
+      enabled: true
+      algorithm: "ECDSAP256SHA256"
+      ksk_lifetime: 8760h
+      zsk_lifetime: 2160h
+      signature_validity: 720h
+      signature_refresh: 168h
+      nsec3: true
+      nsec3_iterations: 10
+      nsec3_salt_length: 8
+
+  - name: "secondary.example.com"
+    type: "secondary"
+    masters:
+      - "10.0.1.10:53"
+      - "10.0.1.11:53"
+    transfer_source: "10.0.0.5"
+    refresh_interval: 3600s
+
+  - name: "forward.example.com"
+    type: "forward"
+    forwarders:
+      - "203.0.113.53:53"
+    forward_mode: "only"
+
+  - name: "legacy.example.com"
+    type: "primary"
+    file: "/etc/dnsscienced/zones/legacy.zone"
+    enable_0x20: false
+`
+	tmpfile, err := os.CreateTemp("", "dnsscienced-config-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	_, err = tmpfile.Write([]byte(yamlContent))
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	cfg, err := Load(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Verify number of zones
+	require.Len(t, cfg.Zones, 4)
+
+	// Verify primary zone
+	primaryZone := cfg.Zones[0]
+	assert.Equal(t, "example.com", primaryZone.Name)
+	assert.Equal(t, "primary", primaryZone.Type)
+	assert.Equal(t, "/etc/dnsscienced/zones/example.com.zone", primaryZone.File)
+	require.NotNil(t, primaryZone.Enable0x20)
+	assert.True(t, *primaryZone.Enable0x20)
+	require.NotNil(t, primaryZone.EnableDNSSEC)
+	assert.True(t, *primaryZone.EnableDNSSEC)
+	require.NotNil(t, primaryZone.EnableScrubbing)
+	assert.True(t, *primaryZone.EnableScrubbing)
+	assert.Len(t, primaryZone.AllowTransfer, 1)
+	assert.Equal(t, "192.0.2.0/24", primaryZone.AllowTransfer[0])
+	assert.Len(t, primaryZone.AlsoNotify, 1)
+
+	// Verify DNSSEC signing config
+	require.NotNil(t, primaryZone.DNSSECSigning)
+	assert.True(t, primaryZone.DNSSECSigning.Enabled)
+	assert.Equal(t, "ECDSAP256SHA256", primaryZone.DNSSECSigning.Algorithm)
+	assert.Equal(t, 8760*time.Hour, primaryZone.DNSSECSigning.KSKLifetime)
+	assert.Equal(t, 2160*time.Hour, primaryZone.DNSSECSigning.ZSKLifetime)
+	assert.Equal(t, 720*time.Hour, primaryZone.DNSSECSigning.SignatureValidity)
+	assert.Equal(t, 168*time.Hour, primaryZone.DNSSECSigning.SignatureRefresh)
+	assert.True(t, primaryZone.DNSSECSigning.NSEC3)
+	assert.Equal(t, uint16(10), primaryZone.DNSSECSigning.NSEC3Iterations)
+	assert.Equal(t, uint8(8), primaryZone.DNSSECSigning.NSEC3SaltLength)
+
+	// Verify secondary zone
+	secondaryZone := cfg.Zones[1]
+	assert.Equal(t, "secondary.example.com", secondaryZone.Name)
+	assert.Equal(t, "secondary", secondaryZone.Type)
+	assert.Len(t, secondaryZone.Masters, 2)
+	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
+	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
+	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
+
+	// Verify forward zone
+	forwardZone := cfg.Zones[2]
+	assert.Equal(t, "forward.example.com", forwardZone.Name)
+	assert.Equal(t, "forward", forwardZone.Type)
+	assert.Len(t, forwardZone.Forwarders, 1)
+	assert.Equal(t, "203.0.113.53:53", forwardZone.Forwarders[0])
+	assert.Equal(t, "only", forwardZone.ForwardMode)
+
+	// Verify legacy zone with 0x20 disabled
+	legacyZone := cfg.Zones[3]
+	assert.Equal(t, "legacy.example.com", legacyZone.Name)
+	require.NotNil(t, legacyZone.Enable0x20)
+	assert.False(t, *legacyZone.Enable0x20)
+}
+
+func TestZoneConfigPointerFields(t *testing.T) {
+	// Test per-zone security overrides
+	enable0x20True := true
+	enable0x20False := false
+
+	zones := []ZoneConfig{
+		{
+			Name:       "secure.example.com",
+			Type:       "primary",
+			Enable0x20: &enable0x20True,
+		},
+		{
+			Name:       "legacy.example.com",
+			Type:       "primary",
+			Enable0x20: &enable0x20False,
+		},
+		{
+			Name: "default.example.com",
+			Type: "primary",
+			// Enable0x20 is nil, should use global setting
+		},
+	}
+
+	// Zone 1: explicitly enabled
+	require.NotNil(t, zones[0].Enable0x20)
+	assert.True(t, *zones[0].Enable0x20)
+
+	// Zone 2: explicitly disabled
+	require.NotNil(t, zones[1].Enable0x20)
+	assert.False(t, *zones[1].Enable0x20)
+
+	// Zone 3: nil (use global)
+	assert.Nil(t, zones[2].Enable0x20)
+}

@@ -28,12 +28,75 @@ type Config struct {
 
 	// DHCP Configuration (Placeholder for future implementation)
 	DHCP DHCPConfig `yaml:"dhcp"`
+
+	// Masters - BIND-style secondary zone configuration
+	// Map of zone name to list of master servers
+	Masters map[string][]string `yaml:"masters"`
+
+	// Forwarders - BIND-style conditional forwarding
+	// Map of zone name to list of forward servers (empty string key = global forwarders)
+	Forwarders map[string][]string `yaml:"forwarders"`
+
+	// Zones - per-zone configuration (BIND-style zone stanzas)
+	Zones []ZoneConfig `yaml:"zones"`
 }
 
 // AdminConfig holds admin API configuration
 type AdminConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Listen  string `yaml:"listen"`
+}
+
+// ZoneConfig holds per-zone configuration (BIND-style)
+type ZoneConfig struct {
+	// Zone name (e.g., "example.com.")
+	Name string `yaml:"name"`
+
+	// Zone type: "primary", "secondary", "forward", "stub", "hint"
+	Type string `yaml:"type"`
+
+	// File path for primary zones
+	File string `yaml:"file,omitempty"`
+
+	// Masters for secondary zones (can also use global masters{} block)
+	Masters []string `yaml:"masters,omitempty"`
+
+	// Forwarders for forward zones (can also use global forwarders{} block)
+	Forwarders []string `yaml:"forwarders,omitempty"`
+
+	// Forward mode: "first" (try forwarders first, fall back to recursive) or "only" (only use forwarders)
+	ForwardMode string `yaml:"forward_mode,omitempty"`
+
+	// Security features
+	Enable0x20      *bool `yaml:"enable_0x20,omitempty"`       // Override global 0x20 setting (nil = use global)
+	EnableDNSSEC    *bool `yaml:"enable_dnssec,omitempty"`     // Enable DNSSEC for this zone
+	EnableScrubbing *bool `yaml:"enable_scrubbing,omitempty"`  // Override global scrubbing setting
+
+	// DNSSEC signing configuration (for primary zones)
+	DNSSECSigning *ZoneDNSSECConfig `yaml:"dnssec_signing,omitempty"`
+
+	// AXFR/IXFR configuration
+	AllowTransfer []string `yaml:"allow_transfer,omitempty"` // CIDRs allowed to AXFR
+	AlsoNotify    []string `yaml:"also_notify,omitempty"`    // Additional NOTIFY targets
+
+	// Zone transfer options (for secondary zones)
+	TransferSource string        `yaml:"transfer_source,omitempty"` // Source IP for AXFR
+	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
+}
+
+// ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
+type ZoneDNSSECConfig struct {
+	Enabled           bool          `yaml:"enabled"`
+	Algorithm         string        `yaml:"algorithm"`           // "ECDSAP256SHA256", "ECDSAP384SHA384", "RSASHA256", etc.
+	KSKSize           int           `yaml:"ksk_size,omitempty"`  // Key size for KSK (RSA only)
+	ZSKSize           int           `yaml:"zsk_size,omitempty"`  // Key size for ZSK (RSA only)
+	KSKLifetime       time.Duration `yaml:"ksk_lifetime"`        // KSK rotation interval
+	ZSKLifetime       time.Duration `yaml:"zsk_lifetime"`        // ZSK rotation interval
+	SignatureValidity time.Duration `yaml:"signature_validity"`  // How long signatures are valid
+	SignatureRefresh  time.Duration `yaml:"signature_refresh"`   // Re-sign before expiry
+	NSEC3             bool          `yaml:"nsec3"`               // Use NSEC3 instead of NSEC
+	NSEC3Iterations   uint16        `yaml:"nsec3_iterations"`    // NSEC3 iterations
+	NSEC3SaltLength   uint8         `yaml:"nsec3_salt_length"`   // NSEC3 salt length in bytes
 }
 
 // DHCPConfig holds DHCP server configuration

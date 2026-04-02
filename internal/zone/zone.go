@@ -24,6 +24,9 @@ type Zone struct {
 
 	// DNSSEC configuration
 	DNSSEC *DNSSECConfig
+
+	// Security configuration
+	Security *SecurityConfig
 }
 
 // DNSSECConfig holds DNSSEC settings for a zone
@@ -39,6 +42,21 @@ type DNSSECConfig struct {
 	NSEC3Enabled    bool
 	NSEC3Iterations uint16
 	NSEC3SaltLength uint8
+}
+
+// SecurityConfig holds per-zone security settings
+type SecurityConfig struct {
+	// 0x20 encoding (case randomization for cache poisoning resistance)
+	Enable0x20 *bool // nil = use global setting, true/false = override
+
+	// Response scrubbing (bailiwick checking)
+	EnableScrubbing *bool // nil = use global setting
+
+	// DNSSEC validation (for responses from this zone)
+	ValidateDNSSEC *bool // nil = use global setting
+
+	// QNAME minimization
+	EnableQNAMEMin *bool // nil = use global setting
 }
 
 // Config holds zone file parser configuration

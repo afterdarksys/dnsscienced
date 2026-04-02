@@ -8,13 +8,14 @@ type Config struct {
 	Enabled bool `yaml:"enabled"`
 
 	// Individual protocol enablement flags
-	DNSSD   DnssdConfig   `yaml:"dns_sd"`
-	DoQ     DoQConfig     `yaml:"doq"`
-	DSO     DSOConfig     `yaml:"dso"`
-	DELEG   DelegConfig   `yaml:"deleg"`
-	DID     DIDConfig     `yaml:"did"`
-	IoTDNS  IoTDNSConfig  `yaml:"iot_dns"`
-	PROXYv2 PROXYv2Config `yaml:"proxyv2"`
+	DNSSD        DnssdConfig        `yaml:"dns_sd"`
+	DoQ          DoQConfig          `yaml:"doq"`
+	DSO          DSOConfig          `yaml:"dso"`
+	DELEG        DelegConfig        `yaml:"deleg"`
+	DID          DIDConfig          `yaml:"did"`
+	IoTDNS       IoTDNSConfig       `yaml:"iot_dns"`
+	PROXYv2      PROXYv2Config      `yaml:"proxyv2"`
+	ProtectiveDNS ProtectiveDNSConfig `yaml:"protective_dns"`
 }
 
 // DnssdConfig holds DNS-SD Service Registration Protocol configuration
@@ -191,6 +192,103 @@ type PROXYv2Config struct {
 	RejectNonProxied bool `yaml:"reject_non_proxied"`
 }
 
+// ProtectiveDNSConfig holds Protective DNS configuration
+// draft-liu-dnsop-protective-dns - Considerations for Protective DNS Server Operators
+type ProtectiveDNSConfig struct {
+	// Enable Protective DNS (malicious domain blocking)
+	Enabled bool `yaml:"enabled"`
+
+	// Response rewriting strategy
+	// "redirect" - Redirect to safe IP
+	// "localhost" - Return 127.0.0.1/::1
+	// "cname" - CNAME to landing page
+	// "empty" - Empty answer section
+	// "nxdomain" - Return NXDOMAIN
+	// "servfail" - Return SERVFAIL
+	Strategy string `yaml:"strategy"`
+
+	// Redirect target for "redirect" strategy
+	RedirectIPv4 string `yaml:"redirect_ipv4"`
+	RedirectIPv6 string `yaml:"redirect_ipv6"`
+
+	// CNAME target for "cname" strategy
+	CNAMETarget string `yaml:"cname_target"`
+
+	// Landing page URL (for user notification)
+	LandingPageURL string `yaml:"landing_page_url"`
+
+	// Extended DNS Errors (EDE) - RFC 8914
+	EnableEDE bool `yaml:"enable_ede"` // Add Extended DNS Error codes
+
+	// EDE info code for blocked domains (default: 15 - Blocked)
+	EDEInfoCode uint16 `yaml:"ede_info_code"`
+
+	// EDE extra text message
+	EDEExtraText string `yaml:"ede_extra_text"`
+
+	// Blocklist sources
+	BlocklistFiles []string `yaml:"blocklist_files"` // Local blocklist files
+	BlocklistFeeds []Feed   `yaml:"blocklist_feeds"` // Remote threat feeds
+
+	// Blocklist categories to enable
+	Categories []string `yaml:"categories"` // e.g., ["malware", "phishing", "c2", "cryptomining"]
+
+	// Allowlist (domains to never block)
+	AllowlistFiles []string `yaml:"allowlist_files"`
+	AllowlistDomains []string `yaml:"allowlist_domains"`
+
+	// Blocklist update settings
+	UpdateInterval time.Duration `yaml:"update_interval"` // How often to update feeds
+	AutoUpdate     bool          `yaml:"auto_update"`     // Automatically update feeds
+
+	// Performance tuning
+	BlocklistCacheSize int           `yaml:"blocklist_cache_size"` // In-memory blocklist cache entries
+	LookupTimeout      time.Duration `yaml:"lookup_timeout"`       // Blocklist lookup timeout
+
+	// Logging and monitoring
+	LogBlocks     bool   `yaml:"log_blocks"`      // Log blocked queries
+	LogFile       string `yaml:"log_file"`        // Protective DNS log file
+	LogFormat     string `yaml:"log_format"`      // "json" or "text"
+	MetricsPrefix string `yaml:"metrics_prefix"`  // Prometheus metrics prefix
+
+	// Exemptions
+	ExemptClients []string `yaml:"exempt_clients"` // CIDRs exempt from blocking
+	ExemptDomains []string `yaml:"exempt_domains"` // Domains to never check
+
+	// Fallback behavior on blocklist lookup failure
+	FailOpen bool `yaml:"fail_open"` // true = allow on error, false = block on error
+
+	// DNSSEC handling
+	PreserveDNSSEC bool `yaml:"preserve_dnssec"` // Maintain DNSSEC validation for blocked responses
+
+	// Response customization
+	CustomTTL     uint32 `yaml:"custom_ttl"`      // TTL for rewritten responses (0 = no caching)
+	MinimizeResponse bool `yaml:"minimize_response"` // Minimize response size for blocked queries
+}
+
+// Feed represents a threat intelligence feed
+type Feed struct {
+	Name     string        `yaml:"name"`     // Feed name/identifier
+	URL      string        `yaml:"url"`      // Feed URL
+	Format   string        `yaml:"format"`   // "domains", "hosts", "rpz", "json"
+	Category string        `yaml:"category"` // Threat category: malware, phishing, c2, etc.
+	Enabled  bool          `yaml:"enabled"`  // Enable this feed
+	Priority int           `yaml:"priority"` // Feed priority (higher = checked first)
+	Interval time.Duration `yaml:"interval"` // Update interval (overrides global)
+
+	// Authentication
+	APIKey    string            `yaml:"api_key"`    // API key for authenticated feeds
+	Headers   map[string]string `yaml:"headers"`    // Custom HTTP headers
+
+	// Validation
+	ValidateHTTPS bool `yaml:"validate_https"` // Require HTTPS with valid cert
+	ValidateHash  bool `yaml:"validate_hash"`  // Verify feed integrity hash
+
+	// Filtering
+	IncludePatterns []string `yaml:"include_patterns"` // Only include matching domains
+	ExcludePatterns []string `yaml:"exclude_patterns"` // Exclude matching domains
+}
+
 // DefaultConfig returns default experimental features configuration
 func DefaultConfig() Config {
 	return Config{
@@ -255,6 +353,36 @@ func DefaultConfig() Config {
 			LogHeaders:       false,
 			RejectNonProxied: false,
 		},
+		ProtectiveDNS: ProtectiveDNSConfig{
+			Enabled:      false,
+			Strategy:     "nxdomain",
+			RedirectIPv4: "0.0.0.0",
+			RedirectIPv6: "::",
+			CNAMETarget:  "blocked.dnsscienced.local.",
+			LandingPageURL: "https://blocked.example.com",
+			EnableEDE:    true,
+			EDEInfoCode:  15, // RFC 8914 - Blocked
+			EDEExtraText: "Blocked by Protective DNS: malicious domain",
+			BlocklistFiles: []string{},
+			BlocklistFeeds: []Feed{},
+			Categories:     []string{"malware", "phishing", "c2"},
+			AllowlistFiles: []string{},
+			AllowlistDomains: []string{},
+			UpdateInterval:   24 * time.Hour,
+			AutoUpdate:       true,
+			BlocklistCacheSize: 1000000, // 1M entries
+			LookupTimeout:    100 * time.Millisecond,
+			LogBlocks:        true,
+			LogFile:          "/var/log/dnsscienced/protective.log",
+			LogFormat:        "json",
+			MetricsPrefix:    "protective_dns",
+			ExemptClients:    []string{"127.0.0.0/8", "::1/128"},
+			ExemptDomains:    []string{},
+			FailOpen:         false,
+			PreserveDNSSEC:   false,
+			CustomTTL:        60,
+			MinimizeResponse: true,
+		},
 	}
 }
 
@@ -264,7 +392,8 @@ func (c *Config) IsAnyEnabled() bool {
 		return false
 	}
 	return c.DNSSD.Enabled || c.DoQ.Enabled || c.DSO.Enabled ||
-		c.DELEG.Enabled || c.DID.Enabled || c.IoTDNS.Enabled || c.PROXYv2.Enabled
+		c.DELEG.Enabled || c.DID.Enabled || c.IoTDNS.Enabled ||
+		c.PROXYv2.Enabled || c.ProtectiveDNS.Enabled
 }
 
 // EnabledFeatures returns a list of enabled experimental features
@@ -294,6 +423,9 @@ func (c *Config) EnabledFeatures() []string {
 	}
 	if c.PROXYv2.Enabled {
 		features = append(features, "PROXY Protocol v2 (HAProxy Support)")
+	}
+	if c.ProtectiveDNS.Enabled {
+		features = append(features, "Protective DNS (draft-liu-dnsop-protective-dns)")
 	}
 	return features
 }

@@ -55,11 +55,49 @@ type EDNSConfig struct {
 
 // DNSSECConfig controls DNSSEC validation behavior
 type DNSSECConfig struct {
+	// Validation mode
 	Validation           bool     `yaml:"validation"`               // Enable DNSSEC validation
-	TrustAnchorFile      string   `yaml:"trust_anchor_file"`        // Path to trust anchor file
+	ValidationMode       string   `yaml:"validation_mode"`          // "strict", "permissive", "log-only"
+	TrustAnchorFile      string   `yaml:"trust_anchor_file"`        // Path to trust anchor file (RFC 5011 format)
+	RootKeyFile          string   `yaml:"root_key_file"`            // Path to root KSK file (for bootstrapping)
+
+	// Troubleshooting and compatibility
 	BreakValidation      bool     `yaml:"break_validation"`         // BYPASS validation for troubleshooting
-	PermissiveMode       bool     `yaml:"permissive_mode"`          // Log but don't fail on validation errors
+	PermissiveMode       bool     `yaml:"permissive_mode"`          // Deprecated: use validation_mode instead
 	NegativeTrustAnchors []string `yaml:"negative_trust_anchors"`   // Domains to skip validation
+
+	// Validation behavior
+	AcceptBogus          bool     `yaml:"accept_bogus"`             // Accept bogus responses (set CD bit)
+	RequireAD            bool     `yaml:"require_ad"`               // Require AD bit from upstreams
+	ValidateUpstream     bool     `yaml:"validate_upstream"`        // Validate upstream resolver's AD bit locally
+
+	// Chain of trust
+	ChainValidation      bool     `yaml:"chain_validation"`         // Full chain-of-trust validation
+	DSLookup             bool     `yaml:"ds_lookup"`                // Query parent zones for DS records
+	MaxChainDepth        int      `yaml:"max_chain_depth"`          // Maximum DNSSEC chain depth (default: 20)
+
+	// Caching
+	CachePositive        bool          `yaml:"cache_positive"`       // Cache validated responses
+	CacheNegative        bool          `yaml:"cache_negative"`       // Cache NSEC/NSEC3 proofs
+	CacheBogus           bool          `yaml:"cache_bogus"`          // Cache bogus responses (to avoid re-validation)
+	CacheTTL             time.Duration `yaml:"cache_ttl"`            // TTL for DNSSEC cache entries
+
+	// Key management
+	AutoTrustAnchor      bool          `yaml:"auto_trust_anchor"`    // RFC 5011 automatic trust anchor update
+	TrustAnchorUpdate    time.Duration `yaml:"trust_anchor_update"`  // How often to check for updates
+
+	// Algorithm support
+	DisabledAlgorithms   []string `yaml:"disabled_algorithms"`      // DNSSEC algorithms to reject
+
+	// NSEC/NSEC3 handling
+	NSEC3MaxIterations   uint16   `yaml:"nsec3_max_iterations"`     // Maximum NSEC3 iterations to accept
+	ValidateNSEC         bool     `yaml:"validate_nsec"`            // Validate NSEC/NSEC3 proofs
+
+	// Error handling
+	FailOnBogus          bool     `yaml:"fail_on_bogus"`            // Return SERVFAIL on bogus (vs return bogus data)
+	FailOnMissing        bool     `yaml:"fail_on_missing"`          // SERVFAIL when DNSSEC expected but missing
+	LogValidation        bool     `yaml:"log_validation"`           // Log all validation results
+	LogFailures          bool     `yaml:"log_failures"`             // Log validation failures only
 }
 
 // FetchQuotaConfig controls query limits to upstream servers

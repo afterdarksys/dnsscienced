@@ -2,23 +2,143 @@
 # Comprehensive configuration showing all defensive DNS features
 
 server:
-  listen: "0.0.0.0:53"
-  tcp_listen: "0.0.0.0:53"
-  workers: 4
+  # Listen addresses
+  udp_addr: "0.0.0.0:53"
+  tcp_addr: "0.0.0.0:53"
+  udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
 
-  # Enable authoritative mode
-  authoritative: true
+  # Enable modes
+  enable_authoritative: true     # Enable authoritative server
+  enable_recursive: true         # Enable recursive resolver
 
-  # Enable recursive resolution
-  recursive: true
+  # Recursive resolver configuration
+  recursive:
+    # Upstream resolvers (fallback chain)
+    upstreams:
+      - "8.8.8.8:53"             # Google DNS primary
+      - "8.8.4.4:53"             # Google DNS secondary
+      - "1.1.1.1:53"             # Cloudflare DNS
+
+    timeout: 2s                  # Query timeout per upstream
+    retries: 2                   # Retries per upstream
+
+    # Security features (cache poisoning resistance)
+    enable_0x20: true            # 0x20 encoding (case randomization)
+    enable_scrubbing: true       # Remove out-of-bailiwick records
+    enable_qname_min: true       # QNAME minimization (RFC 7816)
+    validate_dnssec: true        # DNSSEC validation (requires defensive.dnssec.validation)
+
+  # DNS Cookies (RFC 7873) - Off-path attack protection
+  enable_cookies: true
+  cookies:
+    secret: ""                   # Auto-generated if empty
+    rotation_interval: 24h       # Rotate secret every 24 hours
+
+  # Response Rate Limiting (RRL) - DoS protection
+  enable_rrl: true
+  rrl:
+    enabled: true
+    window: 1s
+    responses_per_second: 10
+    errors_per_second: 5
+    nxdomains_per_second: 5
+    ipv4_prefix_length: 24       # /24 subnet grouping
+    ipv6_prefix_length: 56       # /56 subnet grouping
+    slip_ratio: 2                # 1 in 2 gets TC bit
+    exempt_cidrs:                # Exempt from RRL
+      - "127.0.0.0/8"
+      - "::1/128"
 
 # Admin gRPC API for control and monitoring
 admin:
   enabled: true
   listen: "0.0.0.0:9091"
 
-# Zone file directory
+# Zone file directory (for automatic zone loading)
 zones_dir: /opt/dnsscienced/zones
+
+# Masters - BIND-style secondary zone configuration
+# Define lists of master servers for secondary zones
+masters:
+  # master-group-name: [list of IPs]
+  cloudflare:
+    - "1.1.1.1:53"
+    - "1.0.0.1:53"
+  google:
+    - "8.8.8.8:53"
+    - "8.8.4.4:53"
+  internal-primaries:
+    - "10.0.1.10:53"
+    - "10.0.1.11:53"
+
+# Forwarders - BIND-style conditional forwarding
+# Define lists of forwarders for specific zones or global forwarding
+forwarders:
+  # Empty string key = global forwarders (used when no zone-specific forwarders match)
+  "":
+    - "8.8.8.8:53"
+    - "1.1.1.1:53"
+  # Zone-specific forwarders
+  "corp.example.com":
+    - "10.0.1.53:53"
+    - "10.0.2.53:53"
+  "internal.lan":
+    - "192.168.1.1:53"
+
+# Zones - per-zone configuration (BIND-style zone stanzas)
+zones:
+  # Primary zone example
+  - name: "example.com"
+    type: "primary"
+    file: "/etc/dnsscienced/zones/example.com.zone"
+
+    # DNSSEC signing for this zone
+    dnssec_signing:
+      enabled: true
+      algorithm: "ECDSAP256SHA256"
+      ksk_lifetime: 8760h      # 1 year
+      zsk_lifetime: 2160h      # 90 days
+      signature_validity: 720h  # 30 days
+      signature_refresh: 168h   # Re-sign 7 days before expiry
+      nsec3: true
+      nsec3_iterations: 10
+      nsec3_salt_length: 8
+
+    # Zone transfer configuration
+    allow_transfer:
+      - "192.0.2.0/24"         # Allow AXFR from this network
+      - "2001:db8::/32"
+    also_notify:
+      - "192.0.2.53:53"        # Send NOTIFY to these servers
+
+    # Security overrides (per-zone)
+    enable_0x20: true          # Enable 0x20 for this zone
+    enable_dnssec: true        # Enable DNSSEC validation
+    enable_scrubbing: true     # Enable response scrubbing
+
+  # Secondary zone example
+  - name: "slave.example.com"
+    type: "secondary"
+    masters: internal-primaries  # Reference to masters{} block above
+    # Or inline masters:
+    # masters:
+    #   - "10.0.1.10:53"
+    #   - "10.0.1.11:53"
+    transfer_source: "10.0.0.5"  # Source IP for AXFR
+    refresh_interval: 3600s      # Override SOA refresh
+
+  # Forward zone example
+  - name: "partner.example.net"
+    type: "forward"
+    forwarders:
+      - "203.0.113.53:53"
+    forward_mode: "only"         # "only" or "first"
+
+  # Stub zone example
+  - name: "delegated.example.org"
+    type: "stub"
+    masters:
+      - "198.51.100.53:53"
 
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases
@@ -44,12 +164,50 @@ defensive:
 
   # DNSSEC Validation Controls
   dnssec:
-    validation: true            # Enable DNSSEC validation
-    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf
-    break_validation: false     # DANGER: Bypass validation (troubleshooting only!)
-    permissive_mode: false      # Log but don't fail on validation errors
-    negative_trust_anchors: []  # Domains to skip validation (for broken DNSSEC)
-      # - example.com             # Example: broken DNSSEC domain
+    # Validation mode
+    validation: true                    # Enable DNSSEC validation
+    validation_mode: "strict"           # "strict", "permissive", or "log-only"
+    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf  # RFC 5011 format
+    root_key_file: /etc/dnsscienced/root.key                # Root KSK for bootstrapping
+
+    # Troubleshooting and compatibility
+    break_validation: false             # DANGER: Bypass validation (troubleshooting only!)
+    negative_trust_anchors: []          # Domains to skip validation (for broken DNSSEC)
+      # - example.com                   # Example: broken DNSSEC domain
+
+    # Validation behavior
+    accept_bogus: false                 # Accept bogus responses (set CD bit)
+    require_ad: false                   # Require AD bit from upstreams
+    validate_upstream: true             # Validate upstream resolver's AD bit locally
+
+    # Chain of trust
+    chain_validation: true              # Full chain-of-trust validation
+    ds_lookup: true                     # Query parent zones for DS records
+    max_chain_depth: 20                 # Maximum DNSSEC chain depth
+
+    # Caching
+    cache_positive: true                # Cache validated responses
+    cache_negative: true                # Cache NSEC/NSEC3 proofs
+    cache_bogus: true                   # Cache bogus responses (to avoid re-validation)
+    cache_ttl: 3600s                    # TTL for DNSSEC cache entries (1 hour)
+
+    # Key management
+    auto_trust_anchor: true             # RFC 5011 automatic trust anchor update
+    trust_anchor_update: 168h           # Check for updates weekly (7 days)
+
+    # Algorithm support
+    disabled_algorithms: []             # DNSSEC algorithms to reject
+      # - 5                             # Example: Disable RSASHA1
+
+    # NSEC/NSEC3 handling
+    nsec3_max_iterations: 150           # Maximum NSEC3 iterations (RFC 5155)
+    validate_nsec: true                 # Validate NSEC/NSEC3 proofs
+
+    # Error handling
+    fail_on_bogus: true                 # Return SERVFAIL on bogus
+    fail_on_missing: false              # SERVFAIL when DNSSEC expected but missing
+    log_validation: false               # Log all validation results
+    log_failures: true                  # Log validation failures only
 
   # Fetch Quotas and Rate Limiting
   # Control number of simultaneous queries sent to authoritative servers
@@ -131,6 +289,111 @@ defensive:
                                  # Set to 1024 to handle most broken records
     log_broken: true            # Log warnings when broken records encountered
     reject_broken: false        # false = accept broken records, true = reject them
+
+# Experimental Features
+experimental:
+  enabled: false  # Master switch for all experimental features
+
+  # Protective DNS - Malicious Domain Blocking
+  # draft-liu-dnsop-protective-dns
+  protective_dns:
+    enabled: false
+
+    # Response rewriting strategy for blocked domains
+    # Options: "redirect", "localhost", "cname", "empty", "nxdomain", "servfail"
+    strategy: "nxdomain"
+
+    # Redirect targets (for "redirect" strategy)
+    redirect_ipv4: "0.0.0.0"
+    redirect_ipv6: "::"
+
+    # CNAME target (for "cname" strategy)
+    cname_target: "blocked.dnsscienced.local."
+    landing_page_url: "https://blocked.example.com"
+
+    # Extended DNS Errors (RFC 8914)
+    enable_ede: true
+    ede_info_code: 15  # 15 = Blocked
+    ede_extra_text: "Blocked by Protective DNS: malicious domain"
+
+    # Blocklist sources
+    blocklist_files:
+      - "/etc/dnsscienced/blocklists/malware.txt"
+      - "/etc/dnsscienced/blocklists/phishing.txt"
+      - "/etc/dnsscienced/blocklists/c2.txt"
+
+    # Remote threat intelligence feeds
+    blocklist_feeds:
+      # Malware domains feed
+      - name: "malware-domains"
+        url: "https://example.com/feeds/malware-domains.txt"
+        format: "domains"  # "domains", "hosts", "rpz", "json"
+        category: "malware"
+        enabled: true
+        priority: 100
+        interval: 24h
+        # api_key: "your-api-key"  # For authenticated feeds
+
+      # Phishing domains feed
+      - name: "phishing-urls"
+        url: "https://example.com/feeds/phishing.txt"
+        format: "domains"
+        category: "phishing"
+        enabled: true
+        priority: 90
+        interval: 12h
+
+      # C2 servers feed
+      - name: "c2-tracker"
+        url: "https://example.com/feeds/c2.json"
+        format: "json"
+        category: "c2"
+        enabled: true
+        priority: 95
+        interval: 6h
+
+    # Threat categories to block
+    categories:
+      - "malware"
+      - "phishing"
+      - "c2"
+      - "cryptomining"
+      - "spam"
+      - "botnet"
+
+    # Allowlist (domains to never block)
+    allowlist_files:
+      - "/etc/dnsscienced/allowlists/trusted.txt"
+    allowlist_domains:
+      - "example.com"
+      - "trusted.org"
+
+    # Update settings
+    update_interval: 24h
+    auto_update: true
+
+    # Performance
+    blocklist_cache_size: 1000000  # 1M entries
+    lookup_timeout: 100ms
+
+    # Logging
+    log_blocks: true
+    log_file: "/var/log/dnsscienced/protective.log"
+    log_format: "json"  # "json" or "text"
+    metrics_prefix: "protective_dns"
+
+    # Exemptions
+    exempt_clients:
+      - "127.0.0.0/8"
+      - "::1/128"
+    exempt_domains:
+      - "localhost"
+
+    # Behavior
+    fail_open: false  # false = block on error, true = allow on error
+    preserve_dnssec: false
+    custom_ttl: 60  # TTL for blocked responses
+    minimize_response: true
 
 # Cache Configuration
 cache:

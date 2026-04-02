@@ -1,0 +1,82 @@
+# DNSScienced Test Configuration with Defensive Features
+# Test configuration for gdns1 deployment
+
+server:
+  udp_addr: "0.0.0.0:53"
+  tcp_addr: "0.0.0.0:53"
+  udp_listeners: 4
+  enable_authoritative: true
+  enable_recursive: true
+
+# Admin gRPC API
+admin:
+  enabled: true
+  listen: "0.0.0.0:9091"
+
+# Zone file directory
+zones_dir: /opt/dnsscienced/zones
+
+# Defensive DNS Configuration - TESTING
+defensive:
+
+  # EDNS UDP Size Controls - Conservative settings for broken firewalls
+  edns:
+    enabled: true
+    udp_size: 1232              # Conservative size that works through most networks
+    max_udp_size: 4096          # Maximum UDP response size
+
+  # DNS Name Compression - Enabled by default
+  compression:
+    enabled: true               # Enable DNS name compression (RFC 1035)
+    no_case_compress: false     # Standard compression
+
+  # DNS Cookies - Permissive mode for testing
+  cookies:
+    require_server_cookie: false # Don't require cookies yet (testing)
+    strict_validation: false     # Permissive validation
+
+  # Blackhole / ACLs - Disabled for initial testing
+  blackhole:
+    enabled: false
+    action: drop                # "drop" (silent) or "refused"
+    cidrs: []
+
+  # Query Logging - Enable for testing
+  query_logging:
+    enabled: true
+    log_file: /var/log/dnsscienced/queries.log
+    categories:
+      - queries                 # All queries
+      - responses               # All responses
+      - errors                  # Query errors
+    log_noncompliant: true      # Log queries with protocol violations
+
+  # RRset Ordering - Random for load distribution
+  rrset_order:
+    method: random              # "random", "cyclic", "fixed", "none"
+    seed: 0                     # 0 = time-based seed
+
+  # Stale Answers - Disabled for initial testing
+  stale_answers:
+    enabled: false
+    max_stale_time: 168h        # 1 week
+    client_timeout: 1800ms      # 1.8 seconds
+    serve_on_error: true
+
+  # Fetch Quotas - Disabled for initial testing
+  fetch_quotas:
+    enabled: false
+    fetches_per_server: 100
+    fetches_per_zone: 200
+    spillover_quota: 50
+
+  # DNSSEC - Standard settings
+  dnssec:
+    validation: true
+    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf
+    break_validation: false
+    permissive_mode: false
+    negative_trust_anchors: []
+
+  # Views - Disabled for initial testing
+  views: []
