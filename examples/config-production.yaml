@@ -1,0 +1,302 @@
+# DNSScienced Production Configuration
+# Optimized for high-performance, secure DNS serving at scale
+# Target: 1M+ QPS, thousands of zones, enterprise-grade reliability
+
+# Server Configuration
+server:
+  # Listen addresses
+  udp_addr: ":53"
+  tcp_addr: ":53"
+
+  # TCP connection limits (prevent resource exhaustion)
+  max_tcp_connections: 10000     # Maximum concurrent TCP connections
+  tcp_read_timeout: 5s           # Read timeout per connection
+  tcp_write_timeout: 5s          # Write timeout per connection
+  tcp_idle_timeout: 30s          # Idle connection timeout
+
+  # Worker pool configuration
+  workers: 128                   # Should be ~2-4x CPU cores
+  queue_size: 10000              # Pending request queue
+
+  # Performance tuning
+  enable_so_reuseport: true      # Linux kernel load balancing
+  udp_buffer_size: 4096          # UDP receive buffer
+
+# Cache Configuration
+cache:
+  # Entry limits
+  max_entries: 10000000          # 10M cache entries
+  max_memory_mb: 4096            # 4GB memory limit
+  shard_count: 256               # Sharding for concurrency
+
+  # Serve stale configuration
+  serve_stale: true
+  max_stale_ttl: 86400s          # 24 hours stale TTL
+  stale_refresh: true            # Background refresh of stale entries
+
+  # DNSSEC validation mode
+  validation_mode: "log-only"    # Options: pass, log-only, enforced
+
+  # Threat intelligence integration
+  darkapi_key: ""                # Set your threat intelligence API key
+
+# Resolver Configuration
+resolver:
+  # Multiple upstream resolvers for redundancy
+  upstreams:
+    - "8.8.8.8:53"               # Google DNS primary
+    - "8.8.4.4:53"               # Google DNS secondary
+    - "1.1.1.1:53"               # Cloudflare DNS
+    - "1.0.0.1:53"               # Cloudflare DNS secondary
+
+  timeout: 2s
+  retries: 2                     # Retries per upstream
+
+  # Security features
+  enable_0x20: true              # Cache poisoning resistance
+  enable_scrubbing: true         # Remove out-of-bailiwick records
+  enable_qname_min: true         # RFC 7816 QNAME minimization
+  validate_dnssec: false         # Full validation (requires more CPU)
+
+# Root Hints Auto-Update
+roothints:
+  enabled: true                  # Enable automatic root hints updates
+  auto_update: true              # Update automatically on schedule
+  update_interval: 168h          # Check weekly (7 days)
+  hints_path: "/etc/dnsscienced/root.hints"
+  validate_update: true          # Validate before applying
+  backup_old: true               # Keep backups of old hints
+
+# Rate Limiting (Response Rate Limiting)
+rrl:
+  enabled: true
+  window: 1s
+  ipv4_prefix_length: 24         # /24 subnet grouping
+  ipv6_prefix_length: 56         # /56 subnet grouping
+
+  # Rate limits per category
+  responses_per_second: 10       # Normal responses
+  errors_per_second: 5           # SERVFAIL, FORMERR, etc.
+  nxdomains_per_second: 5        # NXDOMAIN responses
+  referrals_per_second: 10       # Referral responses
+
+  # Slip rate (send truncated response instead of drop)
+  slip_ratio: 2                  # 1 in 2 responses gets TC bit
+
+  # Exemptions
+  exempt_clients:
+    - "127.0.0.0/8"
+    - "::1/128"
+
+# Access Control Lists
+acl:
+  default_action: allow          # or "deny"
+
+  # Allowed networks
+  allow:
+    - "0.0.0.0/0"                # Allow all IPv4
+    - "::/0"                     # Allow all IPv6
+
+  # Blocked networks (takes precedence over allow)
+  deny:
+    # - "192.0.2.0/24"           # Example: block test network
+
+# Logging Configuration
+logging:
+  # System logs
+  level: "info"                  # debug, info, warn, error
+  format: "json"                 # json or console
+  output_path: "/var/log/dnsscienced/system.log"
+
+  # Syslog integration
+  syslog: false
+  syslog_addr: "localhost:514"
+
+  # Query logging
+  enable_query_log: true
+  query_log_path: "/var/log/dnsscienced/queries.log"
+  query_log_format: "json"       # json or text
+
+# Metrics & Monitoring
+metrics:
+  enabled: true
+  address: ":9090"               # Prometheus metrics endpoint
+  path: "/metrics"
+
+# Health Checks
+health:
+  enabled: true
+  address: ":8080"
+  endpoints:
+    - path: "/health"            # Liveness probe
+      type: "liveness"
+    - path: "/ready"             # Readiness probe
+      type: "readiness"
+    - path: "/live"              # Simple ping
+      type: "ping"
+
+# Admin Control API
+admin:
+  enabled: true
+  address: ":9091"               # gRPC admin API
+  auth_required: false           # Require authentication (future)
+  # Allowed operations
+  allow_cache_flush: true
+  allow_zone_reload: true
+  allow_shutdown: false          # Disable shutdown in production
+
+# Zone Configuration
+zones:
+  # Directory containing zone files
+  zone_dir: "/etc/dnsscienced/zones"
+
+  # Prefer compiled zones (.dzc) over text
+  prefer_compiled: true
+
+  # Automatic zone compilation
+  auto_compile: true
+  compiled_dir: "/var/cache/dnsscienced/compiled"
+
+  # Zone reload
+  reload_interval: 300s          # Check for changes every 5 minutes
+  reload_on_sighup: true         # Reload on SIGHUP signal
+
+# Views (Split-Horizon DNS)
+views:
+  enabled: false
+  default_view: "default"
+
+  # View definitions
+  # views:
+  #   internal:
+  #     match_clients:
+  #       - "10.0.0.0/8"
+  #       - "172.16.0.0/12"
+  #     zones:
+  #       - "internal.example.com"
+  #
+  #   external:
+  #     match_clients:
+  #       - "0.0.0.0/0"
+  #     zones:
+  #       - "example.com"
+
+# Response Policy Zones (RPZ)
+rpz:
+  enabled: false
+  zones: []
+  # Example:
+  # - name: "malware.rpz"
+  #   file: "/etc/dnsscienced/rpz/malware.zone"
+  #   action: "nxdomain"          # nxdomain, nodata, drop, passthru
+
+# DNSSEC Configuration
+dnssec:
+  enabled: false                 # Enable when you have keys configured
+
+  # Key management
+  keys_dir: "/etc/dnsscienced/keys"
+
+  # Signing configuration
+  auto_sign: false
+  signature_validity: 30d        # 30 days
+  signature_refresh: 7d          # Re-sign 7 days before expiry
+
+  # Key rotation
+  ksk_algorithm: "ECDSAP256SHA256"
+  zsk_algorithm: "ECDSAP256SHA256"
+  ksk_size: 2048
+  zsk_size: 1024
+
+# ThreatScript Integration
+threatscript:
+  enabled: false
+  scripts_dir: "/etc/dnsscienced/threatscripts"
+
+  # Runtime configuration
+  max_execution_time: 100ms
+  max_memory_mb: 128
+
+  # Event filtering
+  on_events:
+    - "query"
+    - "response"
+    - "cache_store"
+    - "threat_detected"
+
+# Experimental Features
+experimental:
+  enabled: false
+
+  # DNS-SD Service Registration Protocol (RFC 9665)
+  dns_sd:
+    enabled: false
+    allow_registration: true
+    default_ttl: 3600s
+    max_services_per_client: 10
+
+  # DNS over QUIC (RFC 9250)
+  doq:
+    enabled: false
+    address: ":853"
+    cert_file: "/etc/dnsscienced/tls/cert.pem"
+    key_file: "/etc/dnsscienced/tls/key.pem"
+    max_streams: 100
+    enable_0rtt: false             # Security vs performance trade-off
+
+  # DNS Stateful Operations (RFC 8490)
+  dso:
+    enabled: false
+    keep_alive: 60s
+    inactivity_timeout: 300s
+    max_sessions: 1000
+
+  # PROXY Protocol v2 (HAProxy support)
+  proxyv2:
+    enabled: false
+    trusted_proxies:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+    require_header: false
+    reject_non_proxied: false
+
+# OS Tuning Recommendations (apply manually via sysctl)
+#
+# Network stack:
+#   net.core.rmem_max = 134217728
+#   net.core.wmem_max = 134217728
+#   net.ipv4.udp_mem = 8388608 12582912 16777216
+#   net.core.netdev_max_backlog = 30000
+#   net.core.somaxconn = 4096
+#
+# File limits (in /etc/security/limits.conf):
+#   dnsscienced soft nofile 1000000
+#   dnsscienced hard nofile 1000000
+#
+# Huge pages (for 4GB+ deployments):
+#   vm.nr_hugepages = 2048
+
+# Production Deployment Checklist:
+#
+# [ ] Set unique darkapi_key for threat intelligence
+# [ ] Configure proper upstream resolvers for your network
+# [ ] Tune max_tcp_connections based on expected load
+# [ ] Set appropriate cache memory limits
+# [ ] Enable query logging only if needed (disk I/O overhead)
+# [ ] Configure log rotation for query logs
+# [ ] Set up Prometheus scraping of :9090/metrics
+# [ ] Configure load balancer health checks to :8080/ready
+# [ ] Apply OS kernel tuning (see above)
+# [ ] Set file descriptor limits
+# [ ] Configure systemd service with proper restart policy
+# [ ] Set up SIGHUP-based reload in deployment automation
+# [ ] Test failover between upstream resolvers
+# [ ] Load test at expected QPS + 20% headroom
+# [ ] Configure backup/restore for zone files
+# [ ] Set up monitoring alerts for:
+#     - Cache hit rate < 80%
+#     - RRL drops > 1000/s
+#     - Upstream failures > 1%
+#     - Memory usage > 90%
+#     - Query latency p99 > 50ms

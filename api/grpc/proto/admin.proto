@@ -1,0 +1,226 @@
+syntax = "proto3";
+
+package dnsscience.v1;
+
+option go_package = "github.com/dnsscience/dnsscienced/api/grpc/proto/pb";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// AdminService provides control plane operations for DNSScienced
+service AdminService {
+  // Cache operations
+  rpc FlushCache(AdminFlushCacheRequest) returns (AdminFlushCacheResponse);
+  rpc GetCacheStats(google.protobuf.Empty) returns (AdminCacheStatsResponse);
+  rpc PurgeCache(AdminPurgeCacheRequest) returns (AdminPurgeCacheResponse);
+
+  // Zone operations
+  rpc RefreshZone(AdminRefreshZoneRequest) returns (AdminRefreshZoneResponse);
+  rpc ListZones(google.protobuf.Empty) returns (AdminListZonesResponse);
+  rpc ReloadZones(google.protobuf.Empty) returns (AdminReloadZonesResponse);
+
+  // Query logging control
+  rpc SetQueryLogging(AdminSetQueryLoggingRequest) returns (AdminSetQueryLoggingResponse);
+  rpc GetQueryLoggingStatus(google.protobuf.Empty) returns (AdminQueryLoggingStatusResponse);
+
+  // Rate limiting control
+  rpc SetRateLimit(AdminSetRateLimitRequest) returns (AdminSetRateLimitResponse);
+  rpc GetRateLimitStatus(google.protobuf.Empty) returns (AdminRateLimitStatusResponse);
+
+  // Server control
+  rpc GetServerStatus(google.protobuf.Empty) returns (AdminServerStatusResponse);
+  rpc GetMetrics(google.protobuf.Empty) returns (AdminMetricsResponse);
+  rpc ShutdownServer(AdminShutdownRequest) returns (AdminShutdownResponse);
+
+  // Connection management
+  rpc ListConnections(AdminListConnectionsRequest) returns (AdminListConnectionsResponse);
+  rpc KillConnection(AdminKillConnectionRequest) returns (AdminKillConnectionResponse);
+}
+
+// Cache operations
+
+message AdminFlushCacheRequest {
+  enum FlushType {
+    ALL = 0;          // Flush entire cache
+    BY_NAME = 1;      // Flush specific name
+    BY_DOMAIN = 2;    // Flush all under domain
+    BY_TLD = 3;       // Flush entire TLD
+    NEGATIVE_ONLY = 4; // Flush only negative cache entries
+    EXPIRED_ONLY = 5;  // Flush expired entries
+  }
+
+  FlushType type = 1;
+  string name = 2;     // For BY_NAME, BY_DOMAIN, BY_TLD
+}
+
+message AdminFlushCacheResponse {
+  uint64 entries_flushed = 1;
+  string message = 2;
+}
+
+message AdminCacheStatsResponse {
+  uint64 hits = 1;
+  uint64 misses = 2;
+  uint64 evictions = 3;
+  uint64 expirations = 4;
+  int32 size = 5;
+  double hit_rate = 6;
+  int64 memory_bytes = 7;
+  int64 max_memory = 8;
+}
+
+message AdminPurgeCacheRequest {
+  string pattern = 1;  // Regex pattern or glob
+  bool regex = 2;      // Use regex vs glob
+}
+
+message AdminPurgeCacheResponse {
+  uint64 entries_purged = 1;
+  repeated string samples = 2; // Sample of purged names
+}
+
+// Zone operations
+
+message AdminRefreshZoneRequest {
+  string zone_name = 1;
+  bool force = 2; // Force refresh even if not changed
+}
+
+message AdminRefreshZoneResponse {
+  bool refreshed = 1;
+  string message = 2;
+  int32 records_loaded = 3;
+}
+
+message AdminListZonesResponse {
+  repeated AdminZoneInfo zones = 1;
+}
+
+message AdminZoneInfo {
+  string name = 1;
+  int32 record_count = 2;
+  google.protobuf.Timestamp last_loaded = 3;
+  string source_file = 4;
+  bool compiled = 5;
+  uint32 serial = 6;
+}
+
+message AdminReloadZonesResponse {
+  int32 zones_reloaded = 1;
+  repeated string failed_zones = 2;
+  string message = 3;
+}
+
+// Query logging
+
+message AdminSetQueryLoggingRequest {
+  bool enabled = 1;
+  string log_path = 2;     // Optional: change log path
+  string format = 3;       // "json" or "text"
+}
+
+message AdminSetQueryLoggingResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminQueryLoggingStatusResponse {
+  bool enabled = 1;
+  string log_path = 2;
+  string format = 3;
+  int64 queries_logged = 4;
+  int64 log_size_bytes = 5;
+}
+
+// Rate limiting
+
+message AdminSetRateLimitRequest {
+  bool enabled = 1;
+  int32 responses_per_second = 2;
+  int32 errors_per_second = 3;
+  int32 nxdomains_per_second = 4;
+  repeated string exempt_clients = 5;
+}
+
+message AdminSetRateLimitResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminRateLimitStatusResponse {
+  bool enabled = 1;
+  int32 responses_per_second = 2;
+  int32 errors_per_second = 3;
+  int32 nxdomains_per_second = 4;
+  uint64 total_dropped = 5;
+  uint64 total_slipped = 6;
+}
+
+// Server status
+
+message AdminServerStatusResponse {
+  string version = 1;
+  google.protobuf.Timestamp start_time = 2;
+  int64 uptime_seconds = 3;
+  int32 goroutines = 4;
+  int64 memory_bytes = 5;
+  int32 zones_loaded = 6;
+  bool healthy = 7;
+  repeated AdminComponentStatus components = 8;
+}
+
+message AdminComponentStatus {
+  string name = 1;
+  bool healthy = 2;
+  string message = 3;
+}
+
+message AdminMetricsResponse {
+  uint64 queries_total = 1;
+  uint64 queries_udp = 2;
+  uint64 queries_tcp = 3;
+  uint64 cache_hits = 4;
+  uint64 cache_misses = 5;
+  uint64 upstream_failures = 6;
+  double avg_latency_ms = 7;
+  double p99_latency_ms = 8;
+}
+
+message AdminShutdownRequest {
+  int32 grace_period_seconds = 1; // Graceful shutdown period
+}
+
+message AdminShutdownResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Connection management
+
+message AdminListConnectionsRequest {
+  string protocol = 1; // "tcp", "udp", or "" for all
+  int32 limit = 2;     // Max connections to return
+}
+
+message AdminListConnectionsResponse {
+  repeated AdminConnectionInfo connections = 1;
+  int32 total_count = 2;
+}
+
+message AdminConnectionInfo {
+  string id = 1;
+  string protocol = 2;
+  string client_ip = 3;
+  int32 client_port = 4;
+  google.protobuf.Timestamp connected_at = 5;
+  int64 queries_served = 6;
+}
+
+message AdminKillConnectionRequest {
+  string connection_id = 1;
+}
+
+message AdminKillConnectionResponse {
+  bool success = 1;
+  string message = 2;
+}

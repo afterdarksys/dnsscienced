@@ -12,8 +12,10 @@ import (
 
 // ResolverConfig holds configuration options for the Resolver.
 type ResolverConfig struct {
-	Upstream        string
+	Upstream        string   // Primary upstream (deprecated, use Upstreams)
+	Upstreams       []string // Multiple upstream servers for fallback
 	Timeout         time.Duration
+	Retries         int  // Number of retries per upstream (default: 2)
 	Enable0x20      bool // Enable 0x20 bit encoding for cache poisoning resistance
 	EnableScrubbing bool // Enable response scrubbing to remove out-of-bailiwick records
 	EnableQNAMEMin  bool // Enable QNAME minimization (RFC 7816)
@@ -23,8 +25,14 @@ type ResolverConfig struct {
 // DefaultResolverConfig returns a secure default configuration.
 func DefaultResolverConfig() ResolverConfig {
 	return ResolverConfig{
-		Upstream:        "8.8.8.8:53",
+		Upstream: "8.8.8.8:53", // Deprecated fallback
+		Upstreams: []string{
+			"8.8.8.8:53",      // Google DNS primary
+			"8.8.4.4:53",      // Google DNS secondary
+			"1.1.1.1:53",      // Cloudflare DNS
+		},
 		Timeout:         2 * time.Second,
+		Retries:         2,
 		Enable0x20:      true,
 		EnableScrubbing: true,
 		EnableQNAMEMin:  true,
@@ -49,6 +57,19 @@ func NewResolver(upstream string) *Resolver {
 
 // NewResolverWithConfig creates a Resolver with explicit configuration.
 func NewResolverWithConfig(cfg ResolverConfig) *Resolver {
+	// Ensure Upstreams is populated
+	if len(cfg.Upstreams) == 0 && cfg.Upstream != "" {
+		cfg.Upstreams = []string{cfg.Upstream}
+	}
+	if len(cfg.Upstreams) == 0 {
+		cfg.Upstreams = []string{"8.8.8.8:53"}
+	}
+
+	// Set default retries if not specified
+	if cfg.Retries == 0 {
+		cfg.Retries = 2
+	}
+
 	return &Resolver{
 		Config: cfg,
 		Client: &dns.Client{
@@ -93,10 +114,10 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype string, class
 	requestDNSSEC := dnssec || r.Config.ValidateDNSSEC
 	m.SetEdns0(4096, requestDNSSEC)
 
-	// 3. Exchange with upstream
-	in, rtt, err := r.Client.ExchangeContext(ctx, m, r.Config.Upstream)
+	// 3. Exchange with upstream (with retry and fallback)
+	in, rtt, err := r.exchangeWithFallback(ctx, m)
 	if err != nil {
-		return nil, fmt.Errorf("upstream query failed: %w", err)
+		return nil, fmt.Errorf("all upstream queries failed: %w", err)
 	}
 
 	// 4. Validate 0x20 response if enabled
@@ -180,11 +201,11 @@ func (r *Resolver) ResolveRaw(ctx context.Context, name string, qtype uint16, qc
 		m.SetEdns0(4096, requestDNSSEC)
 	}
 
-	// 3. Exchange with upstream
+	// 3. Exchange with upstream (with retry and fallback)
 	// optimization: client.ExchangeContext reuses connections if Transport is configured right
-	in, rtt, err := r.Client.ExchangeContext(ctx, m, r.Config.Upstream)
+	in, rtt, err := r.exchangeWithFallback(ctx, m)
 	if err != nil {
-		return nil, fmt.Errorf("upstream query failed: %w", err)
+		return nil, fmt.Errorf("all upstream queries failed: %w", err)
 	}
 
 	// 4. Validate 0x20 response
@@ -276,4 +297,56 @@ func convertRRs(rrs []dns.RR) []ports.ResourceRecord {
 		})
 	}
 	return out
+}
+
+// exchangeWithFallback attempts to exchange a DNS message with retry and fallback
+// Tries each upstream server with retries before moving to the next
+func (r *Resolver) exchangeWithFallback(ctx context.Context, m *dns.Msg) (*dns.Msg, time.Duration, error) {
+	var lastErr error
+	var totalRTT time.Duration
+
+	// Try each upstream
+	for _, upstream := range r.Config.Upstreams {
+		// Retry loop for current upstream
+		for attempt := 0; attempt <= r.Config.Retries; attempt++ {
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			default:
+			}
+
+			// Attempt exchange
+			in, rtt, err := r.Client.ExchangeContext(ctx, m, upstream)
+			totalRTT += rtt
+
+			if err == nil {
+				// Success!
+				return in, rtt, nil
+			}
+
+			// Record error and retry
+			lastErr = fmt.Errorf("%s: %w", upstream, err)
+
+			// Exponential backoff before retry (only if not last attempt)
+			if attempt < r.Config.Retries {
+				backoff := time.Duration(100*(1<<attempt)) * time.Millisecond
+				if backoff > time.Second {
+					backoff = time.Second
+				}
+
+				select {
+				case <-time.After(backoff):
+					// Continue to retry
+				case <-ctx.Done():
+					return nil, totalRTT, ctx.Err()
+				}
+			}
+		}
+
+		// All retries for this upstream failed, try next upstream
+	}
+
+	// All upstreams exhausted
+	return nil, totalRTT, fmt.Errorf("all upstreams failed, last error: %w", lastErr)
 }

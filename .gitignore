@@ -1,0 +1,60 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# DNSScienced binaries
+/dnsscienced
+/dnsscienced-admin
+/dnsscienced-compile
+/dnsscienced-roothints
+/dnsscienced-log
+/dnsscience-grpc
+/dnscraft
+
+# Build artifacts
+/cmd/dnsscienced/dnsscienced
+/cmd/dnsscienced-admin/dnsscienced-admin
+/cmd/dnsscienced-compile/dnsscienced-compile
+/cmd/dnsscienced-roothints/dnsscienced-roothints
+/cmd/dnsscienced-log/dnsscienced-log
+/cmd/dnsscience-grpc/dnsscience-grpc
+/tools/dnscraft/dnscraft
+
+# Compiled zone files
+*.dzc
+
+# Log files
+*.log
+
+# Configuration files with secrets
+*-local.yaml
+*.key
+*.pem
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Linux compiled binaries
+dnsscienced-linux

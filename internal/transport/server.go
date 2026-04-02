@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/miekg/dns"
@@ -23,17 +24,27 @@ type ServerConfig struct {
 	Enable0x20      bool
 	EnableScrubbing bool
 	EnableQNAMEMin  bool
+
+	// TCP connection limits
+	MaxTCPConnections int           // Maximum concurrent TCP connections (default: 1000)
+	TCPReadTimeout    time.Duration // TCP read timeout (default: 5s)
+	TCPWriteTimeout   time.Duration // TCP write timeout (default: 5s)
+	TCPIdleTimeout    time.Duration // TCP idle timeout (default: 30s)
 }
 
 // DefaultServerConfig returns a configuration with sensible defaults.
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		UDPAddr:         ":53",
-		TCPAddr:         ":53",
-		Upstream:        "8.8.8.8:53",
-		Enable0x20:      true,
-		EnableScrubbing: true,
-		EnableQNAMEMin:  true,
+		UDPAddr:           ":53",
+		TCPAddr:           ":53",
+		Upstream:          "8.8.8.8:53",
+		Enable0x20:        true,
+		EnableScrubbing:   true,
+		EnableQNAMEMin:    true,
+		MaxTCPConnections: 1000,
+		TCPReadTimeout:    5 * time.Second,
+		TCPWriteTimeout:   5 * time.Second,
+		TCPIdleTimeout:    30 * time.Second,
 	}
 }
 
@@ -50,6 +61,12 @@ type Server struct {
 	udpServer *dns.Server
 	tcpServer *dns.Server
 	running   bool
+
+	// Goroutine lifecycle management
+	ctx        context.Context
+	cancel     context.CancelFunc
+	serverWg   sync.WaitGroup
+	serverErrs chan error
 }
 
 // NewServer creates a new DNS server.
@@ -61,12 +78,17 @@ func NewServer(cfg ServerConfig) *Server {
 		EnableQNAMEMin:  cfg.EnableQNAMEMin,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Server{
-		config:   cfg,
-		resolver: engine.NewResolverWithConfig(resolverCfg),
-		acl:      engine.NewACL(true), // Default allow
-		limiter:  engine.NewRateLimiter(engine.DefaultRateLimiterConfig()),
-		rpz:      engine.NewRPZAggregate(),
+		config:     cfg,
+		resolver:   engine.NewResolverWithConfig(resolverCfg),
+		acl:        engine.NewACL(true), // Default allow
+		limiter:    engine.NewRateLimiter(engine.DefaultRateLimiterConfig()),
+		rpz:        engine.NewRPZAggregate(),
+		ctx:        ctx,
+		cancel:     cancel,
+		serverErrs: make(chan error, 2), // Buffer for UDP and TCP errors
 	}
 }
 
@@ -103,30 +125,59 @@ func (s *Server) Start() error {
 	// Create the DNS handler
 	handler := dns.HandlerFunc(s.handleDNS)
 
-	// Start UDP server
+	// Start UDP server with timeouts
 	if s.config.UDPAddr != "" {
 		s.udpServer = &dns.Server{
-			Addr:    s.config.UDPAddr,
-			Net:     "udp",
-			Handler: handler,
+			Addr:         s.config.UDPAddr,
+			Net:          "udp",
+			Handler:      handler,
+			ReadTimeout:  s.config.TCPReadTimeout,  // Apply same timeout to UDP
+			WriteTimeout: s.config.TCPWriteTimeout,
+			UDPSize:      4096, // Maximum UDP payload size
 		}
+
+		s.serverWg.Add(1)
 		go func() {
+			defer s.serverWg.Done()
+
 			if err := s.udpServer.ListenAndServe(); err != nil {
-				// Log error
+				select {
+				case s.serverErrs <- fmt.Errorf("UDP server error: %w", err):
+				case <-s.ctx.Done():
+					// Server is shutting down, ignore error
+				default:
+					// Error channel full, drop error
+				}
 			}
 		}()
 	}
 
-	// Start TCP server
+	// Start TCP server with connection limits
 	if s.config.TCPAddr != "" {
 		s.tcpServer = &dns.Server{
-			Addr:    s.config.TCPAddr,
-			Net:     "tcp",
-			Handler: handler,
+			Addr:         s.config.TCPAddr,
+			Net:          "tcp",
+			Handler:      handler,
+			ReadTimeout:  s.config.TCPReadTimeout,
+			WriteTimeout: s.config.TCPWriteTimeout,
+			IdleTimeout: func() time.Duration {
+				return s.config.TCPIdleTimeout
+			},
+			MaxTCPQueries: s.config.MaxTCPConnections,
 		}
+
+		s.serverWg.Add(1)
 		go func() {
+			defer s.serverWg.Done()
+
 			if err := s.tcpServer.ListenAndServe(); err != nil {
-				// Log error
+				select {
+				case s.serverErrs <- fmt.Errorf("TCP server error: %w", err):
+				case <-s.ctx.Done():
+					// Server is shutting down, ignore error
+				default:
+					// Error channel full, drop error
+				}
 			}
 		}()
 	}
@@ -138,12 +189,16 @@ func (s *Server) Start() error {
 // Stop stops the DNS server.
 func (s *Server) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.running {
+		s.mu.Unlock()
 		return nil
 	}
+	s.mu.Unlock()
 
+	// Cancel context to signal goroutines
+	s.cancel()
+
+	// Shutdown DNS servers
 	if s.udpServer != nil {
 		s.udpServer.Shutdown()
 	}
@@ -151,12 +206,52 @@ func (s *Server) Stop() error {
 		s.tcpServer.Shutdown()
 	}
 
+	// Wait for server goroutines to complete
+	s.serverWg.Wait()
+
+	// Close error channel
+	close(s.serverErrs)
+
+	s.mu.Lock()
 	s.running = false
+	s.mu.Unlock()
+
 	return nil
 }
 
-// handleDNS processes incoming DNS requests.
-func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
+// Errors returns a channel that receives server errors
+// Useful for monitoring server health
+func (s *Server) Errors() <-chan error {
+	return s.serverErrs
+}
+
+// handleDNS processes incoming DNS requests with panic recovery.
+func (s *Server) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
+	// Panic recovery - prevent server crashes
+	defer func() {
+		if panicVal := recover(); panicVal != nil {
+			// Log the panic with stack trace
+			fmt.Printf("[PANIC] DNS handler panic: %v\n", panicVal)
+
+			// Return SERVFAIL to client
+			m := new(dns.Msg)
+			m.SetRcode(req, dns.RcodeServerFailure)
+			w.WriteMsg(m)
+		}
+	}()
+
+	// Check if server is shutting down
+	select {
+	case <-s.ctx.Done():
+		// Server is shutting down, return SERVFAIL
+		m := new(dns.Msg)
+		m.SetRcode(req, dns.RcodeServerFailure)
+		w.WriteMsg(m)
+		return
+	default:
+		// Continue processing
+	}
+
 	// Get client IP
 	var clientIP net.IP
 	switch addr := w.RemoteAddr().(type) {
@@ -169,7 +264,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// 1. Access Control Check
 	if !s.acl.IsAllowed(clientIP) {
 		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeRefused)
+		m.SetRcode(req, dns.RcodeRefused)
 		appendEDE(m, 15, "Blocked by ACL") // 15 = Blocked
 		w.WriteMsg(m)
 		return
@@ -178,19 +273,19 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// 2. Rate Limiting Check
 	if !s.limiter.Allow(clientIP) {
 		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeRefused)
+		m.SetRcode(req, dns.RcodeRefused)
 		appendEDE(m, 15, "Rate Limited") // 15 = Blocked
 		w.WriteMsg(m)
 		return
 	}
 
 	// 3. DNS Type ANY Amplification & DLP Check
-	if len(r.Question) > 0 {
-		q := r.Question[0]
-		
+	if len(req.Question) > 0 {
+		q := req.Question[0]
+
 		if q.Qtype == dns.TypeANY {
 			m := new(dns.Msg)
-			m.SetRcode(r, dns.RcodeNotImplemented)
+			m.SetRcode(req, dns.RcodeNotImplemented)
 			appendEDE(m, 15, "ANY queries unsupported") // 15 = Blocked
 			w.WriteMsg(m)
 			return
@@ -198,7 +293,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		if len(q.Name) > 60 && engine.IsDataExfiltration(q.Name) {
 			m := new(dns.Msg)
-			m.SetRcode(r, dns.RcodeRefused)
+			m.SetRcode(req, dns.RcodeRefused)
 			appendEDE(m, 4, "Exfiltration Blocked") // 4 = Forged Answer
 			w.WriteMsg(m)
 			return
@@ -207,7 +302,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		// 4. RPZ Check (pre-resolution)
 		rule, action := s.rpz.Check(q.Name)
 		if rule != nil && action != engine.RPZActionPassthru {
-			m := s.handleRPZAction(r, rule, action)
+			m := s.handleRPZAction(req, rule, action)
 			if m != nil {
 				appendEDE(m, 17, "RPZ Filtered") // 17 = Filtered
 				w.WriteMsg(m)
@@ -216,11 +311,11 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	// 4. Resolve the query
-	resp, err := s.HandleDNS(context.Background(), r)
+	// 4. Resolve the query (use server context for cancellation)
+	resp, err := s.HandleDNS(s.ctx, req)
 	if err != nil {
 		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeServerFailure)
+		m.SetRcode(req, dns.RcodeServerFailure)
 		w.WriteMsg(m)
 		return
 	}

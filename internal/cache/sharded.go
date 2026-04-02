@@ -2,6 +2,7 @@ package cache
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,10 @@ type Entry struct {
 	QType  uint16
 	QClass uint16
 
+	// Negative caching (RFC 2308)
+	IsNegative bool   // True for NXDOMAIN and NODATA responses
+	NegType    string // "NXDOMAIN" or "NODATA"
+
 	// Threat Intelligence Metadata
 	ThreatScore  int32
 	Categories   []string
@@ -75,11 +80,51 @@ func (e *Entry) IsStale(maxStale time.Duration) bool {
 	return time.Since(e.ExpiresAt) < maxStale
 }
 
+// estimateSize estimates the memory size of this entry in bytes
+func (e *Entry) estimateSize() int64 {
+	size := int64(0)
+
+	// Wire format data
+	size += int64(len(e.Data))
+
+	// Fixed-size fields
+	size += 8  // ExpiresAt (time.Time is 3 words on 64-bit)
+	size += 4  // OrigTTL
+	size += 8  // Hits (atomic.Uint64)
+	size += 1  // DNSSECValidated
+	size += 1  // DNSSECBogus
+	size += 2  // QType
+	size += 2  // QClass
+
+	// String fields
+	size += int64(len(e.QName))
+	size += int64(len(e.Reputation))
+	size += int64(len(e.ThreatSource))
+
+	// Slice overhead + content
+	size += int64(len(e.Categories) * 16) // approximate string slice overhead
+	for _, cat := range e.Categories {
+		size += int64(len(cat))
+	}
+
+	// Threat metadata
+	size += 4  // ThreatScore
+	size += 16 // FirstSeen
+	size += 16 // LastSeen
+
+	// Map entry overhead (hash key + pointer)
+	size += 8 + 8
+
+	return size
+}
+
 // shard represents a single cache shard with its own lock
 type shard struct {
-	mu      sync.RWMutex
-	entries map[uint64]*Entry // Keyed by hash
-	maxSize int
+	mu          sync.RWMutex
+	entries     map[uint64]*Entry // Keyed by hash
+	maxSize     int
+	memoryUsed  atomic.Int64      // Current memory usage in bytes
+	maxMemory   int64             // Maximum memory per shard in bytes
 }
 
 // ShardedCache implements a thread-safe, lock-contention-free cache
@@ -123,6 +168,9 @@ type Config struct {
 
 	// Number of shards (default 256)
 	ShardCount int `yaml:"shard_count"`
+
+	// Memory limits (bytes)
+	MaxMemoryMB int `yaml:"max_memory_mb"` // Maximum cache memory in MB
 
 	// Serve stale configuration
 	ServeStale   bool          `yaml:"serve_stale"`
@@ -175,11 +223,19 @@ func NewShardedCache(cfg Config) *ShardedCache {
 		stopCleanup:    make(chan struct{}),
 	}
 
+	// Calculate memory limit per shard
+	var maxMemoryPerShard int64
+	if cfg.MaxMemoryMB > 0 {
+		totalMemory := int64(cfg.MaxMemoryMB) * 1024 * 1024 // Convert MB to bytes
+		maxMemoryPerShard = totalMemory / int64(cfg.ShardCount)
+	}
+
 	// Initialize shards
 	for i := 0; i < cfg.ShardCount; i++ {
 		c.shards[i] = &shard{
-			entries: make(map[uint64]*Entry, shardSize),
-			maxSize: shardSize,
+			entries:   make(map[uint64]*Entry, shardSize),
+			maxSize:   shardSize,
+			maxMemory: maxMemoryPerShard,
 		}
 	}
 
@@ -260,14 +316,33 @@ func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 		c.broadcaster.PublishStore(entry)
 	}
 
-	// Check if we need to evict
-	if len(shard.entries) >= shard.maxSize {
-		// Simple LRU: remove oldest entry
-		// In production, use a better eviction policy
+	// Calculate entry size
+	entrySize := entry.estimateSize()
+
+	// Check if we need to evict based on size or memory
+	needsEviction := len(shard.entries) >= shard.maxSize
+
+	// Memory-aware eviction
+	if shard.maxMemory > 0 {
+		currentMemory := shard.memoryUsed.Load()
+		if currentMemory+entrySize > shard.maxMemory {
+			needsEviction = true
+		}
+	}
+
+	if needsEviction {
 		c.evictOldest(shard)
 	}
 
+	// Remove old entry if replacing
+	if oldEntry, exists := shard.entries[hash]; exists {
+		oldSize := oldEntry.estimateSize()
+		shard.memoryUsed.Add(-oldSize)
+	}
+
+	// Add new entry
 	shard.entries[hash] = entry
+	shard.memoryUsed.Add(entrySize)
 }
 
 // Delete removes an entry from cache
@@ -275,35 +350,37 @@ func (c *ShardedCache) Delete(hash uint64) {
 	shard := c.getShard(hash)
 
 	shard.mu.Lock()
-	delete(shard.entries, hash)
+	if entry, exists := shard.entries[hash]; exists {
+		entrySize := entry.estimateSize()
+		shard.memoryUsed.Add(-entrySize)
+		delete(shard.entries, hash)
+	}
 	shard.mu.Unlock()
 }
 
 // evictOldest removes the oldest entry from a shard (must hold lock)
 func (c *ShardedCache) evictOldest(s *shard) {
 	var oldestHash uint64
+	var oldestEntry *Entry
 	var oldestTime time.Time
 	first := true
 
 	for hash, entry := range s.entries {
 		if first || entry.ExpiresAt.Before(oldestTime) {
 			oldestHash = hash
+			oldestEntry = entry
 			oldestTime = entry.ExpiresAt
 			first = false
 		}
 	}
 
-	if !first {
+	if !first && oldestEntry != nil {
+		// Update memory tracking
+		entrySize := oldestEntry.estimateSize()
+		s.memoryUsed.Add(-entrySize)
+
 		delete(s.entries, oldestHash)
 		c.evictions.Add(1)
-		// Publish Evict Event? Maybe.
-		// For Streaming Intelligence, we care most about Adds.
-		// But let's add it for completeness.
-		// NOTE: broadcaster.Publish needs an Entry. We need to retrieve it before deleting.
-		// But we don't have the entry here locally easily without re-lookup or keeping reference.
-		// Loop implementation kept 'oldestTime', but we didn't keep 'oldestEntry'.
-		// Let's optimize: skip evict event for now to save lookup cost, unless we really need it.
-		// Actually, let's keep it simple.
 	}
 }
 
@@ -312,6 +389,7 @@ func (c *ShardedCache) Flush() {
 	for _, shard := range c.shards {
 		shard.mu.Lock()
 		shard.entries = make(map[uint64]*Entry, shard.maxSize)
+		shard.memoryUsed.Store(0)
 		shard.mu.Unlock()
 	}
 }
@@ -338,25 +416,39 @@ func (c *ShardedCache) performCleanup() {
 	for _, shard := range c.shards {
 		shard.mu.Lock()
 
-		// Collect expired keys
-		var expired []uint64
+		// Collect expired keys and their entries for memory tracking
+		type expiredEntry struct {
+			hash uint64
+			size int64
+		}
+		var expired []expiredEntry
+
 		for hash, entry := range shard.entries {
+			shouldExpire := false
 			if c.serveStale {
 				// Only remove if beyond serve-stale window
 				if entry.IsExpired() && !entry.IsStale(c.maxStaleTTL) {
-					expired = append(expired, hash)
+					shouldExpire = true
 				}
 			} else {
 				// Remove all expired
 				if entry.IsExpired() {
-					expired = append(expired, hash)
+					shouldExpire = true
 				}
+			}
+
+			if shouldExpire {
+				expired = append(expired, expiredEntry{
+					hash: hash,
+					size: entry.estimateSize(),
+				})
 			}
 		}
 
-		// Delete expired entries
-		for _, hash := range expired {
-			delete(shard.entries, hash)
+		// Delete expired entries and update memory tracking
+		for _, exp := range expired {
+			delete(shard.entries, exp.hash)
+			shard.memoryUsed.Add(-exp.size)
 			c.expirations.Add(1)
 		}
 
@@ -377,6 +469,8 @@ type Stats struct {
 	Expirations uint64
 	Size        int
 	HitRate     float64
+	MemoryBytes int64
+	MaxMemory   int64
 }
 
 // GetStats returns current cache statistics
@@ -390,11 +484,15 @@ func (c *ShardedCache) GetStats() Stats {
 		hitRate = float64(hits) / float64(total)
 	}
 
-	// Count total entries across all shards
+	// Count total entries and memory across all shards
 	size := 0
+	var memoryBytes int64
+	var maxMemory int64
 	for _, shard := range c.shards {
 		shard.mu.RLock()
 		size += len(shard.entries)
+		memoryBytes += shard.memoryUsed.Load()
+		maxMemory += shard.maxMemory
 		shard.mu.RUnlock()
 	}
 
@@ -405,6 +503,8 @@ func (c *ShardedCache) GetStats() Stats {
 		Expirations: c.expirations.Load(),
 		Size:        size,
 		HitRate:     hitRate,
+		MemoryBytes: memoryBytes,
+		MaxMemory:   maxMemory,
 	}
 }
 
@@ -434,4 +534,13 @@ func (c *ShardedCache) Subscribe() chan *pb.CacheEvent {
 // Unsubscribe removes a channel from subscription
 func (c *ShardedCache) Unsubscribe(ch chan *pb.CacheEvent) {
 	c.broadcaster.Unsubscribe(ch)
+}
+
+// HashKey generates a cache key hash for a given query
+func HashKey(qname string, qtype uint16, qclass uint16) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(qname))
+	h.Write([]byte{byte(qtype >> 8), byte(qtype)})
+	h.Write([]byte{byte(qclass >> 8), byte(qclass)})
+	return h.Sum64()
 }
