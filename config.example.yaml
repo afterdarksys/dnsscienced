@@ -323,34 +323,214 @@ experimental:
       - "/etc/dnsscienced/blocklists/c2.txt"
 
     # Remote threat intelligence feeds
+    # NOTE: All feeds disabled by default - enable after verifying access
     blocklist_feeds:
-      # Malware domains feed
-      - name: "malware-domains"
-        url: "https://example.com/feeds/malware-domains.txt"
-        format: "domains"  # "domains", "hosts", "rpz", "json"
+      # === Malware Domains ===
+
+      # URLhaus Malware URL Feed (abuse.ch)
+      # Free, no auth required
+      - name: "urlhaus-malware"
+        url: "https://urlhaus.abuse.ch/downloads/hostfile/"
+        format: "hosts"
         category: "malware"
-        enabled: true
-        priority: 100
-        interval: 24h
-        # api_key: "your-api-key"  # For authenticated feeds
-
-      # Phishing domains feed
-      - name: "phishing-urls"
-        url: "https://example.com/feeds/phishing.txt"
-        format: "domains"
-        category: "phishing"
-        enabled: true
-        priority: 90
-        interval: 12h
-
-      # C2 servers feed
-      - name: "c2-tracker"
-        url: "https://example.com/feeds/c2.json"
-        format: "json"
-        category: "c2"
-        enabled: true
+        enabled: false  # Enable after verifying access
         priority: 95
         interval: 6h
+        validate_https: true
+
+      # MalwareDomainList.com
+      # Free, no auth required
+      - name: "malwaredomainlist"
+        url: "https://www.malwaredomainlist.com/hostslist/hosts.txt"
+        format: "hosts"
+        category: "malware"
+        enabled: false  # Enable after verifying access
+        priority: 90
+        interval: 12h
+        validate_https: true
+
+      # Malware Domain Blocklist (RiskIQ/Microsoft)
+      # Free, no auth required
+      - name: "malware-filter"
+        url: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt"
+        format: "domains"
+        category: "malware"
+        enabled: false  # Enable after verifying access
+        priority: 92
+        interval: 24h
+        validate_https: true
+
+      # === Phishing Domains ===
+
+      # OpenPhish Community Feed
+      # Free, no auth required
+      - name: "openphish"
+        url: "https://openphish.com/feed.txt"
+        format: "domains"
+        category: "phishing"
+        enabled: false  # Enable after verifying access
+        priority: 95
+        interval: 1h
+        validate_https: true
+
+      # PhishTank
+      # Free, requires API key
+      - name: "phishtank"
+        url: "https://data.phishtank.com/data/online-valid.csv"
+        format: "domains"
+        category: "phishing"
+        enabled: false  # Enable after getting API key
+        priority: 93
+        interval: 1h
+        # api_key: "YOUR_PHISHTANK_API_KEY"
+        validate_https: true
+
+      # CertStream Suspicious Domains
+      # Free, no auth required
+      - name: "certstream-suspicious"
+        url: "https://raw.githubusercontent.com/x0rzkov/github-trending-repos/master/phishing/domain-list.txt"
+        format: "domains"
+        category: "phishing"
+        enabled: false  # Enable after verifying access
+        priority: 85
+        interval: 6h
+        validate_https: true
+
+      # === Command & Control (C2) Servers ===
+
+      # Feodo Tracker (abuse.ch)
+      # Free, no auth required
+      - name: "feodo-c2"
+        url: "https://feodotracker.abuse.ch/downloads/domainblocklist.txt"
+        format: "domains"
+        category: "c2"
+        enabled: false  # Enable after verifying access
+        priority: 98
+        interval: 5m
+        validate_https: true
+
+      # SSL Blacklist (abuse.ch)
+      # Free, no auth required
+      - name: "sslbl-c2"
+        url: "https://sslbl.abuse.ch/blacklist/dnsblacklist.txt"
+        format: "domains"
+        category: "c2"
+        enabled: false  # Enable after verifying access
+        priority: 97
+        interval: 15m
+        validate_https: true
+
+      # ThreatFox IOC Feed (abuse.ch)
+      # Free, no auth required
+      - name: "threatfox-c2"
+        url: "https://threatfox.abuse.ch/export/csv/recent/"
+        format: "domains"
+        category: "c2"
+        enabled: false  # Enable after verifying access
+        priority: 96
+        interval: 1h
+        validate_https: true
+
+      # === Ransomware ===
+
+      # Ransomware Tracker (abuse.ch)
+      # Free, no auth required
+      - name: "ransomware-tracker"
+        url: "https://ransomwaretracker.abuse.ch/downloads/RW_DOMBL.txt"
+        format: "domains"
+        category: "malware"
+        enabled: false  # Enable after verifying access
+        priority: 99
+        interval: 5m
+        validate_https: true
+
+      # === Cryptomining ===
+
+      # Cryptojacking/Cryptomining domains
+      # Free, no auth required
+      - name: "nocoin"
+        url: "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt"
+        format: "hosts"
+        category: "cryptomining"
+        enabled: false  # Enable after verifying access
+        priority: 88
+        interval: 24h
+        validate_https: true
+
+      # === Botnets ===
+
+      # Botnet C2 Feed (Shadowserver)
+      # Free, registration required
+      - name: "shadowserver-botnet"
+        url: "https://www.shadowserver.org/wiki/pmwiki.php/Services/Botnet-DNSL"
+        format: "domains"
+        category: "botnet"
+        enabled: false  # Enable after registration
+        priority: 94
+        interval: 6h
+        # headers:
+        #   Authorization: "Bearer YOUR_TOKEN"
+        validate_https: true
+
+      # === Spam / Advertising ===
+
+      # Steven Black's Unified Hosts (ads + malware)
+      # Free, no auth required
+      - name: "stevenblack-unified"
+        url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+        format: "hosts"
+        category: "spam"
+        enabled: false  # Enable after verifying access
+        priority: 75
+        interval: 168h  # Weekly
+        validate_https: true
+
+      # === Tracking Domains ===
+
+      # Disconnect.me Tracking Protection
+      # Free, no auth required
+      - name: "disconnect-tracking"
+        url: "https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt"
+        format: "domains"
+        category: "tracking"
+        enabled: false  # Enable after verifying access
+        priority: 70
+        interval: 168h  # Weekly
+        validate_https: true
+
+      # === Commercial Feeds (Require Subscription) ===
+
+      # AlienVault OTX (Free registration required)
+      # - name: "alienvault-otx"
+      #   url: "https://otx.alienvault.com/api/v1/pulses/subscribed"
+      #   format: "json"
+      #   category: "malware"
+      #   enabled: false
+      #   priority: 96
+      #   interval: 1h
+      #   api_key: "YOUR_OTX_API_KEY"
+      #   headers:
+      #     X-OTX-API-KEY: "YOUR_OTX_API_KEY"
+
+      # Spamhaus Domain Block List (DBL) - Requires subscription
+      # - name: "spamhaus-dbl"
+      #   url: "https://www.spamhaus.org/dbl/"
+      #   format: "domains"
+      #   category: "spam"
+      #   enabled: false
+      #   priority: 98
+      #   interval: 1h
+      #   # Requires commercial license
+
+      # Emerging Threats (Proofpoint) - Requires subscription
+      # - name: "emerging-threats"
+      #   url: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt"
+      #   format: "domains"
+      #   category: "malware"
+      #   enabled: false
+      #   priority: 97
+      #   interval: 1h
+      #   # Requires Proofpoint ET Pro subscription
 
     # Threat categories to block
     categories:

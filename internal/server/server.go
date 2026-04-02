@@ -14,6 +14,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/pool"
+	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -106,10 +107,11 @@ type Server struct {
 	cfg Config
 
 	// Components
-	recursive *resolver.Recursive
-	cookies   *cookie.Manager
-	rrl       *rrl.Limiter
-	defensive *defensive.Manager
+	recursive  *resolver.Recursive
+	cookies    *cookie.Manager
+	rrl        *rrl.Limiter
+	defensive  *defensive.Manager
+	protective *protective.Engine
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -165,6 +167,19 @@ func New(cfg Config) (*Server, error) {
 			fmt.Printf("   • %s\n", feature)
 		}
 		fmt.Println()
+	}
+
+	// Initialize Protective DNS if enabled
+	if cfg.Experimental.ProtectiveDNS.Enabled {
+		var err error
+		s.protective, err = protective.NewEngine(cfg.Experimental.ProtectiveDNS)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init protective DNS: %w", err)
+		}
+		fmt.Printf("🛡️  Protective DNS enabled (strategy: %s, blocklist size: %d)\n",
+			cfg.Experimental.ProtectiveDNS.Strategy,
+			s.protective.GetBlocklistStats().TotalEntries)
 	}
 
 	// Initialize RRL if enabled
@@ -271,6 +286,9 @@ func (s *Server) Stop() error {
 	if s.defensive != nil {
 		s.defensive.Close()
 	}
+	if s.protective != nil {
+		s.protective.Shutdown()
+	}
 
 	fmt.Println("DNS server stopped")
 	return nil
@@ -333,6 +351,29 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// Log query if enabled
 	if s.defensive != nil {
 		s.defensive.LogQuery("queries", clientIP, question.Name, question.Qtype, dns.RcodeSuccess)
+	}
+
+	// Check Protective DNS (malicious domain blocking)
+	if s.protective != nil {
+		result, err := s.protective.CheckQuery(question.Name, clientIP)
+		if err == nil && result.Blocked {
+			// Domain is blocked - rewrite response
+			blockedResp := s.protective.RewriteResponse(r, result)
+
+			// Check RRL before sending
+			if s.shouldRateLimit(blockedResp, clientIP) {
+				// Drop or slip
+				return
+			}
+
+			s.answers.Add(1)
+			if blockedResp.Rcode == dns.RcodeNameError {
+				s.nxdomain.Add(1)
+			}
+
+			w.WriteMsg(blockedResp)
+			return
+		}
 	}
 
 	// Check DNS cookies if enabled
