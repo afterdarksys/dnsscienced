@@ -56,6 +56,11 @@ type RecordSection struct {
 	SVCB    interface{} `yaml:"SVCB,omitempty"`
 	CAA     interface{} `yaml:"CAA,omitempty"`
 
+	// Generic type support (TYPE### syntax)
+	// Key is type code (e.g., "TYPE257" for CAA)
+	// Value is the rdata string
+	Generic map[string]interface{} `yaml:",inline"`
+
 	TTL     int    `yaml:"ttl,omitempty"`
 	Comment string `yaml:"comment,omitempty"`
 	Reverse bool   `yaml:"reverse,omitempty"`
@@ -203,6 +208,11 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		}
 		if err := parseSVCBHTTPRecords(zone, fqdn, section.SVCB, recordTTL, "SVCB"); err != nil {
 			return nil, fmt.Errorf("parse SVCB records for %s: %w", owner, err)
+		}
+
+		// Parse generic TYPE### records (defensive DNS feature)
+		if err := parseGenericTypes(zone, fqdn, section.Generic, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse generic types for %s: %w", owner, err)
 		}
 	}
 
@@ -727,6 +737,66 @@ func parseSVCBHTTPRecords(zone *Zone, owner string, data interface{}, ttl uint32
 		    zone.AddRecord(rr)
         }
 	}
+	return nil
+}
+
+// parseGenericTypes parses generic TYPE### syntax records
+// Example: TYPE257: 0 issue "letsencrypt.org" for CAA before native support
+// This provides forward compatibility with new DNS record types and supports
+// legacy BIND zone files using generic syntax
+func parseGenericTypes(zone *Zone, owner string, data map[string]interface{}, ttl uint32) error {
+	if data == nil || len(data) == 0 {
+		return nil
+	}
+
+	for key, value := range data {
+		// Check if key matches TYPE### pattern
+		keyUpper := strings.ToUpper(key)
+		if !strings.HasPrefix(keyUpper, "TYPE") {
+			continue
+		}
+
+		// Extract type code
+		typeStr := strings.TrimPrefix(keyUpper, "TYPE")
+		typeCode, err := strconv.Atoi(typeStr)
+		if err != nil {
+			continue // Not a valid TYPE### key, skip
+		}
+
+		// Validate type code range (1-65535)
+		if typeCode < 1 || typeCode > 65535 {
+			return fmt.Errorf("invalid TYPE code %d: must be 1-65535", typeCode)
+		}
+
+		// Handle both single value and list
+		values := []string{}
+		switch v := value.(type) {
+		case string:
+			values = append(values, v)
+		case []interface{}:
+			for _, item := range v {
+				if str, ok := item.(string); ok {
+					values = append(values, str)
+				}
+			}
+		default:
+			return fmt.Errorf("invalid TYPE%d record format: expected string or list", typeCode)
+		}
+
+		// Parse each record using dns.NewRR
+		for _, rdata := range values {
+			// Build RR string: owner TTL CLASS TYPE### rdata
+			rrStr := fmt.Sprintf("%s %d IN TYPE%d %s", owner, ttl, typeCode, rdata)
+			rr, err := dns.NewRR(rrStr)
+			if err != nil {
+				return fmt.Errorf("failed to parse TYPE%d: %w: %s", typeCode, err, rrStr)
+			}
+			if rr != nil {
+				zone.AddRecord(rr)
+			}
+		}
+	}
+
 	return nil
 }
 
