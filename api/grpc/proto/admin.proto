@@ -19,6 +19,18 @@ service AdminService {
   rpc ListZones(google.protobuf.Empty) returns (AdminListZonesResponse);
   rpc ReloadZones(google.protobuf.Empty) returns (AdminReloadZonesResponse);
 
+  // Zone management (create/update/delete)
+  rpc CreateZone(AdminCreateZoneRequest) returns (AdminCreateZoneResponse);
+  rpc UpdateZone(AdminUpdateZoneRequest) returns (AdminUpdateZoneResponse);
+  rpc DeleteZone(AdminDeleteZoneRequest) returns (AdminDeleteZoneResponse);
+  rpc GetZone(AdminGetZoneRequest) returns (AdminGetZoneResponse);
+
+  // Record management
+  rpc CreateRecord(AdminCreateRecordRequest) returns (AdminCreateRecordResponse);
+  rpc UpdateRecord(AdminUpdateRecordRequest) returns (AdminUpdateRecordResponse);
+  rpc DeleteRecord(AdminDeleteRecordRequest) returns (AdminDeleteRecordResponse);
+  rpc ListRecords(AdminListRecordsRequest) returns (AdminListRecordsResponse);
+
   // Query logging control
   rpc SetQueryLogging(AdminSetQueryLoggingRequest) returns (AdminSetQueryLoggingResponse);
   rpc GetQueryLoggingStatus(google.protobuf.Empty) returns (AdminQueryLoggingStatusResponse);
@@ -223,4 +235,113 @@ message AdminKillConnectionRequest {
 message AdminKillConnectionResponse {
   bool success = 1;
   string message = 2;
+}
+
+// Zone management messages
+
+message AdminCreateZoneRequest {
+  string zone_name = 1;
+  string zone_content = 2;  // YAML zone file content
+  bool compile = 3;          // Compile to .dzc (default: true)
+}
+
+message AdminCreateZoneResponse {
+  bool success = 1;
+  string message = 2;
+  int32 record_count = 3;
+  string zone_file_path = 4;
+}
+
+message AdminUpdateZoneRequest {
+  string zone_name = 1;
+  string zone_content = 2;  // Updated YAML zone file content
+  bool compile = 3;          // Recompile to .dzc (default: true)
+  bool reload = 4;           // Reload zone after update (default: true)
+}
+
+message AdminUpdateZoneResponse {
+  bool success = 1;
+  string message = 2;
+  int32 record_count = 3;
+}
+
+message AdminDeleteZoneRequest {
+  string zone_name = 1;
+  bool delete_files = 2;  // Also delete zone files from disk (default: true)
+}
+
+message AdminDeleteZoneResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminGetZoneRequest {
+  string zone_name = 1;
+}
+
+message AdminGetZoneResponse {
+  AdminZoneInfo zone = 1;
+  string zone_content = 2;  // YAML zone file content
+}
+
+// Record management messages
+
+message AdminCreateRecordRequest {
+  string zone_name = 1;
+  string owner = 2;          // Record owner (e.g., "www", "@")
+  string record_type = 3;    // A, AAAA, CNAME, MX, TXT, etc.
+  string content = 4;        // Record data
+  int32 ttl = 5;            // TTL in seconds (0 = use zone default)
+  int32 priority = 6;        // For MX, SRV (optional)
+}
+
+message AdminCreateRecordResponse {
+  bool success = 1;
+  string message = 2;
+  string record_id = 3;
+}
+
+message AdminUpdateRecordRequest {
+  string zone_name = 1;
+  string record_id = 2;      // Record identifier (owner:type:content)
+  string owner = 3;          // New owner (optional)
+  string record_type = 4;    // New type (optional)
+  string content = 5;        // New content
+  int32 ttl = 6;            // New TTL
+  int32 priority = 7;        // New priority (for MX, SRV)
+}
+
+message AdminUpdateRecordResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminDeleteRecordRequest {
+  string zone_name = 1;
+  string record_id = 2;      // Record identifier (owner:type:content)
+}
+
+message AdminDeleteRecordResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminListRecordsRequest {
+  string zone_name = 1;
+  string record_type = 2;    // Filter by type (optional)
+  string owner = 3;          // Filter by owner (optional)
+}
+
+message AdminListRecordsResponse {
+  repeated AdminRecordInfo records = 1;
+  int32 total_count = 2;
+}
+
+message AdminRecordInfo {
+  string record_id = 1;
+  string owner = 2;
+  string record_type = 3;
+  string content = 4;
+  int32 ttl = 5;
+  int32 priority = 6;
 }
