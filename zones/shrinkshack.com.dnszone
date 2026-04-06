@@ -1,0 +1,19 @@
+zone: shrinkshack.com
+serial: 12
+soa:
+  primary: ns1.p201.dns.oraclecloud.net
+  admin: hostmaster.shrinkshack.com
+  serial: 12
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  minimum: 1800
+ttl: 300
+nameservers:
+- ns1.gdns.dartnode.io
+- ns2.gdns.dartnode.io
+records:
+  '@':
+    A: 193.122.154.166
+  www:
+    A: 193.122.154.166

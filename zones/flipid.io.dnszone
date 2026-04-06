@@ -1,0 +1,21 @@
+zone: flipid.io
+serial: 7
+soa:
+  primary: ns1.p201.dns.oraclecloud.net
+  admin: hostmaster.flipid.io
+  serial: 7
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  minimum: 1800
+ttl: 300
+nameservers:
+- ns1.gdns.dartnode.io
+- ns2.gdns.dartnode.io
+records:
+  api:
+    A: 129.153.158.177
+  '@':
+    A: 129.80.158.147
+  www:
+    A: 129.80.158.147

@@ -1,0 +1,23 @@
+zone: aeims.app
+serial: 7
+soa:
+  primary: ns1.p201.dns.oraclecloud.net
+  admin: hostmaster.aeims.app
+  serial: 7
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  minimum: 1800
+ttl: 300
+nameservers:
+- ns1.gdns.dartnode.io
+- ns2.gdns.dartnode.io
+records:
+  '@':
+    A: 129.153.158.177
+  agent:
+    A: 129.153.158.177
+  api:
+    A: 129.153.158.177
+  www:
+    CNAME: aeims.app

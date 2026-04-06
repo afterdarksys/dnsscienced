@@ -1,0 +1,33 @@
+zone:
+  name: 3cats.finance
+  class: IN
+  ttl: 300
+
+serial: auto
+
+soa:
+  primary_ns: gdns1.onedns.io
+  contact: hostmaster.3cats.finance
+  serial: 1
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  negative_ttl: 1800
+
+records:
+  '@':
+    NS:
+      - gdns1.onedns.io
+      - gdns2.onedns.io
+    A: 66.228.40.180
+    MX:
+      - priority: 10
+        value: mx.nerdycupid.com
+  '_domainconnect':
+    CNAME: _domainconnect.gd.domaincontrol.com
+  'ether':
+    CNAME: ethereum.cloudflare.com
+  'pay':
+    CNAME: paylinks.commerce.godaddy.com
+  'www':
+    CNAME: 3cats.finance

@@ -1,0 +1,48 @@
+zone:
+  name: msgs.global
+  class: IN
+  ttl: 300
+
+serial: auto
+
+soa:
+  primary_ns: gdns1.onedns.io
+  contact: hostmaster.msgs.global
+  serial: 1
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  negative_ttl: 1800
+
+records:
+  '@':
+    NS:
+      - gdns1.onedns.io
+      - gdns2.onedns.io
+    A: 108.165.121.47
+    MX:
+      - priority: 10
+        value: relay-a.msgs.global
+      - priority: 10
+        value: relay-b.msgs.global
+  'api':
+    A: 129.80.223.114
+  'mailblocks':
+    A: 108.165.121.47
+  '*':
+    A: 129.80.223.114
+  'mx':
+    A: 108.165.121.47
+  'relay01':
+    A: 108.165.123.119
+  'relay-a':
+    A: 108.165.123.119
+    AAAA: 2602:f9f3:1000::14e
+  'relay-b':
+    A: 108.165.121.47
+  'www':
+    A: 108.165.121.47
+  'mail':
+    MX:
+      - priority: 10
+        value: relay-a.msgs.global

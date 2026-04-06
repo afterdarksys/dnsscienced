@@ -1,0 +1,27 @@
+zone: web3dns.io
+serial: 23
+soa:
+  primary: ns1.p201.dns.oraclecloud.net
+  admin: hostmaster.web3dns.io
+  serial: 23
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  minimum: 1800
+ttl: 300
+nameservers:
+- ns1.gdns.dartnode.io
+- ns2.gdns.dartnode.io
+records:
+  api:
+    A: 129.153.158.177
+  depin:
+    A: 129.80.158.147
+  models:
+    A: 129.80.158.147
+  n8n:
+    A: 129.80.158.147
+  '@':
+    A: 193.122.154.166
+  www:
+    A: 129.80.158.147
