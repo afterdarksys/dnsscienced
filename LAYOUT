@@ -1,0 +1,57 @@
+# Repository Layout
+
+## Directory Structure
+
+```
+dnsscienced/                    (public repo - github.com/straticus1/dnsscienced)
+├── cmd/                        dnsscienced binaries
+├── internal/                   core DNS server logic
+├── examples/                   example zone files
+├── zones/                      ⚠️ SEPARATE PRIVATE REPO (not tracked here)
+│   └── *.dnszone              90+ production zone files
+└── LAYOUT                      this file
+```
+
+## Zones Directory Setup
+
+The `zones/` directory contains private infrastructure details and is maintained
+in a separate private repository.
+
+### Initial Setup
+
+```bash
+# Clone main repo
+gh repo clone straticus1/dnsscienced
+cd dnsscienced
+
+# Clone private zones repo into zones/ subdirectory
+gh repo clone afterdarksys/dnsscienced-zones zones
+```
+
+### Working with Zones
+
+The zones directory is a complete git repository:
+
+```bash
+cd zones/
+git pull                        # get latest zone updates
+# ... edit zone files ...
+git add .
+git commit -m "Update zone configuration"
+git push                        # push to private repo
+```
+
+### Repository URLs
+
+- **Public repo**: https://github.com/straticus1/dnsscienced
+- **Private zones**: https://github.com/afterdarksys/dnsscienced-zones
+
+## Why Separate Repos?
+
+Zone files contain:
+- Internal IP addresses
+- Complete domain portfolio
+- Subdomain infrastructure details
+- DNS record configurations
+
+These should not be exposed in the public open-source dnsscienced project.
