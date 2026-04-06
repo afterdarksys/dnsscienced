@@ -38,6 +38,9 @@ vendor/
 # Compiled zone files
 *.dzc
 
+# Zone files directory (separate private repo)
+zones/
+
 # Log files
 *.log
 
