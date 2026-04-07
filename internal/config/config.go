@@ -43,8 +43,9 @@ type Config struct {
 
 // AdminConfig holds admin API configuration
 type AdminConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Listen  string `yaml:"listen"`
+	Enabled bool     `yaml:"enabled"`
+	Listen  string   `yaml:"listen"`
+	APIKeys []string `yaml:"api_keys"`
 }
 
 // ZoneConfig holds per-zone configuration (BIND-style)

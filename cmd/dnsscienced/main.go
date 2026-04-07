@@ -14,12 +14,28 @@ import (
 
 	"github.com/dnsscience/dnsscienced/api/grpc/registry"
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
+	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"google.golang.org/grpc"
 )
+
+// serverSrvAdapter wraps *server.Server to satisfy services.SrvAdapter without
+// importing internal/server inside the services package (which would create an
+// import cycle via registry).
+type serverSrvAdapter struct {
+	s *server.Server
+}
+
+func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone { return a.s.GetZone(origin) }
+func (a *serverSrvAdapter) AddZone(z *zone.Zone) error       { return a.s.AddZone(z) }
+func (a *serverSrvAdapter) RemoveZone(origin string)         { a.s.RemoveZone(origin) }
+func (a *serverSrvAdapter) GetStats() services.SrvStats {
+	raw := a.s.GetStats()
+	return services.SrvStats{Queries: raw.Queries}
+}
 
 var (
 	udpAddr       = flag.String("udp", ":5353", "UDP listen address")
@@ -174,13 +190,17 @@ func main() {
 	if loadedCfg != nil && loadedCfg.Admin.Enabled {
 		fmt.Printf("Starting admin gRPC API on %s\n", loadedCfg.Admin.Listen)
 
+		// Locate the compiler binary next to the daemon binary.
+		compileBin := filepath.Join(filepath.Dir(os.Args[0]), "dnsscienced-compile")
+
 		grpcCfg := grpcserver.Config{
 			ListenAddr: loadedCfg.Admin.Listen,
+			APIKeys:    loadedCfg.Admin.APIKeys,
 		}
 
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				registry.RegisterAll(s)
+				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin)
 			},
 		}
 

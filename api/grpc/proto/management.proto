@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+package dnsscienced;
+
+option go_package = "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt";
+
+// DNSScienced - High-performance authoritative DNS service
+// Provides zone and record management for gdns1/gdns2 infrastructure
+
+service ManagementService {
+  // Zone Management
+  rpc CreateZone(CreateZoneRequest) returns (CreateZoneResponse);
+  rpc DeleteZone(DeleteZoneRequest) returns (DeleteZoneResponse);
+  rpc GetZone(GetZoneRequest) returns (GetZoneResponse);
+  rpc ListZones(ListZonesRequest) returns (ListZonesResponse);
+  rpc ReloadZones(ReloadZonesRequest) returns (ReloadZonesResponse);
+
+  // Record Management
+  rpc CreateRecord(CreateRecordRequest) returns (CreateRecordResponse);
+  rpc UpdateRecord(UpdateRecordRequest) returns (UpdateRecordResponse);
+  rpc DeleteRecord(DeleteRecordRequest) returns (DeleteRecordResponse);
+  rpc ListRecords(ListRecordsRequest) returns (ListRecordsResponse);
+
+  // Bulk Operations
+  rpc BatchCreateRecords(BatchCreateRecordsRequest) returns (BatchCreateRecordsResponse);
+  rpc BatchUpdateRecords(BatchUpdateRecordsRequest) returns (BatchUpdateRecordsResponse);
+  rpc BatchDeleteRecords(BatchDeleteRecordsRequest) returns (BatchDeleteRecordsResponse);
+
+  // Health & Status
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServerStatus(GetServerStatusRequest) returns (GetServerStatusResponse);
+}
+
+// ============================================================================
+// Zone Messages
+// ============================================================================
+
+message CreateZoneRequest {
+  string domain = 1;
+  int32 ttl = 2;
+  SOARecord soa = 3;
+  repeated string nameservers = 4;
+  map<string, RecordSet> initial_records = 5;
+}
+
+message CreateZoneResponse {
+  bool success = 1;
+  string zone_id = 2;
+  repeated string nameservers = 3;
+  string message = 4;
+  string error = 5;
+}
+
+message DeleteZoneRequest {
+  string zone_id = 1;
+}
+
+message DeleteZoneResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message GetZoneRequest {
+  string zone_id = 1;
+}
+
+message GetZoneResponse {
+  bool success = 1;
+  Zone zone = 2;
+  string error = 3;
+}
+
+message ListZonesRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message ListZonesResponse {
+  bool success = 1;
+  repeated Zone zones = 2;
+  int32 total = 3;
+  string error = 4;
+}
+
+message ReloadZonesRequest {
+  repeated string zone_ids = 1;  // Empty means reload all zones
+}
+
+message ReloadZonesResponse {
+  bool success = 1;
+  int32 zones_reloaded = 2;
+  string message = 3;
+  string error = 4;
+}
+
+// ============================================================================
+// Record Messages
+// ============================================================================
+
+message CreateRecordRequest {
+  string zone_id = 1;
+  DNSRecord record = 2;
+}
+
+message CreateRecordResponse {
+  bool success = 1;
+  string record_id = 2;
+  string message = 3;
+  string error = 4;
+}
+
+message UpdateRecordRequest {
+  string zone_id = 1;
+  string record_id = 2;
+  DNSRecord record = 3;
+}
+
+message UpdateRecordResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message DeleteRecordRequest {
+  string zone_id = 1;
+  string record_id = 2;
+}
+
+message DeleteRecordResponse {
+  bool success = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message ListRecordsRequest {
+  string zone_id = 1;
+  string record_type = 2;  // Optional filter by type (A, AAAA, CNAME, etc.)
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message ListRecordsResponse {
+  bool success = 1;
+  repeated DNSRecord records = 2;
+  int32 total = 3;
+  string error = 4;
+}
+
+// ============================================================================
+// Batch Operations
+// ============================================================================
+
+message BatchCreateRecordsRequest {
+  string zone_id = 1;
+  repeated DNSRecord records = 2;
+}
+
+message BatchCreateRecordsResponse {
+  bool success = 1;
+  int32 created_count = 2;
+  repeated string record_ids = 3;
+  repeated string errors = 4;
+  string message = 5;
+}
+
+message BatchUpdateRecordsRequest {
+  string zone_id = 1;
+  repeated RecordUpdate updates = 2;
+}
+
+message BatchUpdateRecordsResponse {
+  bool success = 1;
+  int32 updated_count = 2;
+  repeated string errors = 3;
+  string message = 4;
+}
+
+message BatchDeleteRecordsRequest {
+  string zone_id = 1;
+  repeated string record_ids = 2;
+}
+
+message BatchDeleteRecordsResponse {
+  bool success = 1;
+  int32 deleted_count = 2;
+  repeated string errors = 3;
+  string message = 4;
+}
+
+// ============================================================================
+// Health & Status
+// ============================================================================
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+  string server_name = 4;
+}
+
+message GetServerStatusRequest {}
+
+message GetServerStatusResponse {
+  bool success = 1;
+  ServerStatus status = 2;
+  string error = 3;
+}
+
+// ============================================================================
+// Data Models
+// ============================================================================
+
+message Zone {
+  string domain = 1;
+  string zone_id = 2;
+  int32 ttl = 3;
+  SOARecord soa = 4;
+  repeated string nameservers = 5;
+  string status = 6;
+  bool dnssec_enabled = 7;
+  int64 created_at = 8;
+  int64 updated_at = 9;
+  int32 record_count = 10;
+}
+
+message SOARecord {
+  string primary_ns = 1;
+  string contact = 2;
+  int64 serial = 3;
+  int32 refresh = 4;
+  int32 retry = 5;
+  int32 expire = 6;
+  int32 negative_ttl = 7;
+}
+
+message DNSRecord {
+  string record_id = 1;
+  string name = 2;
+  string record_type = 3;
+  string content = 4;
+  int32 ttl = 5;
+  int32 priority = 6;
+  int32 weight = 7;
+  int32 port = 8;
+  bool proxied = 9;
+  map<string, string> metadata = 10;
+}
+
+message RecordSet {
+  repeated string values = 1;
+}
+
+message RecordUpdate {
+  string record_id = 1;
+  DNSRecord record = 2;
+}
+
+message ServerStatus {
+  string server_name = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+  int32 zones_loaded = 4;
+  int32 total_records = 5;
+  int64 queries_per_second = 6;
+  double memory_usage_mb = 7;
+  double cpu_usage_percent = 8;
+  string last_reload = 9;
+}
