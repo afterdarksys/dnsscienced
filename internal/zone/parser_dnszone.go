@@ -396,6 +396,10 @@ func parseMXRecords(zone *Zone, owner string, data interface{}, ttl uint32) erro
 				}
 				if target, ok := mxMap["target"].(string); ok {
 					mx.Target = target
+				} else if value, ok := mxMap["value"].(string); ok {
+					mx.Target = value
+				} else if host, ok := mxMap["host"].(string); ok {
+					mx.Target = host
 				}
 				mxList = append(mxList, mx)
 			}
