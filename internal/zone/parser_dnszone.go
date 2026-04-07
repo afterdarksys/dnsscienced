@@ -544,6 +544,10 @@ func parseSRVRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 				}
 				if target, ok := srvMap["target"].(string); ok {
 					srv.Target = target
+				} else if value, ok := srvMap["value"].(string); ok {
+					srv.Target = value
+				} else if host, ok := srvMap["host"].(string); ok {
+					srv.Target = host
 				}
 				srvList = append(srvList, srv)
 			}

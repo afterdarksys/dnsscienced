@@ -28,6 +28,17 @@ else
     ZONE_FILES=("$ZONES_DIR"/*.dnszone)
 fi
 
+log "Running TXT doctor on ${#ZONE_FILES[@]} zone(s)..."
+doctor_failed=()
+for zone_file in "${ZONE_FILES[@]}"; do
+    if ! "$COMPILE_BIN" -doctor -input "$zone_file" 2>&1; then
+        doctor_failed+=("$(basename "$zone_file")")
+    fi
+done
+if [ ${#doctor_failed[@]} -gt 0 ]; then
+    error "TXT encoding issues found in: ${doctor_failed[*]} — rerun with -fix or fix manually"
+fi
+
 log "Deploying ${#ZONE_FILES[@]} zone(s) to: ${DNS_SERVERS[*]}"
 
 deploy_to_server() {

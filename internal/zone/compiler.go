@@ -75,6 +75,12 @@ func CompileZone(z *Zone, opts CompileOptions) (*CompiledZone, error) {
 		}
 
 		for rrtype, records := range typeMap {
+			// SOA is stored separately in compiled.Soa; skip it here to avoid
+			// the loader having to deduplicate it on every load.
+			if rrtype == dns.TypeSOA {
+				continue
+			}
+
 			recordList := &RecordList{
 				Records: make([]*Record, 0, len(records)),
 			}
