@@ -43,12 +43,14 @@ func LoadCompiledZone(path string) (*Zone, error) {
 	}
 	zone.SOA = loadSOA(compiled.Soa, zone.Origin)
 
-	// Add SOA to records
+	// Add SOA to records — do NOT also add it via the compiled.Records loop below.
+	// The compiled.Records map already contains the SOA entry; adding it here and
+	// again in the loop would produce duplicate SOA records in responses.
 	if err := zone.AddRecord(zone.SOA); err != nil {
 		return nil, fmt.Errorf("add SOA record: %w", err)
 	}
 
-	// Load all records
+	// Load all records, skipping SOA (already loaded above)
 	for owner, recordSet := range compiled.Records {
 		if recordSet == nil || recordSet.Records == nil {
 			continue
@@ -63,6 +65,11 @@ func LoadCompiledZone(path string) (*Zone, error) {
 				rr, err := loadRecord(record)
 				if err != nil {
 					return nil, fmt.Errorf("load record %s: %w", owner, err)
+				}
+
+				// Skip SOA — already added explicitly above to avoid duplicates
+				if rr.Header().Rrtype == dns.TypeSOA {
+					continue
 				}
 
 				if err := zone.AddRecord(rr); err != nil {

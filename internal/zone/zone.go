@@ -3,6 +3,7 @@ package zone
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -105,8 +106,9 @@ func (z *Zone) AddRecord(rr dns.RR) error {
 		return fmt.Errorf("cannot add nil record")
 	}
 
-	// Get owner name
-	owner := rr.Header().Name
+	// Get owner name and normalize to lowercase for case-insensitive lookups (RFC 1035 §2.3.3)
+	owner := strings.ToLower(rr.Header().Name)
+	rr.Header().Name = owner
 
 	// Ensure owner is in zone
 	if !dns.IsSubDomain(z.Origin, owner) {
@@ -139,6 +141,11 @@ func (z *Zone) GetRecords(owner string, rrtype uint16) []dns.RR {
 		owner += "."
 	}
 
+	// DNS names are case-insensitive per RFC 1035 §2.3.3.
+	// Normalize to lowercase so queries with 0x20 case randomization
+	// (used by Google's resolver and others) resolve correctly.
+	owner = strings.ToLower(owner)
+
 	// Check exact match first
 	if typeMap, ok := z.Records[owner]; ok {
 		if records, ok := typeMap[rrtype]; ok {
@@ -170,6 +177,28 @@ func (z *Zone) GetRecords(owner string, rrtype uint16) []dns.RR {
 	}
 
 	return nil
+}
+
+// HasName returns true if the owner name exists in the zone (exact or wildcard match)
+func (z *Zone) HasName(owner string) bool {
+	if owner[len(owner)-1] != '.' {
+		owner += "."
+	}
+	// DNS names are case-insensitive per RFC 1035 §2.3.3.
+	owner = strings.ToLower(owner)
+	// Check exact match
+	if _, ok := z.Records[owner]; ok {
+		return true
+	}
+	// Check wildcard match
+	labels := dns.SplitDomainName(owner)
+	for i := 0; i < len(labels); i++ {
+		wildcard := "*." + dns.Fqdn(joinLabels(labels[i+1:]))
+		if _, ok := z.Records[wildcard]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // GetAllRecords returns all records in the zone

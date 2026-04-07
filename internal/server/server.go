@@ -450,6 +450,10 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Extra = resp.Extra
 			m.Rcode = resp.Rcode
 			m.Authoritative = true
+			// RFC 1034 §4.3.1: authoritative servers MUST NOT set RA.
+			// The base message has RA set from the initial RecursionAvailable assignment;
+			// clear it here so authoritative responses are strictly conformant.
+			m.RecursionAvailable = false
 
 			// Apply defensive features to response
 			if s.defensive != nil {
@@ -556,11 +560,14 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	if len(records) > 0 {
 		m.Answer = records
 	} else {
-		// Check for NXDOMAIN or NODATA
-		// For now, just return NXDOMAIN
-		m.Rcode = dns.RcodeNameError
-
-		// Add SOA for negative response
+		// NODATA: name exists but no records of this type → NOERROR + empty answer
+		// NXDOMAIN: name does not exist in the zone → RcodeNameError
+		if matchedZone.HasName(qname) {
+			m.Rcode = dns.RcodeSuccess
+		} else {
+			m.Rcode = dns.RcodeNameError
+		}
+		// Add SOA in authority for both NXDOMAIN and NODATA (RFC 2308)
 		if matchedZone.SOA != nil {
 			m.Ns = []dns.RR{matchedZone.SOA}
 		}
