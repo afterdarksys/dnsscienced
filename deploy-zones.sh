@@ -8,7 +8,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ZONES_DIR="$SCRIPT_DIR/zones"
-COMPILE_BIN="$SCRIPT_DIR/dnsscienced-compile"
+case "$(uname -s)" in
+    Darwin) COMPILE_BIN="$SCRIPT_DIR/dnsscienced-compile-darwin" ;;
+    *)      COMPILE_BIN="$SCRIPT_DIR/dnsscienced-compile" ;;
+esac
 DNS_SERVERS=("gdns1" "gdns2")
 REMOTE_ZONES="/opt/dnsscienced/zones"
 REMOTE_COMPILE="/opt/dnsscienced/bin/dnsscienced-compile"
