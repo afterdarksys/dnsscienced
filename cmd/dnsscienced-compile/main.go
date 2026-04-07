@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,7 +22,17 @@ var (
 	verbose     = flag.Bool("v", false, "Verbose output")
 	force       = flag.Bool("force", false, "Force recompilation even if .dzc is up-to-date")
 	stats       = flag.Bool("stats", true, "Show zone statistics")
+	cat         = flag.Bool("cat", false, "Print contents of a compiled .dzc file (use with -input pointing to .dzc)")
+	doctor      = flag.Bool("doctor", false, "Scan zone file for TXT record YAML encoding issues")
+	fix         = flag.Bool("fix", false, "Auto-fix TXT encoding issues found by -doctor (rewrites file in-place)")
 )
+
+// txtInlineRe matches lines with an inline TXT value: "    TXT: somevalue"
+// Group 1 = everything before the value, Group 2 = the value itself
+var txtInlineRe = regexp.MustCompile(`^(\s+TXT:\s+)(.+)$`)
+
+// txtBlockStartRe matches a bare "    TXT:" with no inline value (list follows)
+var txtBlockStartRe = regexp.MustCompile(`^\s+TXT:\s*$`)
 
 func main() {
 	flag.Usage = func() {
@@ -32,6 +44,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -input example.com.dnszone\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -input example.com.bind -format bind -output example.com.dzc\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -input example.com.dnszone -verify -v\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -cat -input example.com.dzc\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -doctor -input example.com.dnszone\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -doctor -fix -input example.com.dnszone\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -40,6 +55,46 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: -input is required\n\n")
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// cat mode: dump contents of a compiled .dzc file
+	if *cat {
+		z, err := zone.LoadCompiledZone(*input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading compiled zone: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("; Compiled zone: %s\n", *input)
+		fmt.Printf("; Zone: %s\n\n", z.Name)
+		for _, rr := range z.GetAllRecords() {
+			// Print each RR in RFC 1035 presentation format
+			// TXT records show chunks explicitly so encoding issues are visible
+			fmt.Println(rr.String())
+		}
+		return
+	}
+
+	// doctor mode: lint (and optionally fix) TXT encoding issues
+	if *doctor {
+		if *fix {
+			fmt.Printf("Scanning and fixing TXT encoding issues in: %s\n", *input)
+		} else {
+			fmt.Printf("Scanning TXT encoding issues in: %s\n", *input)
+		}
+		count, err := doctorZoneFile(*input, *fix)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if count == 0 {
+			fmt.Println("✓ No TXT encoding issues found")
+		} else if *fix {
+			fmt.Printf("✓ Fixed %d TXT encoding issue(s)\n", count)
+		} else {
+			fmt.Printf("✗ Found %d TXT encoding issue(s) — rerun with -fix to auto-quote\n", count)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Check if input file exists
@@ -219,6 +274,133 @@ func isOutputUpToDate(source, compiled string) (bool, error) {
 	}
 
 	return compiledInfo.ModTime().After(sourceInfo.ModTime()), nil
+}
+
+// doctorZoneFile scans a .dnszone file for unquoted TXT values that contain
+// YAML-unsafe characters. With autoFix=true it rewrites the file in-place,
+// wrapping problematic values in double quotes.
+//
+// Dangerous patterns in unquoted YAML plain scalars:
+//   - " #"  — space+hash becomes a YAML comment, silently truncating the value
+//   - ": "  — colon+space looks like a new mapping key
+//   - leading "{" or "[" — parsed as YAML flow mapping / sequence
+//   - leading "*" or "&" — parsed as YAML alias / anchor
+func doctorZoneFile(filename string, autoFix bool) (int, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return 0, fmt.Errorf("opening %s: %w", filename, err)
+	}
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	f.Close()
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("reading %s: %w", filename, err)
+	}
+
+	issueCount := 0
+	modified := false
+
+	inTXTList := false   // true after a bare "TXT:" line (list items follow)
+	listIndent := 0      // column indent of the "TXT:" key line
+
+	for i, line := range lines {
+		stripped := strings.TrimLeft(line, " \t")
+		indent := len(line) - len(stripped)
+
+		// ── leave TXT-list context once we hit a non-continuation line ──
+		if inTXTList {
+			isListItem := strings.HasPrefix(stripped, "- ")
+			isContinuation := indent > listIndent && stripped != ""
+			if !isListItem && !isContinuation {
+				inTXTList = false
+			}
+		}
+
+		// ── case 1: TXT: <value on same line> ──
+		if m := txtInlineRe.FindStringSubmatch(line); m != nil {
+			prefix, value := m[1], m[2]
+			if txtValueNeedsQuoting(value) {
+				issueCount++
+				fmt.Printf("%s:%d: unquoted TXT value: %s\n", filename, i+1, value)
+				if autoFix {
+					lines[i] = prefix + quoteForYAML(value)
+					modified = true
+				}
+			}
+			inTXTList = false
+			continue
+		}
+
+		// ── case 2: bare "TXT:" — list of values follows ──
+		if txtBlockStartRe.MatchString(line) {
+			inTXTList = true
+			listIndent = indent
+			continue
+		}
+
+		// ── case 3: list item inside a TXT block ──
+		if inTXTList && strings.HasPrefix(stripped, "- ") {
+			value := stripped[2:]
+			if txtValueNeedsQuoting(value) {
+				issueCount++
+				fmt.Printf("%s:%d: unquoted TXT list item: %s\n", filename, i+1, value)
+				if autoFix {
+					lines[i] = line[:indent] + "- " + quoteForYAML(value)
+					modified = true
+				}
+			}
+		}
+	}
+
+	if autoFix && modified {
+		content := strings.Join(lines, "\n")
+		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+			return issueCount, fmt.Errorf("writing %s: %w", filename, err)
+		}
+	}
+
+	return issueCount, nil
+}
+
+// txtValueNeedsQuoting returns true when an unquoted plain YAML scalar
+// contains characters that will be misinterpreted by a standard YAML parser.
+func txtValueNeedsQuoting(value string) bool {
+	if value == "" {
+		return false
+	}
+	// Skip values that are already quoted with " or '
+	if (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) ||
+		(strings.HasPrefix(value, `'`) && strings.HasSuffix(value, `'`)) {
+		return false
+	}
+	// " #" → rest of line treated as YAML comment
+	if strings.Contains(value, " #") {
+		return true
+	}
+	// ": " → parsed as start of a new mapping key
+	if strings.Contains(value, ": ") {
+		return true
+	}
+	// Leading flow indicators
+	if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+		return true
+	}
+	// Leading anchor / alias sigils
+	if strings.HasPrefix(value, "*") || strings.HasPrefix(value, "&") {
+		return true
+	}
+	return false
+}
+
+// quoteForYAML wraps a value in double quotes, escaping any embedded
+// double quotes so the result is valid YAML.
+func quoteForYAML(value string) string {
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 // showStats displays statistics for an existing compiled zone

@@ -278,6 +278,64 @@ Records are stored in **DNS wire format** (RDATA section):
 5. **Monitor freshness** - Alert if `.dzc` is stale compared to source
 6. **Recompile on upgrade** - After dnsscienced version changes
 
+## TXT Record Encoding
+
+### YAML Quoting Requirements
+
+Zone files use YAML syntax. TXT record values containing certain characters **must be quoted** or the YAML parser will misinterpret them:
+
+| Character | YAML Meaning | Example Problem |
+|-----------|-------------|-----------------|
+| `:` | Key separator | `v=spf1 include:example.com ~all` → parse error |
+| `#` | Comment | `v=DKIM1; p=ABC#123` → truncated at `#` |
+| `{` / `}` | Inline mapping | `{k=rsa; p=...}` → parsed as map |
+| `[` / `]` | Inline sequence | `[1,2,3]` → parsed as list |
+| `&` / `*` | YAML anchors | edge case in complex zones |
+
+**Always quote TXT values:**
+
+```yaml
+records:
+  '@':
+    TXT:
+      # WRONG — : causes parse error
+      - v=spf1 include:example.com ~all
+
+      # CORRECT
+      - "v=spf1 include:example.com ~all"
+
+  '_dmarc':
+    TXT:
+      # WRONG — # truncates the value
+      - v=DMARC1; p=reject; rua=mailto:dmarc@example.com
+
+      # CORRECT
+      - "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"
+```
+
+### Chunking Behavior
+
+TXT strings longer than 255 bytes are automatically split into RFC 1035-compliant chunks at compile time. Chunking is byte-based, so all ASCII and UTF-8 content is handled correctly. The `-cat` flag on a compiled zone will show the chunks explicitly:
+
+```bash
+dnsscienced-compile -cat -input example.com.dzc
+# Shows: example.com. 300 IN TXT "chunk1..." "chunk2..."
+```
+
+### Diagnosis and Auto-Fix
+
+Use `-doctor` to scan a zone file for encoding issues:
+
+```bash
+dnsscienced-compile -doctor -input example.com.dnszone
+```
+
+Use `-doctor -fix` to automatically quote problematic TXT values in-place:
+
+```bash
+dnsscienced-compile -doctor -fix -input example.com.dnszone
+```
+
 ## Troubleshooting
 
 ### Compiled zone not loading
