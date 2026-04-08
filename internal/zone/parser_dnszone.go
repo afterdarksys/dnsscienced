@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 type DNSZoneFile struct {
 	Zone      ZoneSection               `yaml:"zone"`
 	SOA       SOASection                `yaml:"soa"`
+	Includes  []string                  `yaml:"includes,omitempty"`
 	Records   map[string]RecordSection  `yaml:"records"`
 	Templates map[string]TemplateSection `yaml:"templates,omitempty"`
 	Apply     []ApplySection            `yaml:"apply,omitempty"`
@@ -213,6 +215,20 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		// Parse generic TYPE### records (defensive DNS feature)
 		if err := parseGenericTypes(zone, fqdn, section.Generic, recordTTL); err != nil {
 			return nil, fmt.Errorf("parse generic types for %s: %w", owner, err)
+		}
+	}
+
+	// Process includes
+	if len(zf.Includes) > 0 {
+		baseDir := filepath.Dir(filename)
+		for _, inc := range zf.Includes {
+			incPath := inc
+			if !filepath.IsAbs(inc) {
+				incPath = filepath.Join(baseDir, inc)
+			}
+			if err := parseIncludeFile(zone, incPath, defaultTTL); err != nil {
+				return nil, fmt.Errorf("include %q: %w", inc, err)
+			}
 		}
 	}
 
@@ -855,6 +871,75 @@ func parseTime(s string) (uint32, error) {
 func formatEmailAddress(email string) string {
 	email = strings.ReplaceAll(email, "@", ".")
 	return dns.Fqdn(email)
+}
+
+// parseIncludeFile loads a partial .dnszone include file and merges its records into the zone.
+// Include files only need a records: section; zone/soa/serial fields are ignored.
+func parseIncludeFile(zone *Zone, filename string, defaultTTL uint32) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+
+	var inc struct {
+		Records map[string]RecordSection `yaml:"records"`
+	}
+	if err := yaml.Unmarshal(data, &inc); err != nil {
+		return fmt.Errorf("parse YAML: %w", err)
+	}
+
+	for owner, section := range inc.Records {
+		recordTTL := defaultTTL
+		if section.TTL > 0 {
+			recordTTL = uint32(section.TTL)
+		}
+		fqdn := zone.fullyQualify(owner)
+
+		if err := parseARecords(zone, fqdn, section.A, recordTTL); err != nil {
+			return fmt.Errorf("A records for %s: %w", owner, err)
+		}
+		if err := parseAAAARecords(zone, fqdn, section.AAAA, recordTTL); err != nil {
+			return fmt.Errorf("AAAA records for %s: %w", owner, err)
+		}
+		if section.CNAME != "" {
+			if err := parseCNAME(zone, fqdn, section.CNAME, recordTTL); err != nil {
+				return fmt.Errorf("CNAME for %s: %w", owner, err)
+			}
+		}
+		if err := parseMXRecords(zone, fqdn, section.MX, recordTTL); err != nil {
+			return fmt.Errorf("MX records for %s: %w", owner, err)
+		}
+		if err := parseNSRecords(zone, fqdn, section.NS, recordTTL); err != nil {
+			return fmt.Errorf("NS records for %s: %w", owner, err)
+		}
+		if err := parseTXTRecords(zone, fqdn, section.TXT, recordTTL); err != nil {
+			return fmt.Errorf("TXT records for %s: %w", owner, err)
+		}
+		if err := parseSRVRecords(zone, fqdn, section.SRV, recordTTL); err != nil {
+			return fmt.Errorf("SRV records for %s: %w", owner, err)
+		}
+		if section.PTR != "" {
+			if err := parsePTR(zone, fqdn, section.PTR, recordTTL); err != nil {
+				return fmt.Errorf("PTR for %s: %w", owner, err)
+			}
+		}
+		if err := parseCAARecords(zone, fqdn, section.CAA, recordTTL); err != nil {
+			return fmt.Errorf("CAA records for %s: %w", owner, err)
+		}
+		if err := parseTLSARecords(zone, fqdn, section.TLSA, recordTTL); err != nil {
+			return fmt.Errorf("TLSA records for %s: %w", owner, err)
+		}
+		if err := parseSVCBHTTPRecords(zone, fqdn, section.HTTPS, recordTTL, "HTTPS"); err != nil {
+			return fmt.Errorf("HTTPS records for %s: %w", owner, err)
+		}
+		if err := parseSVCBHTTPRecords(zone, fqdn, section.SVCB, recordTTL, "SVCB"); err != nil {
+			return fmt.Errorf("SVCB records for %s: %w", owner, err)
+		}
+		if err := parseGenericTypes(zone, fqdn, section.Generic, recordTTL); err != nil {
+			return fmt.Errorf("generic types for %s: %w", owner, err)
+		}
+	}
+	return nil
 }
 
 // dnssecAlgorithm converts algorithm name to number

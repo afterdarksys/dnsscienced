@@ -110,9 +110,10 @@ func main() {
 		outputFile = base + zone.CompiledZoneExtension
 	}
 
-	// Check if output already exists and is up-to-date
+	// Check if output already exists and is up-to-date (including any include files)
 	if !*force {
-		if upToDate, err := isOutputUpToDate(*input, outputFile); err == nil && upToDate {
+		includes := extractIncludes(*input)
+		if upToDate, err := isOutputUpToDate(*input, outputFile, includes); err == nil && upToDate {
 			fmt.Printf("✓ Compiled zone is up-to-date: %s\n", outputFile)
 			if *stats {
 				showStats(outputFile)
@@ -261,19 +262,57 @@ func detectFormat(filename, formatFlag string) string {
 	}
 }
 
-// isOutputUpToDate checks if compiled zone is newer than source
-func isOutputUpToDate(source, compiled string) (bool, error) {
+// isOutputUpToDate checks if compiled zone is newer than source and all include files.
+func isOutputUpToDate(source, compiled string, includes []string) (bool, error) {
 	compiledInfo, err := os.Stat(compiled)
 	if err != nil {
 		return false, err
 	}
+	compiledMod := compiledInfo.ModTime()
 
-	sourceInfo, err := os.Stat(source)
-	if err != nil {
-		return false, err
+	for _, path := range append([]string{source}, includes...) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return false, err
+		}
+		if info.ModTime().After(compiledMod) {
+			return false, nil
+		}
 	}
+	return true, nil
+}
 
-	return compiledInfo.ModTime().After(sourceInfo.ModTime()), nil
+// extractIncludes reads the includes: list from a .dnszone file without full parsing.
+// Paths are resolved relative to the zone file's directory.
+func extractIncludes(zoneFile string) []string {
+	data, err := os.ReadFile(zoneFile)
+	if err != nil {
+		return nil
+	}
+	baseDir := filepath.Dir(zoneFile)
+
+	var inIncludes bool
+	var paths []string
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "includes:" {
+			inIncludes = true
+			continue
+		}
+		if inIncludes {
+			if strings.HasPrefix(trimmed, "- ") {
+				p := strings.TrimPrefix(trimmed, "- ")
+				p = strings.Trim(p, `"'`)
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(baseDir, p)
+				}
+				paths = append(paths, p)
+			} else if trimmed != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				break
+			}
+		}
+	}
+	return paths
 }
 
 // doctorZoneFile scans a .dnszone file for unquoted TXT values that contain
