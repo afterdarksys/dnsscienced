@@ -1,0 +1,21 @@
+zone: legacy.example.com
+serial: 2024010100
+soa:
+  primary: ns1.example.com
+  admin: hostmaster.legacy.example.com
+  serial: 2024010100
+  refresh: 3600
+  retry: 600
+  expire: 604800
+  minimum: 1800
+ttl: 300
+nameservers:
+- ns1.example.com
+- ns2.example.com
+records:
+  '@':
+    A: 192.0.2.1
+  www:
+    A: 192.0.2.10
+  mail:
+    A: 192.0.2.20

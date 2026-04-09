@@ -284,6 +284,80 @@ func TestParseDNSZone_Validation(t *testing.T) {
 	}
 }
 
+func TestParseDNSZone_LegacyFormat(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/legacy.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() legacy format error = %v", err)
+	}
+
+	if z.Name != "legacy.example.com." {
+		t.Errorf("Zone name = %s, want legacy.example.com.", z.Name)
+	}
+
+	if z.SOA == nil {
+		t.Fatal("Zone has no SOA record")
+	}
+
+	if z.SOA.Ns != "ns1.example.com." {
+		t.Errorf("SOA primary = %s, want ns1.example.com.", z.SOA.Ns)
+	}
+
+	// admin field uses dot notation — should pass through as-is
+	if z.SOA.Mbox != "hostmaster.legacy.example.com." {
+		t.Errorf("SOA mbox = %s, want hostmaster.legacy.example.com.", z.SOA.Mbox)
+	}
+
+	if z.SOA.Serial != 2024010100 {
+		t.Errorf("SOA serial = %d, want 2024010100", z.SOA.Serial)
+	}
+
+	if z.SOA.Refresh != 3600 {
+		t.Errorf("SOA refresh = %d, want 3600", z.SOA.Refresh)
+	}
+
+	if z.SOA.Retry != 600 {
+		t.Errorf("SOA retry = %d, want 600", z.SOA.Retry)
+	}
+
+	if z.SOA.Expire != 604800 {
+		t.Errorf("SOA expire = %d, want 604800", z.SOA.Expire)
+	}
+
+	if z.SOA.Minttl != 1800 {
+		t.Errorf("SOA minimum = %d, want 1800", z.SOA.Minttl)
+	}
+
+	// Nameservers list should be injected as NS records at the apex
+	ns := z.GetNameservers()
+	if len(ns) != 2 {
+		t.Fatalf("Expected 2 NS records, got %d", len(ns))
+	}
+	nsNames := map[string]bool{}
+	for _, n := range ns {
+		nsNames[n.Ns] = true
+	}
+	if !nsNames["ns1.example.com."] {
+		t.Error("Missing ns1.example.com")
+	}
+	if !nsNames["ns2.example.com."] {
+		t.Error("Missing ns2.example.com")
+	}
+
+	// Top-level ttl: 300 should be used as default TTL
+	aRecords := z.GetRecords("legacy.example.com.", dns.TypeA)
+	if len(aRecords) != 1 {
+		t.Fatalf("Expected 1 apex A record, got %d", len(aRecords))
+	}
+	a := aRecords[0].(*dns.A)
+	if !a.A.Equal(net.ParseIP("192.0.2.1")) {
+		t.Errorf("apex A = %v, want 192.0.2.1", a.A)
+	}
+	if a.Hdr.Ttl != 300 {
+		t.Errorf("apex A TTL = %d, want 300", a.Hdr.Ttl)
+	}
+}
+
 func TestParseDNSZone_MissingFile(t *testing.T) {
 	cfg := DefaultConfig()
 	_, err := ParseDNSZone("testdata/nonexistent.dnszone", cfg)

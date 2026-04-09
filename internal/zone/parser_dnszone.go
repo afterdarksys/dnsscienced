@@ -43,6 +43,80 @@ type SOASection struct {
 	NegativeTTL string `yaml:"negative_ttl"`
 }
 
+// OldSOASection holds SOA fields from the legacy zone format.
+type OldSOASection struct {
+	Primary string `yaml:"primary"`
+	Admin   string `yaml:"admin"`
+	Serial  int    `yaml:"serial"`
+	Refresh int    `yaml:"refresh"`
+	Retry   int    `yaml:"retry"`
+	Expire  int    `yaml:"expire"`
+	Minimum int    `yaml:"minimum"`
+}
+
+// OldDNSZoneFile represents the legacy .dnszone format where zone: is a plain
+// string and SOA uses different field names (primary/admin/minimum).
+type OldDNSZoneFile struct {
+	Zone        string                    `yaml:"zone"`
+	Serial      int                       `yaml:"serial,omitempty"`
+	TTL         int                       `yaml:"ttl,omitempty"`
+	SOA         OldSOASection             `yaml:"soa"`
+	Nameservers []string                  `yaml:"nameservers,omitempty"`
+	Includes    []string                  `yaml:"includes,omitempty"`
+	Records     map[string]RecordSection  `yaml:"records"`
+	Templates   map[string]TemplateSection `yaml:"templates,omitempty"`
+	Apply       []ApplySection            `yaml:"apply,omitempty"`
+	DNSSEC      *DNSSECSection            `yaml:"dnssec,omitempty"`
+}
+
+// convertOldFormat converts a legacy OldDNSZoneFile to the current DNSZoneFile.
+func convertOldFormat(ozf OldDNSZoneFile) DNSZoneFile {
+	serial := ozf.SOA.Serial
+	if serial == 0 {
+		serial = ozf.Serial
+	}
+
+	zf := DNSZoneFile{
+		Zone: ZoneSection{
+			Name: ozf.Zone,
+		},
+		SOA: SOASection{
+			PrimaryNS:   ozf.SOA.Primary,
+			Contact:     ozf.SOA.Admin,
+			Serial:      strconv.Itoa(serial),
+			Refresh:     strconv.Itoa(ozf.SOA.Refresh),
+			Retry:       strconv.Itoa(ozf.SOA.Retry),
+			Expire:      strconv.Itoa(ozf.SOA.Expire),
+			NegativeTTL: strconv.Itoa(ozf.SOA.Minimum),
+		},
+		Includes:  ozf.Includes,
+		Records:   ozf.Records,
+		Templates: ozf.Templates,
+		Apply:     ozf.Apply,
+		DNSSEC:    ozf.DNSSEC,
+	}
+
+	if ozf.TTL > 0 {
+		zf.Zone.TTL = strconv.Itoa(ozf.TTL) + "s"
+	}
+
+	// Inject nameservers list as NS records at the zone apex.
+	if len(ozf.Nameservers) > 0 {
+		if zf.Records == nil {
+			zf.Records = make(map[string]RecordSection)
+		}
+		apex := zf.Records["@"]
+		nsList := make([]interface{}, len(ozf.Nameservers))
+		for i, ns := range ozf.Nameservers {
+			nsList[i] = ns
+		}
+		apex.NS = nsList
+		zf.Records["@"] = apex
+	}
+
+	return zf
+}
+
 // RecordSection holds records for an owner name
 type RecordSection struct {
 	A       interface{} `yaml:"A,omitempty"`
@@ -137,20 +211,25 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
 
-	// Parse YAML
+	// Parse YAML — try current format first, fall back to legacy format.
 	var zf DNSZoneFile
 	if err := yaml.Unmarshal(data, &zf); err != nil {
-		return nil, fmt.Errorf("parse YAML: %w", err)
+		var ozf OldDNSZoneFile
+		if err2 := yaml.Unmarshal(data, &ozf); err2 != nil {
+			return nil, fmt.Errorf("parse YAML: %w", err)
+		}
+		zf = convertOldFormat(ozf)
 	}
 
 	// Create zone
 	zone := New(zf.Zone.Name)
 
-	// Parse default TTL
+	// Parse default TTL — use parseTime so raw seconds (e.g. 300) and duration
+	// strings (e.g. "5m") are both accepted.
 	defaultTTL := cfg.DefaultTTL
 	if zf.Zone.TTL != "" {
-		if ttl, err := parseDuration(zf.Zone.TTL); err == nil {
-			defaultTTL = uint32(ttl.Seconds())
+		if ttl, err := parseTime(zf.Zone.TTL); err == nil {
+			defaultTTL = ttl
 		}
 	}
 
