@@ -912,10 +912,10 @@ func applyTemplates(zone *Zone, zf *DNSZoneFile, defaultTTL uint32) error {
 
 // Helper functions
 
-// parseDuration parses a duration string like "1h", "30m", "1d"
+// parseDuration parses a duration string like "1h", "30m", "1d".
+// Case-insensitive: "1H", "1M", "1D", "1W" are all accepted.
 func parseDuration(s string) (time.Duration, error) {
-	// Support custom suffixes
-	s = strings.TrimSpace(s)
+	s = strings.ToLower(strings.TrimSpace(s))
 	if strings.HasSuffix(s, "d") {
 		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
 		if err != nil {

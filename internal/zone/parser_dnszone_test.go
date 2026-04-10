@@ -377,6 +377,12 @@ func TestParseDuration(t *testing.T) {
 		{"1d", 24 * time.Hour},
 		{"2w", 14 * 24 * time.Hour},
 		{"90s", 90 * time.Second},
+		// Uppercase variants
+		{"1H", 1 * time.Hour},
+		{"30M", 30 * time.Minute},
+		{"1D", 24 * time.Hour},
+		{"2W", 14 * 24 * time.Hour},
+		{"90S", 90 * time.Second},
 	}
 
 	for _, tt := range tests {
