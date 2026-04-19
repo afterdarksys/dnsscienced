@@ -1,0 +1,60 @@
+; Web3 Wallet Mapping Example Zone
+; draft-chins-dnsop-web3-wallet-mapping-03
+;
+; This zone demonstrates DNS to Web3 Wallet Mapping using
+; _waddr TXT records (fallback until WALLET RRType is assigned)
+
+$ORIGIN example.com.
+$TTL 3600
+
+@ IN SOA ns1.example.com. admin.example.com. (
+    2026040201 ; Serial
+    7200       ; Refresh
+    3600       ; Retry
+    1209600    ; Expire
+    3600 )     ; Negative TTL
+
+@ IN NS ns1.example.com.
+@ IN NS ns2.example.com.
+
+ns1 IN A 203.0.113.1
+ns2 IN A 203.0.113.2
+
+; ==============================================================================
+; Web3 Wallet Mappings - TXT Record Fallback Format
+; ==============================================================================
+; Format: _waddr.domain IN TXT "namespace:reference:address"
+;
+; Supported namespaces:
+;   eip155  - Ethereum (EIP-155)
+;   bip122  - Bitcoin (BIP-122)
+;   solana  - Solana
+;   cosmos  - Cosmos
+;   polkadot - Polkadot
+; ==============================================================================
+
+; Ethereum mainnet wallet (EIP-155)
+_waddr IN TXT "eip155:1:0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+
+; Bitcoin mainnet wallet (BIP-122)
+_waddr IN TXT "bip122:btc:bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+
+; Solana mainnet wallet
+_waddr IN TXT "solana:sol:DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy"
+
+; Polygon wallet (EIP-155 chain ID 137)
+_waddr IN TXT "eip155:137:0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+
+; Subdomain wallet mappings
+_waddr.alice IN TXT "eip155:1:0x1234567890123456789012345678901234567890"
+_waddr.bob IN TXT "bip122:btc:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"
+
+; Multiple wallets per domain
+_waddr.multi IN TXT "eip155:1:0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+_waddr.multi IN TXT "bip122:btc:bc1qmulti11111111111111111111111111111111"
+_waddr.multi IN TXT "solana:sol:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+; ==============================================================================
+; NOTE: Once WALLET RRType is assigned by IANA, use this format:
+; @ IN WALLET "eip155:1:0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+; ==============================================================================

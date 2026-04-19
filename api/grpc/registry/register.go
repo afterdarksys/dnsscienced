@@ -10,7 +10,20 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/dnsscience/dnsscienced/internal/zone"
 )
+
+// version is injected at build time via -ldflags "-X ...registry.version=..."
+var version = "dev"
+
+// NoopSrvAdapter is a zero-value SrvIface used by standalone gRPC binaries
+// that don't have a live DNS server to back the admin managers.
+type NoopSrvAdapter struct{}
+
+func (NoopSrvAdapter) GetZone(_ string) *zone.Zone        { return nil }
+func (NoopSrvAdapter) AddZone(_ *zone.Zone) error         { return nil }
+func (NoopSrvAdapter) RemoveZone(_ string)                {}
+func (NoopSrvAdapter) GetStats() services.SrvStats        { return services.SrvStats{} }
 
 // SrvIface is the interface that RegisterAll requires from the DNS server.
 // It matches services.SrvAdapter so the caller can pass a *server.Server directly.
@@ -41,17 +54,14 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 		{Name: "www.example.com.", Type: "CNAME", TTL: 3600, Data: "example.com."},
 	})
 
-	cacheMgr := &mock.CacheMgr{}
-	control := &mock.ControlMgr{}
 	dnssec := &mock.DNSSECMgr{}
 
 	threatScorer := cache.NewThreatScorer("")
 
-	// Existing services (unchanged).
 	pb.RegisterDNSServiceServer(s, services.NewDNSService(resolver))
 	pb.RegisterZoneServiceServer(s, services.NewZoneService(zoneMgr))
-	pb.RegisterCacheServiceServer(s, services.NewCacheService(cacheMgr, threatScorer))
-	pb.RegisterServerServiceServer(s, services.NewServerService(control))
+	pb.RegisterCacheServiceServer(s, services.NewCacheService(newLiveCacheMgr(srv), threatScorer))
+	pb.RegisterServerServiceServer(s, services.NewServerService(newLiveControlMgr(srv, version)))
 	pb.RegisterDNSSECServiceServer(s, services.NewDNSSECService(dnssec))
 
 	// Management service — wired to the live DNS server.

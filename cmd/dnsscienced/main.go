@@ -34,7 +34,17 @@ func (a *serverSrvAdapter) AddZone(z *zone.Zone) error       { return a.s.AddZon
 func (a *serverSrvAdapter) RemoveZone(origin string)         { a.s.RemoveZone(origin) }
 func (a *serverSrvAdapter) GetStats() services.SrvStats {
 	raw := a.s.GetStats()
-	return services.SrvStats{Queries: raw.Queries}
+	s := services.SrvStats{
+		Queries:  raw.Queries,
+		Answers:  raw.Answers,
+		Errors:   raw.Errors,
+		NXDomain: raw.NXDOMAIN,
+	}
+	if raw.Recursive != nil {
+		s.RecursiveHits = raw.Recursive.Cache.Hits
+		s.RecursiveMisses = raw.Recursive.Cache.Misses
+	}
+	return s
 }
 
 var (

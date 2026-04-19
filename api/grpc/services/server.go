@@ -28,7 +28,29 @@ func (s *ServerService) GetStatus(ctx context.Context, in *pb.GetStatusRequest) 
 func (s *ServerService) GetStats(ctx context.Context, in *pb.GetStatsRequest) (*pb.GetStatsResponse, error) {
 	st, err := s.Mgr.Stats(ctx, in.GetPeriod().String(), in.GetBreakdowns())
 	if err != nil { return nil, err }
-	return &pb.GetStatsResponse{Period: st.Period}, nil
+	return &pb.GetStatsResponse{
+		Period: st.Period,
+		Queries: &pb.QueryStats{
+			Total:       st.Queries.Total,
+			PerSecond:   st.Queries.PerSecond,
+			ByType:      st.Queries.ByType,
+			ByRcode:     st.Queries.ByRcode,
+			ByTransport: st.Queries.ByTransport,
+		},
+		Latency: &pb.LatencyStats{
+			AvgMs: st.Latency.AvgMs,
+			P50Ms: st.Latency.P50Ms,
+			P95Ms: st.Latency.P95Ms,
+			P99Ms: st.Latency.P99Ms,
+			MaxMs: st.Latency.MaxMs,
+		},
+		Cache: &pb.CacheStats{
+			Entries:     st.Cache.Entries,
+			SizeBytes:   st.Cache.SizeBytes,
+			MaxBytes:    st.Cache.MaxBytes,
+			Utilization: st.Cache.Utilization,
+		},
+	}, nil
 }
 
 func (s *ServerService) Reload(ctx context.Context, in *pb.ReloadRequest) (*pb.ReloadResponse, error) {

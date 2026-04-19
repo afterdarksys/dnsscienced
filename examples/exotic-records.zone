@@ -1,0 +1,125 @@
+; Exotic DNS Record Types Example Zone
+; Demonstrates support for uncommon/exotic DNS record types
+;
+; SECURITY NOTE: These record types are disabled by default in experimental config.
+; Enable in config: experimental.exotic_records.enabled = true
+
+$ORIGIN security.example.com.
+$TTL 3600
+
+@ IN SOA ns1.security.example.com. admin.security.example.com. (
+    2026040201 ; Serial
+    7200       ; Refresh
+    3600       ; Retry
+    1209600    ; Expire
+    3600 )     ; Negative TTL
+
+@ IN NS ns1.security.example.com.
+@ IN NS ns2.security.example.com.
+
+ns1 IN A 203.0.113.10
+ns2 IN A 203.0.113.11
+
+; ==============================================================================
+; OPENPGPKEY - RFC 7929 (OpenPGP Public Keys in DNS)
+; ==============================================================================
+; Format: hash._openpgpkey.domain IN OPENPGPKEY base64(pgp-key)
+; Hash is SHA256 of local-part (left of @) in lowercase
+; Example for alice@security.example.com
+
+5f3d5f4c84d1d2d7._openpgpkey IN OPENPGPKEY (
+    mQENBFxyz...BASE64_ENCODED_PGP_KEY...
+)
+
+; ==============================================================================
+; SSHFP - RFC 4255 (SSH Fingerprints)
+; ==============================================================================
+; Format: host IN SSHFP algorithm type fingerprint
+; Algorithms: 1=RSA, 2=DSS, 3=ECDSA, 4=Ed25519
+; Types: 1=SHA-1, 2=SHA-256
+
+ssh IN SSHFP 4 2 123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01
+ssh IN SSHFP 3 2 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+
+; ==============================================================================
+; SMIMEA - RFC 8162 (S/MIME Certificates in DNS)
+; ==============================================================================
+; Format: hash._smimecert.domain IN SMIMEA usage selector matching certificate
+; Usage: 0=CA, 1=Service, 2=Trust Anchor, 3=Domain
+; Selector: 0=Full cert, 1=SubjectPublicKeyInfo
+; Matching: 0=Exact, 1=SHA-256, 2=SHA-512
+
+a1b2c3d4._smimecert IN SMIMEA 3 1 1 (
+    d2abde240d7cd3ee6b4b28c54df034b9
+    7983a1d16e8a410e4561cb106618e971
+)
+
+; ==============================================================================
+; IPSECKEY - RFC 4025 (IPsec Keys in DNS)
+; ==============================================================================
+; Format: host IN IPSECKEY precedence gateway-type algorithm gateway key
+; Gateway types: 0=none, 1=IPv4, 2=IPv6, 3=domain
+; Algorithms: 1=DSA, 2=RSA
+
+vpn IN IPSECKEY 10 1 2 192.0.2.38 AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==
+
+; ==============================================================================
+; URI - RFC 7553 (Uniform Resource Identifiers in DNS)
+; ==============================================================================
+; Format: name IN URI priority weight "uri"
+
+; HTTP service endpoint
+_http._tcp IN URI 10 1 "https://www.security.example.com/"
+
+; XMPP server
+_xmpp-server._tcp IN URI 10 5 "xmpp://im.security.example.com"
+
+; ==============================================================================
+; DHCID - RFC 4701 (DHCP Identifier)
+; ==============================================================================
+; Format: host IN DHCID base64(dhcp-identifier)
+
+workstation IN DHCID AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=
+
+; ==============================================================================
+; NAPTR - RFC 3403 (Naming Authority Pointer)
+; ==============================================================================
+; Format: domain IN NAPTR order preference flags service regexp replacement
+; Used for E.164 numbers, SIP, URN resolution
+
+; E.164 ENUM mapping
+2.1.2.1.5.5.5.0.0.1.3 IN NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:user@example.com!" .
+
+; SIP service discovery
+@ IN NAPTR 100 50 "s" "SIP+D2T" "" _sip._tcp.security.example.com.
+@ IN NAPTR 100 50 "s" "SIP+D2U" "" _sip._udp.security.example.com.
+
+; ==============================================================================
+; AFSDB - RFC 1183 (AFS Database Location)
+; ==============================================================================
+; Format: domain IN AFSDB subtype hostname
+; Subtype: 1=AFS v3.0, 2=DCE/NCA
+
+@ IN AFSDB 1 afsdb.security.example.com.
+
+; ==============================================================================
+; CSYNC - RFC 7477 (Child-to-Parent Synchronization)
+; ==============================================================================
+; Format: domain IN CSYNC serial flags types
+; Flags: 1=immediate, 2=soaminimum
+; Types: A, NS, AAAA, etc.
+
+@ IN CSYNC 66 3 A NS AAAA
+
+; ==============================================================================
+; ZONEMD - RFC 8976 (Zone Message Digest)
+; ==============================================================================
+; Format: domain IN ZONEMD serial scheme algorithm digest
+; Schemes: 1=SIMPLE
+; Algorithms: 1=SHA-384, 2=SHA-512
+
+@ IN ZONEMD 2026040201 1 1 (
+    62e6cf51b02e54b9b5f967d547ce4313
+    6792901c9f88e637493daaf401c92c27
+    9dd10f0edb1c56f8080211f8480ee306
+)

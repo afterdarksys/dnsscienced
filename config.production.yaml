@@ -1,0 +1,67 @@
+# DNSScienced Production Configuration with ThreatScript
+server:
+  # Listen addresses
+  udp_addr: "0.0.0.0:53"
+  tcp_addr: "0.0.0.0:53"
+  udp_listeners: 4
+
+  # Enable modes
+  enable_authoritative: true
+  enable_recursive: true
+
+  # Recursive resolver configuration
+  recursive:
+    upstreams:
+      - "8.8.8.8:53"
+      - "8.8.4.4:53"
+      - "1.1.1.1:53"
+    timeout: 2s
+    retries: 2
+    enable_0x20: true
+    enable_scrubbing: true
+    enable_qname_min: true
+
+  # DNS Cookies
+  enable_cookies: true
+
+  # Rate Limiting
+  enable_rrl: true
+  rrl:
+    enabled: true
+    responses_per_second: 10
+    exempt_cidrs:
+      - "127.0.0.0/8"
+      - "::1/128"
+
+# Zone file directory
+zones_dir: /opt/dnsscienced/zones
+
+# Admin API
+admin:
+  enabled: true
+  listen: "0.0.0.0:9091"
+
+# Defensive DNS features
+defensive:
+  edns:
+    enabled: true
+    udp_size: 1232
+
+  dnssec:
+    validation: false  # Enable when trust anchors configured
+
+  compression:
+    enabled: true
+
+# ThreatScript Policy - Force AA bit for broken proxies (Bluecoat, etc.)
+policy_file: "/opt/dnsscienced/policies/force_aa.star"
+
+# Experimental features (all disabled by default)
+experimental:
+  enabled: false
+
+  # Protective DNS - malicious domain blocking
+  protective_dns:
+    enabled: false
+    strategy: "nxdomain"
+    enable_ede: true

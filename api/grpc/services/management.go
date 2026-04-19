@@ -31,7 +31,12 @@ type SrvAdapter interface {
 // SrvStats carries the statistics fields that ManagementService reads.
 // Callers should populate this from server.Stats.
 type SrvStats struct {
-	Queries uint64
+	Queries         uint64
+	Answers         uint64
+	Errors          uint64
+	NXDomain        uint64
+	RecursiveHits   uint64
+	RecursiveMisses uint64
 }
 
 // ManagementService implements mgmt.ManagementServiceServer.

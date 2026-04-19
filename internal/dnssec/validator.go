@@ -287,18 +287,21 @@ func (v *Validator) verifySignatures(msg *dns.Msg, qname string, qtype uint16, r
 
 	// Verify each signature
 	for _, rrsig := range result.Signatures {
-		// Check signature validity period
+		// Check signature validity period.
+		// dns.RRSIG.Inception and Expiration are uint32 Unix timestamps.
+		inception := time.Unix(int64(rrsig.Inception), 0)
+		expiration := time.Unix(int64(rrsig.Expiration), 0)
 		now := time.Now()
-		if now.Before(rrsig.Inception) || now.After(rrsig.Expiration) {
+		if now.Before(inception) || now.After(expiration) {
 			return fmt.Errorf("signature outside validity period")
 		}
 
 		// Update result validity times
-		if result.ValidFrom.IsZero() || rrsig.Inception.Before(result.ValidFrom) {
-			result.ValidFrom = rrsig.Inception
+		if result.ValidFrom.IsZero() || inception.Before(result.ValidFrom) {
+			result.ValidFrom = inception
 		}
-		if result.ValidUntil.IsZero() || rrsig.Expiration.After(result.ValidUntil) {
-			result.ValidUntil = rrsig.Expiration
+		if result.ValidUntil.IsZero() || expiration.After(result.ValidUntil) {
+			result.ValidUntil = expiration
 		}
 
 		// Find matching DNSKEY
