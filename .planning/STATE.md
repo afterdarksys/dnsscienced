@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 3 — Live Threat Feed
-Plan: 01 complete — 03-01-PLAN.md (config extension + RemoveIPScore)
-Status: In progress — 1/3 plans complete; ready for 03-02 FeedClient
-Last activity: 2026-04-23 — Phase 3 Plan 01 complete (ThreatIntelConfig feed fields + RemoveIPScore)
+Plan: 02 complete — 03-02-PLAN.md (FeedClient implementation)
+Status: In progress — 2/3 plans complete; ready for 03-03 server wiring
+Last activity: 2026-04-23 — Phase 3 Plan 02 complete (FeedClient with full-replace semantics)
 
 ## Project Reference
 
@@ -39,3 +39,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - AuthToken doc comment: "Never logged — only presence is logged" — runtime enforcement deferred to feed.go Plan 02 (T-03-01)
 - TLSSkipVerify defaults false; operator must explicitly opt in (T-03-02)
 - RemoveIPScore: no ToLower — IPs stored in net.IP.String() normalized form at AddIPScore call site
+- Phase 3 Plan 02 complete: FeedClient in internal/firewalld/feed.go; StartFeed(ctx, wg) on *Firewall; parseFeed pure function; apply() full-replace semantics; fetchAndApply() error resilience (D-14 — failed fetch leaves prev scores intact); go build ./... passes
+- wg typed as interface{ Add(int); Done() } in StartFeed — server passes &s.wg directly in Plan 03
+- AuthToken never in log output (T-03-03 mitigated): authDesc computed as "bearer (set)" or "none"; token only in cfg.AuthToken != "" check and req.Header.Set
+- CIDR strings stored as-is in prevIPs; AddIPScore/RemoveIPScore accept CIDR strings so round-trip is clean
