@@ -271,6 +271,12 @@ func (fw *Firewall) LoadScript(path string) error {
 	return fw.starlark.LoadFile(path)
 }
 
+// LoadSource compiles and registers a Starlark policy script from src string.
+// id is the caller-supplied unique script identifier used to reference and remove the script.
+func (fw *Firewall) LoadSource(id, src string) error {
+	return fw.starlark.Load(id, src)
+}
+
 // RemoveScript removes a loaded Starlark script by its ID (path).
 func (fw *Firewall) RemoveScript(id string) {
 	fw.starlark.Remove(id)

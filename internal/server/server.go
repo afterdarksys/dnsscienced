@@ -312,6 +312,11 @@ func (s *Server) Stop() error {
 	return nil
 }
 
+// GetFirewall returns the live firewall instance, or nil if firewall is disabled in config.
+func (s *Server) GetFirewall() *firewalld.Firewall {
+	return s.firewall
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
