@@ -4,8 +4,8 @@
 
 Phase: 4 — EDNS0 CustomerID
 Plan: —
-Status: Ready to plan — Phase 3 complete; Phase 4 not yet planned
-Last activity: 2026-04-23 — Phase 3 verified and complete (FEED-01 through FEED-04 delivered)
+Status: Ready to plan — Phase 4 context captured; awaiting /gsd-plan-phase 4
+Last activity: 2026-04-23 — Phase 4 context gathered (option code 65000, extraction inside Check(), 64-byte cap, debug log on oversized)
 
 ## Project Reference
 
