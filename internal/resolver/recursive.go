@@ -345,21 +345,25 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 	return resp, nil
 }
 
-// findGlue looks for glue records (A/AAAA) in Additional section
+// findGlue looks for glue records (A/AAAA) in Additional section.
+// It prefers IPv4 (A) over IPv6 (AAAA) to avoid bare-IPv6 address formatting
+// issues. The returned string is ready to pass to net.Dial (bracketed for IPv6).
 func (r *Recursive) findGlue(msg *dns.Msg, nsName string) string {
+	var ipv6addr string
 	for _, rr := range msg.Extra {
 		switch record := rr.(type) {
 		case *dns.A:
 			if record.Hdr.Name == nsName {
-				return record.A.String()
+				return record.A.String() // IPv4 — use immediately
 			}
 		case *dns.AAAA:
-			if record.Hdr.Name == nsName {
-				return record.AAAA.String()
+			if record.Hdr.Name == nsName && ipv6addr == "" {
+				// Bracket IPv6 so net.Dial can parse "host:port" correctly.
+				ipv6addr = "[" + record.AAAA.String() + "]"
 			}
 		}
 	}
-	return ""
+	return ipv6addr
 }
 
 // getTTL extracts the minimum TTL from a response
