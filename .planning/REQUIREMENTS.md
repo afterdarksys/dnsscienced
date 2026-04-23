@@ -15,7 +15,7 @@
 
 ### Threat Feed
 
-- [ ] **FEED-01**: Operator can configure a threat feed URL in config.yaml
+- [x] **FEED-01**: Operator can configure a threat feed URL in config.yaml
 - [x] **FEED-02**: Server polls configured feed URL at a configurable interval and ingests domain/IP scores
 - [x] **FEED-03**: Feed client calls AddDomainScore/AddIPScore on ThreatIntelEngine for each entry
 - [x] **FEED-04**: Feed errors are logged and do not crash the server
@@ -61,7 +61,7 @@
 | GRPC-03 | Phase 2 | Pending |
 | GRPC-04 | Phase 2 | Pending |
 | GRPC-05 | Phase 2 | Pending |
-| FEED-01 | Phase 3 | Pending |
+| FEED-01 | Phase 3 | Complete (03-01) |
 | FEED-02 | Phase 3 | Complete (03-02) |
 | FEED-03 | Phase 3 | Complete (03-02) |
 | FEED-04 | Phase 3 | Complete (03-02) |

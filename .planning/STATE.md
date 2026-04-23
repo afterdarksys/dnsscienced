@@ -2,10 +2,10 @@
 
 ## Current Position
 
-Phase: 3 — Live Threat Feed
-Plan: 03 complete — 03-03-PLAN.md (Server wiring + tests)
-Status: Complete — 3/3 plans complete; Phase 3 fully delivered
-Last activity: 2026-04-23 — Phase 3 Plan 03 complete (StartFeed wiring + feed_test.go)
+Phase: 4 — EDNS0 CustomerID
+Plan: —
+Status: Ready to plan — Phase 3 complete; Phase 4 not yet planned
+Last activity: 2026-04-23 — Phase 3 verified and complete (FEED-01 through FEED-04 delivered)
 
 ## Project Reference
 
