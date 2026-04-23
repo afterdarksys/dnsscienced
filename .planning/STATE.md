@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 3 — Live Threat Feed
-Plan: —
-Status: Context gathered — ready for planning
-Last activity: 2026-04-23 — Phase 3 context captured (discuss-phase complete)
+Plan: 01 complete — 03-01-PLAN.md (config extension + RemoveIPScore)
+Status: In progress — 1/3 plans complete; ready for 03-02 FeedClient
+Last activity: 2026-04-23 — Phase 3 Plan 01 complete (ThreatIntelConfig feed fields + RemoveIPScore)
 
 ## Project Reference
 
@@ -35,3 +35,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 2 Plan 04 complete: RegisterAll in api/grpc/registry/register.go now conditionally registers FirewallAdminService via nil-guard on srv.GetFirewall(); go build ./... passes; Phase 2 gRPC Admin feature is end-to-end complete
 - Nil-guard pattern: if fw := srv.GetFirewall(); fw != nil — FirewallAdminService not registered when firewall.enabled is false in config.yaml (T-02-07 mitigation)
 - Pre-existing test failures (not introduced by Phase 2): internal/dnssec build error, internal/engine/TestResolver_Resolve (live DNS), internal/resolver/TestFindGlue (formatting)
+- Phase 3 Plan 01 complete: ThreatIntelConfig extended with 6 feed fields (FeedURL, PollInterval, Timeout, TLSSkipVerify, AuthToken, Headers); DefaultConfig sets PollInterval=5m, Timeout=30s; RemoveIPScore added to *ThreatIntel; go build ./... passes; all firewalld tests pass
+- AuthToken doc comment: "Never logged — only presence is logged" — runtime enforcement deferred to feed.go Plan 02 (T-03-01)
+- TLSSkipVerify defaults false; operator must explicitly opt in (T-03-02)
+- RemoveIPScore: no ToLower — IPs stored in net.IP.String() normalized form at AddIPScore call site
