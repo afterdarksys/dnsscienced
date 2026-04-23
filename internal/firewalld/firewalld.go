@@ -87,9 +87,10 @@ type Firewall struct {
 	policy   *PolicyEngine
 	junk     *JunkDetector
 	intel    *ThreatIntel
-	starlark *StarlarkEngine
+	starlark  *StarlarkEngine
 	forwarder *Forwarder
-	metrics  *Metrics
+	pool      *UpstreamPool
+	metrics   *Metrics
 	logger   zerolog.Logger
 
 	mu      sync.RWMutex
@@ -132,6 +133,18 @@ func New(cfg Config) (*Firewall, error) {
 		return nil, fmt.Errorf("firewalld: build starlark engine: %w", err)
 	}
 
+	// Initialize upstream pool (D-10).
+	pool := newUpstreamPool(cfg.Redirect.Upstreams)
+
+	// Validate: if any rule has redirect action with empty redirect_server but pool is empty, fail fast.
+	if len(cfg.Redirect.Upstreams) == 0 {
+		for _, r := range cfg.Rules {
+			if strings.ToLower(r.Action) == "redirect" && r.RedirectServer == "" {
+				return nil, fmt.Errorf("firewalld: rule %q has redirect action but no redirect_server and firewall.redirect.upstreams is empty", r.Name)
+			}
+		}
+	}
+
 	// Load policy scripts from disk.
 	for _, path := range cfg.PolicyScripts {
 		if err := starlark.LoadFile(path); err != nil {
@@ -146,6 +159,7 @@ func New(cfg Config) (*Firewall, error) {
 		intel:     intel,
 		starlark:  starlark,
 		forwarder: NewForwarder(cfg.ScriptTimeout * 1500), // generous: 3× script timeout
+		pool:      pool,
 		metrics:   metrics,
 		logger:    log.With().Str("component", "firewalld").Logger(),
 	}
@@ -182,6 +196,17 @@ func (fw *Firewall) Check(r *dns.Msg, clientIP net.IP) *Decision {
 
 	// 1. Static policy rules.
 	if d := fw.policy.Evaluate(qctx); d.Verdict != VerdictAllow {
+		if d.Verdict == VerdictRedirect && d.Server == "" {
+			server, err := fw.pool.Next()
+			if err != nil {
+				fw.logger.Error().Err(err).Msg("redirect pool empty — returning SERVFAIL")
+				fail := new(dns.Msg)
+				fail.SetReply(r)
+				fail.Rcode = dns.RcodeServerFailure
+				return &Decision{Verdict: VerdictDrop, Reason: "pool empty"}
+			}
+			d.Server = server
+		}
 		return fw.record(d, qctx)
 	}
 
