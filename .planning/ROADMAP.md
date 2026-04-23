@@ -67,14 +67,10 @@ Plans:
 2. A query without the EDNS0 option still resolves normally — `q.customer_id` is an empty string, no error
 3. A Starlark script that branches on `q.customer_id` applies the correct per-customer verdict
 
-**Key tasks:**
-- Define the EDNS0 option code constant for CustomerID (document in code comment)
-- In `internal/server/server.go` query intake, extract the EDNS0 option value before calling `Firewall.Check()`
-- Populate `QueryContext.CustomerID` with extracted value or empty string
-- Add unit tests covering: option present, option absent, option with empty payload
+**Plans:** 1 plan
 
-**Plans**: TBD
-**UI hint**: no
+Plans:
+- [ ] 04-01-PLAN.md — EDNS0 extraction + wire + tests (edns0.go new file with constant + helper; firewalld.go 1-line insertion; firewalld_test.go 7 new tests)
 
 ---
 
@@ -107,7 +103,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
 | 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
-| 4. EDNS0 CustomerID | 0/0 | Not started | - |
+| 4. EDNS0 CustomerID | 0/1 | In progress | - |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |
 
 ---
