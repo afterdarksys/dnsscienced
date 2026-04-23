@@ -26,6 +26,14 @@ const (
 	AdminService_RefreshZone_FullMethodName           = "/dnsscience.v1.AdminService/RefreshZone"
 	AdminService_ListZones_FullMethodName             = "/dnsscience.v1.AdminService/ListZones"
 	AdminService_ReloadZones_FullMethodName           = "/dnsscience.v1.AdminService/ReloadZones"
+	AdminService_CreateZone_FullMethodName            = "/dnsscience.v1.AdminService/CreateZone"
+	AdminService_UpdateZone_FullMethodName            = "/dnsscience.v1.AdminService/UpdateZone"
+	AdminService_DeleteZone_FullMethodName            = "/dnsscience.v1.AdminService/DeleteZone"
+	AdminService_GetZone_FullMethodName               = "/dnsscience.v1.AdminService/GetZone"
+	AdminService_CreateRecord_FullMethodName          = "/dnsscience.v1.AdminService/CreateRecord"
+	AdminService_UpdateRecord_FullMethodName          = "/dnsscience.v1.AdminService/UpdateRecord"
+	AdminService_DeleteRecord_FullMethodName          = "/dnsscience.v1.AdminService/DeleteRecord"
+	AdminService_ListRecords_FullMethodName           = "/dnsscience.v1.AdminService/ListRecords"
 	AdminService_SetQueryLogging_FullMethodName       = "/dnsscience.v1.AdminService/SetQueryLogging"
 	AdminService_GetQueryLoggingStatus_FullMethodName = "/dnsscience.v1.AdminService/GetQueryLoggingStatus"
 	AdminService_SetRateLimit_FullMethodName          = "/dnsscience.v1.AdminService/SetRateLimit"
@@ -51,6 +59,16 @@ type AdminServiceClient interface {
 	RefreshZone(ctx context.Context, in *AdminRefreshZoneRequest, opts ...grpc.CallOption) (*AdminRefreshZoneResponse, error)
 	ListZones(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AdminListZonesResponse, error)
 	ReloadZones(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AdminReloadZonesResponse, error)
+	// Zone management (create/update/delete)
+	CreateZone(ctx context.Context, in *AdminCreateZoneRequest, opts ...grpc.CallOption) (*AdminCreateZoneResponse, error)
+	UpdateZone(ctx context.Context, in *AdminUpdateZoneRequest, opts ...grpc.CallOption) (*AdminUpdateZoneResponse, error)
+	DeleteZone(ctx context.Context, in *AdminDeleteZoneRequest, opts ...grpc.CallOption) (*AdminDeleteZoneResponse, error)
+	GetZone(ctx context.Context, in *AdminGetZoneRequest, opts ...grpc.CallOption) (*AdminGetZoneResponse, error)
+	// Record management
+	CreateRecord(ctx context.Context, in *AdminCreateRecordRequest, opts ...grpc.CallOption) (*AdminCreateRecordResponse, error)
+	UpdateRecord(ctx context.Context, in *AdminUpdateRecordRequest, opts ...grpc.CallOption) (*AdminUpdateRecordResponse, error)
+	DeleteRecord(ctx context.Context, in *AdminDeleteRecordRequest, opts ...grpc.CallOption) (*AdminDeleteRecordResponse, error)
+	ListRecords(ctx context.Context, in *AdminListRecordsRequest, opts ...grpc.CallOption) (*AdminListRecordsResponse, error)
 	// Query logging control
 	SetQueryLogging(ctx context.Context, in *AdminSetQueryLoggingRequest, opts ...grpc.CallOption) (*AdminSetQueryLoggingResponse, error)
 	GetQueryLoggingStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AdminQueryLoggingStatusResponse, error)
@@ -128,6 +146,86 @@ func (c *adminServiceClient) ReloadZones(ctx context.Context, in *emptypb.Empty,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AdminReloadZonesResponse)
 	err := c.cc.Invoke(ctx, AdminService_ReloadZones_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateZone(ctx context.Context, in *AdminCreateZoneRequest, opts ...grpc.CallOption) (*AdminCreateZoneResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminCreateZoneResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateZone_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) UpdateZone(ctx context.Context, in *AdminUpdateZoneRequest, opts ...grpc.CallOption) (*AdminUpdateZoneResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminUpdateZoneResponse)
+	err := c.cc.Invoke(ctx, AdminService_UpdateZone_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteZone(ctx context.Context, in *AdminDeleteZoneRequest, opts ...grpc.CallOption) (*AdminDeleteZoneResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminDeleteZoneResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteZone_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) GetZone(ctx context.Context, in *AdminGetZoneRequest, opts ...grpc.CallOption) (*AdminGetZoneResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminGetZoneResponse)
+	err := c.cc.Invoke(ctx, AdminService_GetZone_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateRecord(ctx context.Context, in *AdminCreateRecordRequest, opts ...grpc.CallOption) (*AdminCreateRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminCreateRecordResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateRecord_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) UpdateRecord(ctx context.Context, in *AdminUpdateRecordRequest, opts ...grpc.CallOption) (*AdminUpdateRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminUpdateRecordResponse)
+	err := c.cc.Invoke(ctx, AdminService_UpdateRecord_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteRecord(ctx context.Context, in *AdminDeleteRecordRequest, opts ...grpc.CallOption) (*AdminDeleteRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminDeleteRecordResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteRecord_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ListRecords(ctx context.Context, in *AdminListRecordsRequest, opts ...grpc.CallOption) (*AdminListRecordsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminListRecordsResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListRecords_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +336,16 @@ type AdminServiceServer interface {
 	RefreshZone(context.Context, *AdminRefreshZoneRequest) (*AdminRefreshZoneResponse, error)
 	ListZones(context.Context, *emptypb.Empty) (*AdminListZonesResponse, error)
 	ReloadZones(context.Context, *emptypb.Empty) (*AdminReloadZonesResponse, error)
+	// Zone management (create/update/delete)
+	CreateZone(context.Context, *AdminCreateZoneRequest) (*AdminCreateZoneResponse, error)
+	UpdateZone(context.Context, *AdminUpdateZoneRequest) (*AdminUpdateZoneResponse, error)
+	DeleteZone(context.Context, *AdminDeleteZoneRequest) (*AdminDeleteZoneResponse, error)
+	GetZone(context.Context, *AdminGetZoneRequest) (*AdminGetZoneResponse, error)
+	// Record management
+	CreateRecord(context.Context, *AdminCreateRecordRequest) (*AdminCreateRecordResponse, error)
+	UpdateRecord(context.Context, *AdminUpdateRecordRequest) (*AdminUpdateRecordResponse, error)
+	DeleteRecord(context.Context, *AdminDeleteRecordRequest) (*AdminDeleteRecordResponse, error)
+	ListRecords(context.Context, *AdminListRecordsRequest) (*AdminListRecordsResponse, error)
 	// Query logging control
 	SetQueryLogging(context.Context, *AdminSetQueryLoggingRequest) (*AdminSetQueryLoggingResponse, error)
 	GetQueryLoggingStatus(context.Context, *emptypb.Empty) (*AdminQueryLoggingStatusResponse, error)
@@ -278,6 +386,30 @@ func (UnimplementedAdminServiceServer) ListZones(context.Context, *emptypb.Empty
 }
 func (UnimplementedAdminServiceServer) ReloadZones(context.Context, *emptypb.Empty) (*AdminReloadZonesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReloadZones not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateZone(context.Context, *AdminCreateZoneRequest) (*AdminCreateZoneResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateZone not implemented")
+}
+func (UnimplementedAdminServiceServer) UpdateZone(context.Context, *AdminUpdateZoneRequest) (*AdminUpdateZoneResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateZone not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteZone(context.Context, *AdminDeleteZoneRequest) (*AdminDeleteZoneResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteZone not implemented")
+}
+func (UnimplementedAdminServiceServer) GetZone(context.Context, *AdminGetZoneRequest) (*AdminGetZoneResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetZone not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateRecord(context.Context, *AdminCreateRecordRequest) (*AdminCreateRecordResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateRecord not implemented")
+}
+func (UnimplementedAdminServiceServer) UpdateRecord(context.Context, *AdminUpdateRecordRequest) (*AdminUpdateRecordResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateRecord not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteRecord(context.Context, *AdminDeleteRecordRequest) (*AdminDeleteRecordResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteRecord not implemented")
+}
+func (UnimplementedAdminServiceServer) ListRecords(context.Context, *AdminListRecordsRequest) (*AdminListRecordsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRecords not implemented")
 }
 func (UnimplementedAdminServiceServer) SetQueryLogging(context.Context, *AdminSetQueryLoggingRequest) (*AdminSetQueryLoggingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetQueryLogging not implemented")
@@ -431,6 +563,150 @@ func _AdminService_ReloadZones_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdminServiceServer).ReloadZones(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateZone_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminCreateZoneRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateZone(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateZone_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateZone(ctx, req.(*AdminCreateZoneRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_UpdateZone_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminUpdateZoneRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).UpdateZone(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_UpdateZone_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).UpdateZone(ctx, req.(*AdminUpdateZoneRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteZone_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminDeleteZoneRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteZone(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteZone_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteZone(ctx, req.(*AdminDeleteZoneRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_GetZone_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminGetZoneRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetZone(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetZone_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetZone(ctx, req.(*AdminGetZoneRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminCreateRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateRecord(ctx, req.(*AdminCreateRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_UpdateRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminUpdateRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).UpdateRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_UpdateRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).UpdateRecord(ctx, req.(*AdminUpdateRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminDeleteRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteRecord(ctx, req.(*AdminDeleteRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ListRecords_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminListRecordsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListRecords(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListRecords_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListRecords(ctx, req.(*AdminListRecordsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -629,6 +905,38 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AdminService_ReloadZones_Handler,
 		},
 		{
+			MethodName: "CreateZone",
+			Handler:    _AdminService_CreateZone_Handler,
+		},
+		{
+			MethodName: "UpdateZone",
+			Handler:    _AdminService_UpdateZone_Handler,
+		},
+		{
+			MethodName: "DeleteZone",
+			Handler:    _AdminService_DeleteZone_Handler,
+		},
+		{
+			MethodName: "GetZone",
+			Handler:    _AdminService_GetZone_Handler,
+		},
+		{
+			MethodName: "CreateRecord",
+			Handler:    _AdminService_CreateRecord_Handler,
+		},
+		{
+			MethodName: "UpdateRecord",
+			Handler:    _AdminService_UpdateRecord_Handler,
+		},
+		{
+			MethodName: "DeleteRecord",
+			Handler:    _AdminService_DeleteRecord_Handler,
+		},
+		{
+			MethodName: "ListRecords",
+			Handler:    _AdminService_ListRecords_Handler,
+		},
+		{
 			MethodName: "SetQueryLogging",
 			Handler:    _AdminService_SetQueryLogging_Handler,
 		},
@@ -663,6 +971,228 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "KillConnection",
 			Handler:    _AdminService_KillConnection_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "admin.proto",
+}
+
+const (
+	FirewallAdminService_FirewallStats_FullMethodName = "/dnsscience.v1.FirewallAdminService/FirewallStats"
+	FirewallAdminService_LoadScript_FullMethodName    = "/dnsscience.v1.FirewallAdminService/LoadScript"
+	FirewallAdminService_RemoveScript_FullMethodName  = "/dnsscience.v1.FirewallAdminService/RemoveScript"
+	FirewallAdminService_InjectScore_FullMethodName   = "/dnsscience.v1.FirewallAdminService/InjectScore"
+)
+
+// FirewallAdminServiceClient is the client API for FirewallAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// FirewallAdminService exposes firewall management operations over gRPC.
+// Additive to AdminService — registered on the same admin gRPC server port.
+type FirewallAdminServiceClient interface {
+	FirewallStats(ctx context.Context, in *FirewallStatsRequest, opts ...grpc.CallOption) (*FirewallStatsResponse, error)
+	LoadScript(ctx context.Context, in *FirewallLoadScriptRequest, opts ...grpc.CallOption) (*FirewallLoadScriptResponse, error)
+	RemoveScript(ctx context.Context, in *FirewallRemoveScriptRequest, opts ...grpc.CallOption) (*FirewallRemoveScriptResponse, error)
+	InjectScore(ctx context.Context, in *FirewallInjectScoreRequest, opts ...grpc.CallOption) (*FirewallInjectScoreResponse, error)
+}
+
+type firewallAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewFirewallAdminServiceClient(cc grpc.ClientConnInterface) FirewallAdminServiceClient {
+	return &firewallAdminServiceClient{cc}
+}
+
+func (c *firewallAdminServiceClient) FirewallStats(ctx context.Context, in *FirewallStatsRequest, opts ...grpc.CallOption) (*FirewallStatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FirewallStatsResponse)
+	err := c.cc.Invoke(ctx, FirewallAdminService_FirewallStats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *firewallAdminServiceClient) LoadScript(ctx context.Context, in *FirewallLoadScriptRequest, opts ...grpc.CallOption) (*FirewallLoadScriptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FirewallLoadScriptResponse)
+	err := c.cc.Invoke(ctx, FirewallAdminService_LoadScript_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *firewallAdminServiceClient) RemoveScript(ctx context.Context, in *FirewallRemoveScriptRequest, opts ...grpc.CallOption) (*FirewallRemoveScriptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FirewallRemoveScriptResponse)
+	err := c.cc.Invoke(ctx, FirewallAdminService_RemoveScript_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *firewallAdminServiceClient) InjectScore(ctx context.Context, in *FirewallInjectScoreRequest, opts ...grpc.CallOption) (*FirewallInjectScoreResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FirewallInjectScoreResponse)
+	err := c.cc.Invoke(ctx, FirewallAdminService_InjectScore_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// FirewallAdminServiceServer is the server API for FirewallAdminService service.
+// All implementations must embed UnimplementedFirewallAdminServiceServer
+// for forward compatibility.
+//
+// FirewallAdminService exposes firewall management operations over gRPC.
+// Additive to AdminService — registered on the same admin gRPC server port.
+type FirewallAdminServiceServer interface {
+	FirewallStats(context.Context, *FirewallStatsRequest) (*FirewallStatsResponse, error)
+	LoadScript(context.Context, *FirewallLoadScriptRequest) (*FirewallLoadScriptResponse, error)
+	RemoveScript(context.Context, *FirewallRemoveScriptRequest) (*FirewallRemoveScriptResponse, error)
+	InjectScore(context.Context, *FirewallInjectScoreRequest) (*FirewallInjectScoreResponse, error)
+	mustEmbedUnimplementedFirewallAdminServiceServer()
+}
+
+// UnimplementedFirewallAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedFirewallAdminServiceServer struct{}
+
+func (UnimplementedFirewallAdminServiceServer) FirewallStats(context.Context, *FirewallStatsRequest) (*FirewallStatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FirewallStats not implemented")
+}
+func (UnimplementedFirewallAdminServiceServer) LoadScript(context.Context, *FirewallLoadScriptRequest) (*FirewallLoadScriptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LoadScript not implemented")
+}
+func (UnimplementedFirewallAdminServiceServer) RemoveScript(context.Context, *FirewallRemoveScriptRequest) (*FirewallRemoveScriptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveScript not implemented")
+}
+func (UnimplementedFirewallAdminServiceServer) InjectScore(context.Context, *FirewallInjectScoreRequest) (*FirewallInjectScoreResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InjectScore not implemented")
+}
+func (UnimplementedFirewallAdminServiceServer) mustEmbedUnimplementedFirewallAdminServiceServer() {}
+func (UnimplementedFirewallAdminServiceServer) testEmbeddedByValue()                              {}
+
+// UnsafeFirewallAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to FirewallAdminServiceServer will
+// result in compilation errors.
+type UnsafeFirewallAdminServiceServer interface {
+	mustEmbedUnimplementedFirewallAdminServiceServer()
+}
+
+func RegisterFirewallAdminServiceServer(s grpc.ServiceRegistrar, srv FirewallAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedFirewallAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&FirewallAdminService_ServiceDesc, srv)
+}
+
+func _FirewallAdminService_FirewallStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FirewallStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FirewallAdminServiceServer).FirewallStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FirewallAdminService_FirewallStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FirewallAdminServiceServer).FirewallStats(ctx, req.(*FirewallStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FirewallAdminService_LoadScript_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FirewallLoadScriptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FirewallAdminServiceServer).LoadScript(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FirewallAdminService_LoadScript_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FirewallAdminServiceServer).LoadScript(ctx, req.(*FirewallLoadScriptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FirewallAdminService_RemoveScript_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FirewallRemoveScriptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FirewallAdminServiceServer).RemoveScript(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FirewallAdminService_RemoveScript_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FirewallAdminServiceServer).RemoveScript(ctx, req.(*FirewallRemoveScriptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FirewallAdminService_InjectScore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FirewallInjectScoreRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FirewallAdminServiceServer).InjectScore(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FirewallAdminService_InjectScore_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FirewallAdminServiceServer).InjectScore(ctx, req.(*FirewallInjectScoreRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// FirewallAdminService_ServiceDesc is the grpc.ServiceDesc for FirewallAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var FirewallAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "dnsscience.v1.FirewallAdminService",
+	HandlerType: (*FirewallAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "FirewallStats",
+			Handler:    _FirewallAdminService_FirewallStats_Handler,
+		},
+		{
+			MethodName: "LoadScript",
+			Handler:    _FirewallAdminService_LoadScript_Handler,
+		},
+		{
+			MethodName: "RemoveScript",
+			Handler:    _FirewallAdminService_RemoveScript_Handler,
+		},
+		{
+			MethodName: "InjectScore",
+			Handler:    _FirewallAdminService_InjectScore_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
