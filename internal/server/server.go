@@ -197,6 +197,13 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
+	// Start live threat feed poller when firewall is enabled and feed_url is configured.
+	// StartFeed is a no-op when FeedURL is empty (D-09), so the nil and empty-URL guards
+	// are both handled inside StartFeed itself.
+	if s.firewall != nil {
+		s.firewall.StartFeed(s.ctx, &s.wg)
+	}
+
 	// Initialize RRL if enabled
 	if cfg.EnableRRL {
 		s.rrl = rrl.NewLimiter(cfg.RRLConfig)
