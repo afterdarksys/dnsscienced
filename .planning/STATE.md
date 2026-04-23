@@ -4,8 +4,8 @@
 
 Phase: 5 — Redirect Load Balancing
 Plan: TBD
-Status: Ready to plan
-Last activity: 2026-04-23 — Phase 4 complete (CUST-01, CUST-02, CUST-03 delivered; 31 firewalld tests green)
+Status: Context gathered — ready to plan
+Last activity: 2026-04-23 — Phase 5 context gathered (redirect pool decisions locked; see 05-CONTEXT.md)
 
 ## Project Reference
 
