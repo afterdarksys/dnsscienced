@@ -13,6 +13,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
+	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
@@ -48,6 +49,9 @@ type Config struct {
 
 	// Defensive DNS manager (set separately to avoid import cycle)
 	DefensiveManager *defensive.Manager `yaml:"-"`
+
+	// DNS Firewall (dnsfirewalld)
+	Firewall firewalld.Config `yaml:"firewall"`
 
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
@@ -112,6 +116,7 @@ type Server struct {
 	rrl        *rrl.Limiter
 	defensive  *defensive.Manager
 	protective *protective.Engine
+	firewall   *firewalld.Firewall
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -180,6 +185,16 @@ func New(cfg Config) (*Server, error) {
 		fmt.Printf("🛡️  Protective DNS enabled (strategy: %s, blocklist size: %d)\n",
 			cfg.Experimental.ProtectiveDNS.Strategy,
 			s.protective.GetBlocklistStats().TotalEntries)
+	}
+
+	// Initialize DNS Firewall if enabled
+	if cfg.Firewall.Enabled {
+		var err error
+		s.firewall, err = firewalld.New(cfg.Firewall)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init firewalld: %w", err)
+		}
 	}
 
 	// Initialize RRL if enabled
@@ -289,6 +304,9 @@ func (s *Server) Stop() error {
 	if s.protective != nil {
 		s.protective.Shutdown()
 	}
+	if s.firewall != nil {
+		s.firewall.Shutdown()
+	}
 
 	fmt.Println("DNS server stopped")
 	return nil
@@ -373,6 +391,32 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 			w.WriteMsg(blockedResp)
 			return
+		}
+	}
+
+	// Check DNS Firewall
+	if s.firewall != nil {
+		d := s.firewall.Check(r, clientIP)
+		switch d.Verdict {
+		case firewalld.VerdictDrop:
+			return
+		case firewalld.VerdictNXDomain, firewalld.VerdictRewrite:
+			resp := s.firewall.Apply(r, d)
+			if resp != nil {
+				if s.shouldRateLimit(resp, clientIP) {
+					return
+				}
+				s.answers.Add(1)
+				if resp.Rcode == dns.RcodeNameError {
+					s.nxdomain.Add(1)
+				}
+				w.WriteMsg(resp)
+				return
+			}
+		case firewalld.VerdictRedirect:
+			// Caller (future work): forward query to d.Server upstream.
+			// For now fall through to normal resolution — the decision is
+			// logged by the firewall for observability.
 		}
 	}
 
