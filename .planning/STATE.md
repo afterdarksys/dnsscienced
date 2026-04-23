@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 3 — Live Threat Feed
-Plan: 02 complete — 03-02-PLAN.md (FeedClient implementation)
-Status: In progress — 2/3 plans complete; ready for 03-03 server wiring
-Last activity: 2026-04-23 — Phase 3 Plan 02 complete (FeedClient with full-replace semantics)
+Plan: 03 complete — 03-03-PLAN.md (Server wiring + tests)
+Status: Complete — 3/3 plans complete; Phase 3 fully delivered
+Last activity: 2026-04-23 — Phase 3 Plan 03 complete (StartFeed wiring + feed_test.go)
 
 ## Project Reference
 
@@ -43,3 +43,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - wg typed as interface{ Add(int); Done() } in StartFeed — server passes &s.wg directly in Plan 03
 - AuthToken never in log output (T-03-03 mitigated): authDesc computed as "bearer (set)" or "none"; token only in cfg.AuthToken != "" check and req.Header.Set
 - CIDR strings stored as-is in prevIPs; AddIPScore/RemoveIPScore accept CIDR strings so round-trip is clean
+- Phase 3 Plan 03 complete: s.firewall.StartFeed(s.ctx, &s.wg) wired in server.go New() after firewalld.New() block; feed goroutine tracked in s.wg so Stop() waits for clean exit; go build ./... passes
+- feed_test.go created: 6 tests (TestFeedConfig, TestParseFeed_ValidEntries, TestParseFeed_ScoreClamping, TestFeedClient_Apply_FullReplace, TestFeedClient_ErrorHandling, TestFeedClient_Lifecycle); go test -race ./internal/firewalld/... exits 0
+- TestThreatIntel_RemoveIPScore is in threat_intel_test.go (Plan 01 artifact) — not duplicated in feed_test.go
+- Phase 3 complete: FEED-01 through FEED-04 all delivered; 27 firewalld tests pass; no new test failures

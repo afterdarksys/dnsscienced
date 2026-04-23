@@ -7,7 +7,7 @@
 ## Phases
 
 - [x] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
-- [ ] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
+- [x] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
 - [ ] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
 - [ ] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
 
@@ -52,7 +52,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Config extension + RemoveIPScore (add 6 feed fields to ThreatIntelConfig; add RemoveIPScore to ThreatIntel)
 - [x] 03-02-PLAN.md — FeedClient implementation (feed.go: newFeedClient, StartFeed, run, fetchAndApply, fetch, parseFeed, apply)
-- [ ] 03-03-PLAN.md — Server wiring + tests (StartFeed call in server.go New(); feed_test.go with 7 unit tests covering FEED-01 through FEED-04)
+- [x] 03-03-PLAN.md — Server wiring + tests (StartFeed call in server.go New(); feed_test.go with 6 unit tests covering FEED-01 through FEED-04)
 
 ---
 
@@ -106,7 +106,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
-| 3. Live Threat Feed | 2/3 | In progress | - |
+| 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | 0/0 | Not started | - |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |
 
