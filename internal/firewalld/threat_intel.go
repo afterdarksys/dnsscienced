@@ -167,3 +167,11 @@ func (ti *ThreatIntel) RemoveDomainScore(domain string) {
 	delete(ti.dynDomains, strings.ToLower(domain))
 	ti.dynMu.Unlock()
 }
+
+// RemoveIPScore removes a previously-injected IP score.
+// ip must be in the same normalized string form used by AddIPScore.
+func (ti *ThreatIntel) RemoveIPScore(ip string) {
+	ti.dynMu.Lock()
+	delete(ti.dynIPs, ip)
+	ti.dynMu.Unlock()
+}
