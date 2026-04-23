@@ -83,6 +83,27 @@ type ThreatIntelConfig struct {
 
 	// CustomerMeta maps customer IDs to metadata.
 	CustomerMeta map[string]CustomerMeta `yaml:"customer_meta"`
+
+	// Feed poller configuration (D-07 through D-14)
+	// FeedURL is the HTTP(S) URL to poll for domain/IP threat scores.
+	// If empty, no poller is started (D-09).
+	FeedURL string `yaml:"feed_url"`
+
+	// PollInterval is how often the feed URL is fetched. Default: 5m (D-08).
+	PollInterval time.Duration `yaml:"poll_interval"`
+
+	// Timeout is the HTTP request timeout per fetch cycle. Default: 30s (D-08).
+	Timeout time.Duration `yaml:"timeout"`
+
+	// TLSSkipVerify disables TLS certificate verification (operator opt-in only).
+	TLSSkipVerify bool `yaml:"tls_skip_verify"`
+
+	// AuthToken is sent as "Authorization: Bearer <value>" when non-empty (D-11).
+	// Never logged — only presence is logged (D-12).
+	AuthToken string `yaml:"auth_token"`
+
+	// Headers are additional HTTP request headers added to each feed fetch (D-10).
+	Headers map[string]string `yaml:"headers"`
 }
 
 // CustomerMeta holds per-customer metadata used in scoring.
@@ -118,6 +139,8 @@ func DefaultConfig() Config {
 			StaticIPScores: make(map[string]int),
 			ZoneScores:     make(map[string]int),
 			CustomerMeta:   make(map[string]CustomerMeta),
+			PollInterval:   5 * time.Minute,
+			Timeout:        30 * time.Second,
 		},
 		Junk: JunkConfig{
 			BlockDGA:                 true,
