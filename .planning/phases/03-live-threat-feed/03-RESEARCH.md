@@ -618,17 +618,19 @@ func TestFeedClient_StopsOnContextCancel(t *testing.T) {
 
 **On A2:** The server uses `s.wg.Wait()` in `Stop()`. The feed goroutine is currently not tracked in `s.wg`. The planner should decide whether to add `s.wg.Add(1)` before launching the goroutine (preferred for clean shutdown) or accept that the goroutine exits independently when `s.ctx` is cancelled.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **WaitGroup tracking for feed goroutine**
    - What we know: `server.Stop()` calls `s.wg.Wait()` before closing components. UDP/TCP goroutines are tracked. The feed goroutine currently would not be tracked.
    - What's unclear: Whether the plan should add `s.wg.Add(1)` / `defer s.wg.Done()` inside `run()` (requires passing `wg` into FeedClient or using a closure).
    - Recommendation: Track it. Add `s.wg.Add(1)` before `go fc.run(ctx)` in `StartFeed`. Pass `*sync.WaitGroup` as parameter, or launch from `server.go` with a closure that calls `s.wg.Done()`.
+   - [RESOLVED] Plan 03-02 `StartFeed` takes `wg interface{ Add(int); Done() }` as parameter; Plan 03-03 wires it as `s.firewall.StartFeed(s.ctx, &s.wg)`.
 
 2. **FeedURL already claimed to exist in config.go**
    - What we know: STATE.md says "ThreatIntelConfig.FeedURL field exists in config.go but is unused." Code inspection shows this is FALSE — no FeedURL field exists in `config.go`.
    - What's unclear: Whether this was an error in STATE.md or was removed at some point.
    - Recommendation: Plan must add FeedURL (and all companion fields) as if starting from scratch. Do not assume it pre-exists.
+   - [RESOLVED] Plan 03-01 Task 1 adds all 6 feed fields to ThreatIntelConfig from scratch (FeedURL, PollInterval, Timeout, TLSSkipVerify, AuthToken, Headers).
 
 ## Environment Availability
 
