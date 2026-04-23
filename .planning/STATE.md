@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 2 — gRPC Admin
-Plan: —
-Status: Ready to plan
-Last activity: 2026-04-23 — Phase 2 context gathered (discuss-phase complete)
+Plan: 01 complete (02-01-PLAN.md)
+Status: In progress — ready for Plan 02
+Last activity: 2026-04-23 — 02-01 executed (proto definition + codegen)
 
 ## Project Reference
 
@@ -23,4 +23,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - QueryContext.CustomerID exists in struct but never populated
 - Forwarder currently takes a single upstream target from rule/Starlark
 - Starlark `on_query(q, score)` signature — q is dict, score 0-100 int
-- Phase 2 starts next: add FirewallStats/LoadScript/RemoveScript/InjectScore to admin.proto, run generate.sh, implement handlers in internal/admin/
+- Phase 2 Plan 01 complete: FirewallAdminService appended to admin.proto; Go stubs regenerated (admin.pb.go, admin_grpc.pb.go); go build ./... passes
+- generate.sh requires $HOME/go/bin in PATH for protoc plugins; also generates stray management.pb.go in pb/ — delete after codegen (correct files are in pb/mgmt/)
+- FirewallAdminServiceServer interface and all Firewall* message types now available in api/grpc/proto/pb for Wave 2 plans
