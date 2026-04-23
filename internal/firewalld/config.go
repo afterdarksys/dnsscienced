@@ -68,8 +68,12 @@ type MatchConfig struct {
 	// Customer account type: free | paid | enterprise | any
 	AccountType string `yaml:"account_type"`
 
-	// IsJunk matches when junk detection fires.
-	IsJunk bool `yaml:"is_junk"`
+	// IsJunk is intentionally removed: the field was never evaluated by
+	// compiledRule.matches() and the planned junk-stage re-evaluation path
+	// was never implemented.  Operators who set is_junk: true would get a
+	// rule that matches every query, not only junk queries.  Re-add this
+	// field once the junk-stage re-evaluation is implemented.
+	// IsJunk bool `yaml:"is_junk"`
 }
 
 // ThreatIntelConfig controls threat scoring behaviour.
