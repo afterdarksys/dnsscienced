@@ -6,7 +6,7 @@
 
 ## Phases
 
-- [ ] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
+- [x] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
 - [ ] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
 - [ ] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
 - [ ] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
@@ -31,7 +31,7 @@ Plans:
 - [x] 02-01-PLAN.md — Proto definition + codegen (FirewallAdminService + 8 messages in admin.proto; run generate.sh)
 - [x] 02-02-PLAN.md — Go accessor chain (LoadSource on *Firewall; GetFirewall accessor; SrvAdapter interface extension; serverSrvAdapter + NoopSrvAdapter implementations)
 - [x] 02-03-PLAN.md — FirewallService implementation + unit tests (firewall.go + firewall_test.go)
-- [ ] 02-04-PLAN.md — Registry wiring (conditional RegisterFirewallAdminServiceServer in RegisterAll)
+- [x] 02-04-PLAN.md — Registry wiring (conditional RegisterFirewallAdminServiceServer in RegisterAll)
 
 ---
 
@@ -108,7 +108,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 2. gRPC Admin | 3/4 | In progress | - |
+| 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
 | 3. Live Threat Feed | 0/0 | Not started | - |
 | 4. EDNS0 CustomerID | 0/0 | Not started | - |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |

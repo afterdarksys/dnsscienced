@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 2 — gRPC Admin
-Plan: 03 complete (02-03-PLAN.md)
-Status: In progress — ready for Plan 04
-Last activity: 2026-04-23 — 02-03 executed (FirewallService impl + unit tests, all 4 gRPC admin RPCs)
+Plan: 04 complete (02-04-PLAN.md) — Phase 2 COMPLETE
+Status: Phase 2 complete — ready for Phase 3 (Live Threat Feed)
+Last activity: 2026-04-23 — 02-04 executed (conditional FirewallAdminService registration in RegisterAll)
 
 ## Project Reference
 
@@ -32,3 +32,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 2 Plan 03 complete: FirewallService struct implements FirewallAdminServiceServer; all 4 RPCs (FirewallStats, LoadScript, RemoveScript, InjectScore) implemented with validation and delegation; 13 unit tests passing
 - TotalNxdomain (lowercase d) is the correct proto-generated field name for total_nxdomain
 - api/grpc/services/firewall.go and firewall_test.go created; go test ./api/grpc/services/ -run TestFirewallService exits 0
+- Phase 2 Plan 04 complete: RegisterAll in api/grpc/registry/register.go now conditionally registers FirewallAdminService via nil-guard on srv.GetFirewall(); go build ./... passes; Phase 2 gRPC Admin feature is end-to-end complete
+- Nil-guard pattern: if fw := srv.GetFirewall(); fw != nil — FirewallAdminService not registered when firewall.enabled is false in config.yaml (T-02-07 mitigation)
+- Pre-existing test failures (not introduced by Phase 2): internal/dnssec build error, internal/engine/TestResolver_Resolve (live DNS), internal/resolver/TestFindGlue (formatting)
