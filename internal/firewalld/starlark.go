@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -103,7 +104,7 @@ func (se *StarlarkEngine) Run(qctx *QueryContext, threatScore int) *Decision {
 	for _, s := range scripts {
 		d, err := se.runOne(s, qctx, threatScore)
 		if err != nil {
-			// Script error: log and continue to next.
+			log.Warn().Str("script", s.id).Err(err).Msg("starlark policy script error")
 			continue
 		}
 		if d.Verdict != VerdictAllow {
@@ -166,6 +167,9 @@ func (se *StarlarkEngine) runOne(s *compiledScript, qctx *QueryContext, threatSc
 		}
 	case <-ctx.Done():
 		thread.Cancel("timeout")
+		// Drain the goroutine: it exits quickly once Cancel fires, preventing
+		// goroutine accumulation under sustained timeout conditions.
+		go func() { <-done }()
 		return nil, fmt.Errorf("on_query in %s timed out", s.id)
 	}
 
