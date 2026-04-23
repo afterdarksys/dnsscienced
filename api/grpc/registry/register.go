@@ -68,4 +68,10 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 
 	// Management service — wired to the live DNS server.
 	mgmtpb.RegisterManagementServiceServer(s, services.NewManagementService(srv, zonesDir, compileBin))
+
+	// FirewallAdminService — registered only when the firewall is enabled in config.
+	// srv.GetFirewall() returns nil when firewall.enabled is false in config.yaml.
+	if fw := srv.GetFirewall(); fw != nil {
+		pb.RegisterFirewallAdminServiceServer(s, services.NewFirewallService(fw))
+	}
 }
