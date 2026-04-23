@@ -39,7 +39,7 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - [x] gRPC admin RPCs added to admin.proto and implemented — Phase 2 complete
 - [x] Live threat feed client polls and injects domain/IP scores — Phase 3 complete
 - [x] QueryContext.CustomerID populated from EDNS0 option at query intake — Phase 4 complete
-- [ ] VerdictRedirect selects from multiple upstream targets (load balancing)
+- [x] VerdictRedirect selects from multiple upstream targets (load balancing) — Phase 5 complete
 
 ### Out of Scope
 
