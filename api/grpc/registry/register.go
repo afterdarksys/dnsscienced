@@ -10,6 +10,7 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 )
 
@@ -20,10 +21,11 @@ var version = "dev"
 // that don't have a live DNS server to back the admin managers.
 type NoopSrvAdapter struct{}
 
-func (NoopSrvAdapter) GetZone(_ string) *zone.Zone        { return nil }
-func (NoopSrvAdapter) AddZone(_ *zone.Zone) error         { return nil }
-func (NoopSrvAdapter) RemoveZone(_ string)                {}
-func (NoopSrvAdapter) GetStats() services.SrvStats        { return services.SrvStats{} }
+func (NoopSrvAdapter) GetZone(_ string) *zone.Zone               { return nil }
+func (NoopSrvAdapter) AddZone(_ *zone.Zone) error                { return nil }
+func (NoopSrvAdapter) RemoveZone(_ string)                       {}
+func (NoopSrvAdapter) GetStats() services.SrvStats               { return services.SrvStats{} }
+func (NoopSrvAdapter) GetFirewall() *firewalld.Firewall          { return nil }
 
 // SrvIface is the interface that RegisterAll requires from the DNS server.
 // It matches services.SrvAdapter so the caller can pass a *server.Server directly.

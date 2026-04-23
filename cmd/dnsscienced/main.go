@@ -17,6 +17,7 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
+	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"google.golang.org/grpc"
@@ -29,9 +30,10 @@ type serverSrvAdapter struct {
 	s *server.Server
 }
 
-func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone { return a.s.GetZone(origin) }
-func (a *serverSrvAdapter) AddZone(z *zone.Zone) error       { return a.s.AddZone(z) }
-func (a *serverSrvAdapter) RemoveZone(origin string)         { a.s.RemoveZone(origin) }
+func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone         { return a.s.GetZone(origin) }
+func (a *serverSrvAdapter) AddZone(z *zone.Zone) error               { return a.s.AddZone(z) }
+func (a *serverSrvAdapter) RemoveZone(origin string)                 { a.s.RemoveZone(origin) }
+func (a *serverSrvAdapter) GetFirewall() *firewalld.Firewall         { return a.s.GetFirewall() }
 func (a *serverSrvAdapter) GetStats() services.SrvStats {
 	raw := a.s.GetStats()
 	s := services.SrvStats{
