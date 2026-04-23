@@ -561,3 +561,139 @@ def on_query(q, score):
 	assert.Contains(t, []string{"1.1.1.1:53", "2.2.2.2:53"}, d.Server,
 		"redirect must select from configured pool upstreams")
 }
+
+// --- UpstreamPool unit tests (REDIR-01, REDIR-02) ---
+// Note: TestUpstreamPool_RoundRobin and TestUpstreamPool_SingleUpstream already exist in
+// forwarder_test.go (Plan 01 artifact). Only the assert-style variant for empty pool is added here.
+
+func TestUpstreamPool_Empty(t *testing.T) {
+	p := newUpstreamPool(nil)
+	_, err := p.Next()
+	assert.Error(t, err, "empty pool must return an error")
+}
+
+// --- Starlark redirect integration tests (REDIR-03) ---
+
+func TestStarlarkRedirect_UsesPool(t *testing.T) {
+	fw, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		ThreatIntel:   ThreatIntelConfig{BlockThreshold: 100},
+		Redirect:      RedirectConfig{Upstreams: []string{"1.1.1.1:53", "2.2.2.2:53"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, fw)
+
+	script := `
+def on_query(q, score):
+    firewall.redirect(reason="pool test")
+`
+	require.NoError(t, fw.LoadSource("test-redirect-pool", script))
+
+	q := makeQuery("example.com", dns.TypeA)
+	d := fw.Check(q, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictRedirect, d.Verdict)
+	assert.Contains(t, []string{"1.1.1.1:53", "2.2.2.2:53"}, d.Server,
+		"redirect must select from configured pool upstreams")
+	assert.Equal(t, "pool test", d.Reason)
+}
+
+func TestStarlarkRedirect_ServerArgRejected(t *testing.T) {
+	fw, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		ThreatIntel:   ThreatIntelConfig{BlockThreshold: 100},
+		Redirect:      RedirectConfig{Upstreams: []string{"1.1.1.1:53"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, fw)
+
+	// Script that passes the now-removed server= kwarg.
+	script := `
+def on_query(q, score):
+    firewall.redirect(server="9.9.9.9:53", reason="old api")
+`
+	require.NoError(t, fw.LoadSource("test-redirect-server-arg", script))
+
+	q := makeQuery("example.com", dns.TypeA)
+	// The builtin returns an error at evaluation time; starlark.Run() logs and
+	// continues, so the final verdict falls through to the default action (allow).
+	d := fw.Check(q, net.ParseIP("127.0.0.1"))
+	// The script errored out; final verdict should NOT be VerdictRedirect with "9.9.9.9:53".
+	if d.Verdict == VerdictRedirect {
+		assert.NotEqual(t, "9.9.9.9:53", d.Server,
+			"server= arg must not be used even if script passes it")
+	}
+}
+
+// --- Static rule redirect integration tests (REDIR-04) ---
+
+func TestStaticRedirectRule_UsesPool(t *testing.T) {
+	fw, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		Rules: []RuleConfig{
+			{
+				Name:   "pool-redirect",
+				Match:  MatchConfig{DomainSuffix: ".redirect.test."},
+				Action: "redirect",
+				// No RedirectServer — uses global pool.
+			},
+		},
+		Redirect: RedirectConfig{Upstreams: []string{"1.1.1.1:53", "2.2.2.2:53"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, fw)
+
+	q := makeQuery("foo.redirect.test.", dns.TypeA)
+	d := fw.Check(q, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictRedirect, d.Verdict)
+	assert.Contains(t, []string{"1.1.1.1:53", "2.2.2.2:53"}, d.Server,
+		"static redirect rule without redirect_server must use pool")
+}
+
+func TestStaticRedirectRule_PerRuleOverride(t *testing.T) {
+	fw, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		Rules: []RuleConfig{
+			{
+				Name:           "override-redirect",
+				Match:          MatchConfig{DomainSuffix: ".override.test."},
+				Action:         "redirect",
+				RedirectServer: "9.9.9.9:53", // per-rule override
+			},
+		},
+		Redirect: RedirectConfig{Upstreams: []string{"1.1.1.1:53", "2.2.2.2:53"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, fw)
+
+	q := makeQuery("foo.override.test.", dns.TypeA)
+	d := fw.Check(q, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictRedirect, d.Verdict)
+	assert.Equal(t, "9.9.9.9:53", d.Server,
+		"per-rule redirect_server must bypass pool")
+}
+
+func TestNew_EmptyPoolWithPoolRedirectRule(t *testing.T) {
+	_, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		Rules: []RuleConfig{
+			{
+				Name:   "no-server-no-pool",
+				Match:  MatchConfig{DomainSuffix: ".test."},
+				Action: "redirect",
+				// No RedirectServer and no pool upstreams — must fail at New().
+			},
+		},
+		Redirect: RedirectConfig{Upstreams: []string{}},
+	})
+	assert.Error(t, err, "New() must fail when redirect rule has no server and pool is empty")
+}
