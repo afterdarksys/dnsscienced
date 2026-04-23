@@ -163,6 +163,7 @@ func New(cfg Config) (*Firewall, error) {
 		metrics:   metrics,
 		logger:    log.With().Str("component", "firewalld").Logger(),
 	}
+	starlark.pool = pool // Wire pool into starlark engine (D-10, A1).
 	fw.enabled.Store(true)
 
 	fw.logger.Info().

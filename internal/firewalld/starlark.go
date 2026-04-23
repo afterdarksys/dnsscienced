@@ -34,6 +34,7 @@ type StarlarkEngine struct {
 	mu      sync.RWMutex
 	scripts map[string]*compiledScript
 	timeout time.Duration
+	pool    *UpstreamPool
 }
 
 type compiledScript struct {
@@ -254,19 +255,28 @@ func (se *StarlarkEngine) buildFirewallModuleWithSink(sink *decisionSink) *starl
 				_ *starlark.Thread, _ *starlark.Builtin,
 				args starlark.Tuple, kwargs []starlark.Tuple,
 			) (starlark.Value, error) {
-				var server, reason starlark.String
+				// D-02: hard error if caller passes server= kwarg.
+				// This check must run before UnpackArgs so "server" is not silently ignored.
+				for _, kv := range kwargs {
+					if string(kv[0].(starlark.String)) == "server" {
+						return nil, fmt.Errorf("firewall.redirect: server arg removed — configure upstreams in firewall.redirect.upstreams")
+					}
+				}
+				var reason starlark.String
 				if err := starlark.UnpackArgs("firewall.redirect", args, kwargs,
-					"server", &server, "reason?", &reason); err != nil {
+					"reason?", &reason); err != nil {
 					return nil, err
 				}
-				if string(server) == "" {
-					return nil, fmt.Errorf("firewall.redirect: server must not be empty")
+				// D-04: pool.Next() selects the upstream target.
+				server, err := se.pool.Next()
+				if err != nil {
+					return nil, fmt.Errorf("firewall.redirect: %w", err)
 				}
 				r := "starlark policy"
 				if string(reason) != "" {
 					r = string(reason)
 				}
-				sink.set(&Decision{Verdict: VerdictRedirect, Server: string(server), Reason: r})
+				sink.set(&Decision{Verdict: VerdictRedirect, Server: server, Reason: r})
 				return starlark.None, nil
 			}),
 		},

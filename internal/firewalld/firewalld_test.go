@@ -542,6 +542,7 @@ func TestRedirect_PoolBehavior_RED(t *testing.T) {
 		Enabled:       true,
 		DefaultAction: "allow",
 		ScriptTimeout: 2 * time.Millisecond,
+		ThreatIntel:   ThreatIntelConfig{BlockThreshold: 100},
 		Redirect:      RedirectConfig{Upstreams: []string{"1.1.1.1:53", "2.2.2.2:53"}},
 	})
 	require.NoError(t, err)

@@ -68,10 +68,8 @@ func compileRule(r RuleConfig) (compiledRule, error) {
 		}
 		cr.verdict = VerdictRewrite
 	case "redirect":
-		if r.RedirectServer == "" {
-			return cr, fmt.Errorf("redirect action requires redirect_server")
-		}
 		cr.verdict = VerdictRedirect
+		// redirect_server is optional; empty means use the global upstream pool (D-07).
 	case "":
 		return cr, fmt.Errorf("action is required")
 	default:
