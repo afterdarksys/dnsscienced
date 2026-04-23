@@ -47,15 +47,12 @@ Plans:
 3. A feed that returns HTTP errors or malformed lines logs the error and continues polling without crashing the server
 4. Removing or blanking `feed_url` from config disables the poller (no polling activity in logs)
 
-**Key tasks:**
-- Create `internal/firewalld/feed.go` with a `FeedClient` that polls `ThreatIntelConfig.FeedURL` at `ThreatIntelConfig.PollInterval`
-- Parse newline-delimited entries: `domain score` or `IP/CIDR score`
-- Call `ThreatIntelEngine().AddDomainScore` / `AddIPScore` for each valid entry
-- Log and skip malformed lines; log HTTP errors without exiting
-- Wire `FeedClient.Start()` into server startup when feed URL is non-empty
-- Add unit tests with a mock HTTP server serving feed content
+**Plans:** 3 plans
 
-**Plans**: TBD
+Plans:
+- [ ] 03-01-PLAN.md — Config extension + RemoveIPScore (add 6 feed fields to ThreatIntelConfig; add RemoveIPScore to ThreatIntel)
+- [ ] 03-02-PLAN.md — FeedClient implementation (feed.go: newFeedClient, StartFeed, run, fetchAndApply, fetch, parseFeed, apply)
+- [ ] 03-03-PLAN.md — Server wiring + tests (StartFeed call in server.go New(); feed_test.go with 7 unit tests covering FEED-01 through FEED-04)
 
 ---
 
@@ -109,7 +106,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
-| 3. Live Threat Feed | 0/0 | Not started | - |
+| 3. Live Threat Feed | 0/3 | Not started | - |
 | 4. EDNS0 CustomerID | 0/0 | Not started | - |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |
 
