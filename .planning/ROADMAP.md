@@ -29,7 +29,7 @@
 
 Plans:
 - [x] 02-01-PLAN.md — Proto definition + codegen (FirewallAdminService + 8 messages in admin.proto; run generate.sh)
-- [ ] 02-02-PLAN.md — Go accessor chain (LoadSource on *Firewall; GetFirewall accessor; SrvAdapter interface extension; serverSrvAdapter + NoopSrvAdapter implementations)
+- [x] 02-02-PLAN.md — Go accessor chain (LoadSource on *Firewall; GetFirewall accessor; SrvAdapter interface extension; serverSrvAdapter + NoopSrvAdapter implementations)
 - [ ] 02-03-PLAN.md — FirewallService implementation + unit tests (firewall.go + firewall_test.go)
 - [ ] 02-04-PLAN.md — Registry wiring (conditional RegisterFirewallAdminServiceServer in RegisterAll)
 
@@ -108,7 +108,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 2. gRPC Admin | 1/4 | In progress | - |
+| 2. gRPC Admin | 2/4 | In progress | - |
 | 3. Live Threat Feed | 0/0 | Not started | - |
 | 4. EDNS0 CustomerID | 0/0 | Not started | - |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |
