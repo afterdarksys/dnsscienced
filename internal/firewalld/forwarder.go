@@ -3,6 +3,7 @@ package firewalld
 import (
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -55,4 +56,27 @@ func (f *Forwarder) Forward(r *dns.Msg, server string) (*dns.Msg, error) {
 	}
 
 	return resp, nil
+}
+
+// UpstreamPool selects among configured upstream DNS addresses using
+// atomic round-robin. Safe for concurrent use without locks.
+type UpstreamPool struct {
+	upstreams []string
+	counter   atomic.Uint64
+}
+
+// newUpstreamPool creates a pool from the given upstream addresses.
+// A nil or empty slice is valid — Next() will return an error (D-13).
+func newUpstreamPool(upstreams []string) *UpstreamPool {
+	return &UpstreamPool{upstreams: upstreams}
+}
+
+// Next returns the next upstream address via atomic round-robin.
+// Returns ("", error) when the pool is empty; caller must return SERVFAIL (D-13).
+func (p *UpstreamPool) Next() (string, error) {
+	if len(p.upstreams) == 0 {
+		return "", fmt.Errorf("upstream pool is empty — configure firewall.redirect.upstreams")
+	}
+	idx := (p.counter.Add(1) - 1) % uint64(len(p.upstreams))
+	return p.upstreams[idx], nil
 }

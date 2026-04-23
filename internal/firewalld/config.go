@@ -24,6 +24,9 @@ type Config struct {
 
 	// Max time a Starlark policy script may run per query.
 	ScriptTimeout time.Duration `yaml:"script_timeout"`
+
+	// Redirect holds upstream pool configuration for VerdictRedirect.
+	Redirect RedirectConfig `yaml:"redirect"`
 }
 
 // RuleConfig defines a static policy rule.
@@ -126,6 +129,14 @@ type JunkConfig struct {
 
 	// RandomSubdomainThreshold: entropy cutoff for subdomain junk detection (default 4.0).
 	RandomSubdomainThreshold float64 `yaml:"random_subdomain_threshold"`
+}
+
+// RedirectConfig holds upstream pool configuration for VerdictRedirect.
+type RedirectConfig struct {
+	// Upstreams is the list of upstream DNS targets for redirect load balancing.
+	// Each entry is "ip:port". At least one entry is required for redirect verdicts
+	// that do not have a per-rule redirect_server override.
+	Upstreams []string `yaml:"upstreams"`
 }
 
 // DefaultConfig returns a safe default configuration.
