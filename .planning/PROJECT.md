@@ -36,7 +36,7 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 
 ### Active
 
-- [ ] gRPC admin RPCs added to admin.proto and implemented in internal/admin/
+- [x] gRPC admin RPCs added to admin.proto and implemented — Phase 2 complete
 - [ ] Live threat feed client polls and injects domain/IP scores
 - [ ] QueryContext.CustomerID populated from EDNS0 option at query intake
 - [ ] VerdictRedirect selects from multiple upstream targets (load balancing)
@@ -92,4 +92,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-23 after v1.1 milestone start*
+*Last updated: 2026-04-23 — Phase 2 (gRPC Admin) complete*
