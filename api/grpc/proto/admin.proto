@@ -345,3 +345,47 @@ message AdminRecordInfo {
   int32 ttl = 5;
   int32 priority = 6;
 }
+
+// FirewallAdminService exposes firewall management operations over gRPC.
+// Additive to AdminService — registered on the same admin gRPC server port.
+service FirewallAdminService {
+  rpc FirewallStats(FirewallStatsRequest)         returns (FirewallStatsResponse);
+  rpc LoadScript(FirewallLoadScriptRequest)       returns (FirewallLoadScriptResponse);
+  rpc RemoveScript(FirewallRemoveScriptRequest)   returns (FirewallRemoveScriptResponse);
+  rpc InjectScore(FirewallInjectScoreRequest)     returns (FirewallInjectScoreResponse);
+}
+
+message FirewallStatsRequest {}
+
+message FirewallStatsResponse {
+  uint64 total_queries    = 1;
+  uint64 total_blocked    = 2;
+  uint64 total_nxdomain   = 3;
+  uint64 total_dropped    = 4;
+  uint64 total_redirected = 5;
+}
+
+message FirewallLoadScriptRequest {
+  string script_id = 1;
+  string body      = 2;
+}
+
+message FirewallLoadScriptResponse {
+  string script_id = 1;
+}
+
+message FirewallRemoveScriptRequest {
+  string script_id = 1;
+}
+
+message FirewallRemoveScriptResponse {}
+
+message FirewallInjectScoreRequest {
+  oneof target {
+    string domain = 1;
+    string ip     = 2;
+  }
+  int32 score = 3;
+}
+
+message FirewallInjectScoreResponse {}
