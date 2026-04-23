@@ -201,10 +201,7 @@ func (fw *Firewall) Check(r *dns.Msg, clientIP net.IP) *Decision {
 			server, err := fw.pool.Next()
 			if err != nil {
 				fw.logger.Error().Err(err).Msg("redirect pool empty — returning SERVFAIL")
-				fail := new(dns.Msg)
-				fail.SetReply(r)
-				fail.Rcode = dns.RcodeServerFailure
-				return &Decision{Verdict: VerdictDrop, Reason: "pool empty"}
+				return fw.record(&Decision{Verdict: VerdictNXDomain, Reason: "pool empty", RuleName: "redirect"}, qctx)
 			}
 			d.Server = server
 		}
@@ -289,7 +286,6 @@ func (fw *Firewall) Redirect(r *dns.Msg, d *Decision) *dns.Msg {
 		fail.Rcode = dns.RcodeServerFailure
 		return fail
 	}
-	fw.totalRedirected.Add(1)
 	return resp
 }
 
@@ -342,14 +338,20 @@ func (fw *Firewall) Shutdown() {
 
 // record increments counters and logs the decision, then returns it.
 func (fw *Firewall) record(d *Decision, qctx *QueryContext) *Decision {
-	fw.totalBlocked.Add(1)
 	fw.metrics.queriesBlocked.WithLabelValues(d.Verdict.String(), d.RuleName).Inc()
 
 	switch d.Verdict {
 	case VerdictNXDomain:
 		fw.totalNXDomain.Add(1)
+		fw.totalBlocked.Add(1)
 	case VerdictDrop:
 		fw.totalDropped.Add(1)
+		fw.totalBlocked.Add(1)
+	case VerdictRedirect:
+		fw.totalRedirected.Add(1)
+		// Do not count as blocked — redirects are forwarded, not blocked.
+	default:
+		fw.totalBlocked.Add(1)
 	}
 
 	fw.logger.Debug().
