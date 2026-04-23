@@ -83,22 +83,24 @@ type QueryContext struct {
 
 // Firewall is the DNS firewall engine.
 type Firewall struct {
-	cfg     Config
-	policy  *PolicyEngine
-	junk    *JunkDetector
-	intel   *ThreatIntel
+	cfg      Config
+	policy   *PolicyEngine
+	junk     *JunkDetector
+	intel    *ThreatIntel
 	starlark *StarlarkEngine
-	metrics *Metrics
-	logger  zerolog.Logger
+	forwarder *Forwarder
+	metrics  *Metrics
+	logger   zerolog.Logger
 
 	mu      sync.RWMutex
 	enabled atomic.Bool
 
 	// counters
-	totalQueries  atomic.Uint64
-	totalBlocked  atomic.Uint64
-	totalNXDomain atomic.Uint64
-	totalDropped  atomic.Uint64
+	totalQueries   atomic.Uint64
+	totalBlocked   atomic.Uint64
+	totalNXDomain  atomic.Uint64
+	totalDropped   atomic.Uint64
+	totalRedirected atomic.Uint64
 }
 
 // New creates a Firewall from cfg.  Returns nil, nil when cfg.Enabled is false
@@ -138,13 +140,14 @@ func New(cfg Config) (*Firewall, error) {
 	}
 
 	fw := &Firewall{
-		cfg:      cfg,
-		policy:   policy,
-		junk:     junk,
-		intel:    intel,
-		starlark: starlark,
-		metrics:  metrics,
-		logger:   log.With().Str("component", "firewalld").Logger(),
+		cfg:       cfg,
+		policy:    policy,
+		junk:      junk,
+		intel:     intel,
+		starlark:  starlark,
+		forwarder: NewForwarder(cfg.ScriptTimeout * 1500), // generous: 3× script timeout
+		metrics:   metrics,
+		logger:    log.With().Str("component", "firewalld").Logger(),
 	}
 	fw.enabled.Store(true)
 
@@ -248,6 +251,21 @@ func (fw *Firewall) Apply(r *dns.Msg, d *Decision) *dns.Msg {
 	}
 }
 
+// Redirect forwards r to d.Server and returns the upstream response.
+// Returns a SERVFAIL response if the upstream is unreachable.
+func (fw *Firewall) Redirect(r *dns.Msg, d *Decision) *dns.Msg {
+	resp, err := fw.forwarder.Forward(r, d.Server)
+	if err != nil {
+		fw.logger.Warn().Str("server", d.Server).Err(err).Msg("redirect forward failed")
+		fail := new(dns.Msg)
+		fail.SetReply(r)
+		fail.Rcode = dns.RcodeServerFailure
+		return fail
+	}
+	fw.totalRedirected.Add(1)
+	return resp
+}
+
 // LoadScript hot-reloads a Starlark policy script by path.
 func (fw *Firewall) LoadScript(path string) error {
 	return fw.starlark.LoadFile(path)
@@ -261,19 +279,26 @@ func (fw *Firewall) RemoveScript(id string) {
 // Stats returns a snapshot of firewall counters.
 func (fw *Firewall) Stats() Stats {
 	return Stats{
-		TotalQueries:  fw.totalQueries.Load(),
-		TotalBlocked:  fw.totalBlocked.Load(),
-		TotalNXDomain: fw.totalNXDomain.Load(),
-		TotalDropped:  fw.totalDropped.Load(),
+		TotalQueries:    fw.totalQueries.Load(),
+		TotalBlocked:    fw.totalBlocked.Load(),
+		TotalNXDomain:   fw.totalNXDomain.Load(),
+		TotalDropped:    fw.totalDropped.Load(),
+		TotalRedirected: fw.totalRedirected.Load(),
 	}
 }
 
 // Stats is a snapshot of firewall counters.
 type Stats struct {
-	TotalQueries  uint64
-	TotalBlocked  uint64
-	TotalNXDomain uint64
-	TotalDropped  uint64
+	TotalQueries    uint64
+	TotalBlocked    uint64
+	TotalNXDomain   uint64
+	TotalDropped    uint64
+	TotalRedirected uint64
+}
+
+// ThreatIntelEngine exposes the live threat-intel scorer for external feed updates.
+func (fw *Firewall) ThreatIntelEngine() *ThreatIntel {
+	return fw.intel
 }
 
 // Shutdown disables the firewall and stops background goroutines.

@@ -601,3 +601,93 @@ logging:
 #   ipv4_prefix_length: 24
 #   ipv6_prefix_length: 56
 #   exempt_cidrs: []
+
+# DNS Firewall (dnsfirewalld)
+# Intercepts queries after the protective-DNS blocklist and before the resolver.
+# Pipeline: static rules → junk detection → threat scoring → Starlark scripts → default
+firewall:
+  enabled: false                 # Set true to activate
+
+  # Default verdict when no rule matches: allow | nxdomain | drop
+  default_action: allow
+
+  # Max time a Starlark policy script may run per query (keep < 5ms)
+  script_timeout: 2ms
+
+  # Starlark policy scripts to load from disk (hot-reloadable at runtime)
+  policy_scripts:
+    # - /etc/dnsscienced/policies/geo-block.star
+    # - /etc/dnsscienced/policies/customer-policy.star
+
+  # Static rules evaluated in order; first match wins.
+  rules:
+    # Block a specific domain (exact match)
+    - name: block-known-bad
+      match:
+        domain_exact: "malware.example.com."
+      action: nxdomain
+
+    # Rewrite bot traffic for a whole TLD suffix to a sinkhole
+    - name: sinkhole-bots
+      match:
+        domain_suffix: ".baddomain.net."
+        query_type: A
+      action: rewrite
+      rewrite_target: sinkhole.internal.
+
+    # Redirect a customer CIDR to a specialised upstream
+    - name: redirect-premium
+      match:
+        client_cidr: "10.10.0.0/16"
+      action: redirect
+      redirect_server: "10.10.1.53:53"
+
+    # Allow-list (explicit pass-through before junk detection)
+    - name: allowlist-internal
+      match:
+        client_cidr: "127.0.0.0/8"
+      action: allow
+
+  # Junk / bot query detection
+  junk:
+    block_dga: true              # Block DGA domains (SLD Shannon entropy > 4.2)
+    block_data_exfil: true       # Block DNS tunnel / exfil (name > 60 chars + high entropy)
+    block_random_subdomain: false # Block random-subdomain bots (leftmost label entropy)
+    random_subdomain_threshold: 4.0
+
+  # Threat-intel scoring (additive, clamped to 100)
+  threat_intel:
+    block_threshold: 80          # Block queries whose score meets or exceeds this
+
+    # Static IP reputation: CIDR → score contribution (0-100)
+    static_ip_scores:
+      "185.220.0.0/16": 70       # Known Tor exit range
+      "198.96.155.0/24": 85      # Example bad-actor range
+
+    # Zone baseline scores: zone name → score contribution
+    zone_scores:
+      "example-bad.com": 40
+      "phish.example.org": 90
+
+    # Customer metadata: customer_id → trust_bonus (subtracted from score)
+    customer_meta:
+      "cust-enterprise-001":
+        account_type: enterprise
+        trust_bonus: 30
+      "cust-free-999":
+        account_type: free
+        trust_bonus: 0
+
+# Example Starlark policy script (save to a .star file and reference above):
+#
+#   def on_query(q, score):
+#       # q is a dict: name, type, type_num, client_ip, customer_id, threat_score
+#       # score is the computed threat-intel score (0-100)
+#       if score > 60 and q["type"] == "A":
+#           firewall.nxdomain(reason="elevated threat score")
+#       if q["name"].endswith(".ru.") or q["name"].endswith(".cn."):
+#           firewall.nxdomain(reason="geo block")
+#       if q["customer_id"] == "cust-free-999" and score > 30:
+#           firewall.drop(reason="free-tier abuse threshold")
+#       if q["name"].endswith(".internal."):
+#           firewall.redirect(server="10.0.0.53:53", reason="internal resolver")

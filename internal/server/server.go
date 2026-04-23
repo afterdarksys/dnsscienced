@@ -414,9 +414,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 		case firewalld.VerdictRedirect:
-			// Caller (future work): forward query to d.Server upstream.
-			// For now fall through to normal resolution — the decision is
-			// logged by the firewall for observability.
+			resp := s.firewall.Redirect(r, d)
+			if s.shouldRateLimit(resp, clientIP) {
+				return
+			}
+			s.answers.Add(1)
+			if resp.Rcode == dns.RcodeNameError {
+				s.nxdomain.Add(1)
+			}
+			w.WriteMsg(resp)
+			return
 		}
 	}
 
