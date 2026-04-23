@@ -8,7 +8,7 @@
 
 - [x] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
 - [x] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
-- [ ] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
+- [x] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
 - [ ] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
 
 ## Phase Details
@@ -70,7 +70,7 @@ Plans:
 **Plans:** 1 plan
 
 Plans:
-- [ ] 04-01-PLAN.md — EDNS0 extraction + wire + tests (edns0.go new file with constant + helper; firewalld.go 1-line insertion; firewalld_test.go 7 new tests)
+- [x] 04-01-PLAN.md — EDNS0 extraction + wire + tests (edns0.go new file with constant + helper; firewalld.go 1-line insertion; firewalld_test.go 7 new tests)
 
 ---
 
@@ -103,7 +103,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
 | 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
-| 4. EDNS0 CustomerID | 0/1 | In progress | - |
+| 4. EDNS0 CustomerID | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | 0/0 | Not started | - |
 
 ---

@@ -38,7 +38,7 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 
 - [x] gRPC admin RPCs added to admin.proto and implemented — Phase 2 complete
 - [x] Live threat feed client polls and injects domain/IP scores — Phase 3 complete
-- [ ] QueryContext.CustomerID populated from EDNS0 option at query intake
+- [x] QueryContext.CustomerID populated from EDNS0 option at query intake — Phase 4 complete
 - [ ] VerdictRedirect selects from multiple upstream targets (load balancing)
 
 ### Out of Scope
@@ -56,7 +56,7 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - Starlark scripts use `on_query(q, score)` — q is a dict, score is int 0-100
 - DGA entropy threshold: SLD entropy > 4.2 (requires ~19 unique chars in label)
 - ThreatIntelConfig has 6 feed fields; FeedClient polls and applies full-replace semantics
-- QueryContext struct has CustomerID field — always empty, needs EDNS0 population
+- QueryContext.CustomerID populated from EDNS0 option code 65000 (edns0CustomerIDCode) at Check() entry, before all policy evaluation — Phase 4 complete
 
 ## Constraints
 
@@ -92,4 +92,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-23 — Phase 3 (Live Threat Feed) complete*
+*Last updated: 2026-04-23 — Phase 4 (EDNS0 CustomerID) complete*
