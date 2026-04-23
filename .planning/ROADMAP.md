@@ -9,7 +9,7 @@
 - [x] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
 - [x] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
 - [x] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
-- [ ] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
+- [x] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
 
 ## Phase Details
 
@@ -90,7 +90,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — UpstreamPool + RedirectConfig + Firewall wiring (forwarder.go: UpstreamPool + Next(); config.go: RedirectConfig + Redirect field; firewalld.go: pool field + New() init + Check() pool-empty SERVFAIL)
-- [ ] 05-02-PLAN.md — Starlark builtin + policy relaxation + tests (starlark.go: pool field + updated redirect builtin; policy.go: compileRule relaxation; firewalld_test.go: 8 new tests covering REDIR-01 through REDIR-04)
+- [x] 05-02-PLAN.md — Starlark builtin + policy relaxation + tests (starlark.go: pool field + updated redirect builtin; policy.go: compileRule relaxation; firewalld_test.go: 8 new tests covering REDIR-01 through REDIR-04)
 
 ---
 
@@ -101,7 +101,7 @@ Plans:
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
 | 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | 1/1 | Complete | 2026-04-23 |
-| 5. Redirect Load Balancing | 1/2 | In progress | - |
+| 5. Redirect Load Balancing | 2/2 | Complete | 2026-04-23 |
 
 ---
 *Roadmap created: 2026-04-23*

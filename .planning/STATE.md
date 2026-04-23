@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-04-23T23:33:21Z"
-last_activity: 2026-04-23 — Phase 5 Plan 01 complete (UpstreamPool + RedirectConfig + Firewall wiring)
+status: complete
+last_updated: "2026-04-23T23:41:24.330Z"
+last_activity: "2026-04-23 — Phase 5 Plan 02 complete: Starlark redirect builtin uses pool.Next(); compileRule relaxed; REDIR-03/04 integration tests pass"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 11
-  completed_plans: 10
-  percent: 91
+  completed_plans: 11
+  percent: 100
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 5 — Redirect Load Balancing
-Plan: 05-02
-Status: Executing — 1 of 2 plans complete, 1 remaining
-Last activity: 2026-04-23 — Phase 5 Plan 01 complete: UpstreamPool + RedirectConfig + pool wired into Firewall.New() and Check()
+Plan: 05-02 (COMPLETE)
+Status: All phases and plans complete — v1.1 milestone delivered
+Last activity: 2026-04-23 — Phase 5 Plan 02 complete: Starlark redirect builtin uses pool.Next(); compileRule relaxed; REDIR-03/04 integration tests pass; 43 firewalld tests green
 
 ## Project Reference
 
@@ -72,3 +72,8 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - New() validates at startup: redirect rules with no redirect_server and empty pool return fmt.Errorf — fail fast before serving traffic
 - starlark.pool = pool wiring deferred to Plan 02 (StarlarkEngine does not yet have pool field)
 - TDD used for Plan 01 Task 1: RED commit a2b86a8, GREEN commit 4a5dc2a, Task 2 (auto) commit 59733ac
+- Phase 5 Plan 02 complete: StarlarkEngine.pool field added; redirect builtin rejects server= kwarg (hard error D-02) and calls se.pool.Next() (D-04); compileRule redirect guard removed (D-07); starlark.pool = pool wired in New() (D-10/A1); 7 new integration tests; 43 firewalld tests pass; go build ./... passes
+- redirect builtin kwarg-scan pattern: range kwargs before UnpackArgs; kv[0].(starlark.String) cast for key comparison
+- Integration test pattern: always set ThreatIntel.BlockThreshold: 100 when testing Starlark — default threshold 0 blocks all queries before stage 4
+- Duplicate test symbol: TestUpstreamPool_RoundRobin and TestUpstreamPool_SingleUpstream live in forwarder_test.go (Plan 01); not re-declared in firewalld_test.go
+- REDIR-01 through REDIR-04 all delivered; Phase 5 (Redirect Load Balancing) complete

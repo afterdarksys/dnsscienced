@@ -30,8 +30,8 @@
 
 - [x] **REDIR-01**: Operator can configure multiple upstream redirect targets in config.yaml
 - [x] **REDIR-02**: Forwarder selects among configured targets using round-robin
-- [ ] **REDIR-03**: Starlark redirect() call uses the load-balanced upstream pool
-- [ ] **REDIR-04**: Static rule VerdictRedirect uses the same upstream pool
+- [x] **REDIR-03**: Starlark redirect() call uses the load-balanced upstream pool
+- [x] **REDIR-04**: Static rule VerdictRedirect uses the same upstream pool
 
 ## v2 Requirements
 
@@ -70,8 +70,8 @@
 | CUST-03 | Phase 4 | Pending |
 | REDIR-01 | Phase 5 | Complete (05-01) |
 | REDIR-02 | Phase 5 | Complete (05-01) |
-| REDIR-03 | Phase 5 | Pending |
-| REDIR-04 | Phase 5 | Pending |
+| REDIR-03 | Phase 5 | Complete (05-02) |
+| REDIR-04 | Phase 5 | Complete (05-02) |
 
 **Coverage:**
 - v1.1 requirements: 16 total
