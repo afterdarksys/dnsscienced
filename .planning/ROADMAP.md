@@ -86,14 +86,11 @@ Plans:
 3. A Starlark script calling `redirect()` uses the same pool as static rules
 4. Config with a single upstream entry behaves identically to the existing single-target behavior
 
-**Key tasks:**
-- Add `Upstreams []string` to redirect config struct (under `firewall.redirect.upstreams` in config.yaml)
-- Implement an `UpstreamPool` with atomic round-robin counter in `internal/firewalld/forwarder.go`
-- Replace the single-target forwarder call with `pool.Next()` selection
-- Ensure both `VerdictRedirect` (static rule path) and Starlark `redirect()` call through the same pool instance
-- Add unit tests: single upstream, two upstreams round-robin distribution, zero upstreams returns error
+**Plans:** 2 plans
 
-**Plans**: TBD
+Plans:
+- [ ] 05-01-PLAN.md — UpstreamPool + RedirectConfig + Firewall wiring (forwarder.go: UpstreamPool + Next(); config.go: RedirectConfig + Redirect field; firewalld.go: pool field + New() init + Check() pool-empty SERVFAIL)
+- [ ] 05-02-PLAN.md — Starlark builtin + policy relaxation + tests (starlark.go: pool field + updated redirect builtin; policy.go: compileRule relaxation; firewalld_test.go: 8 new tests covering REDIR-01 through REDIR-04)
 
 ---
 
@@ -104,7 +101,7 @@ Plans:
 | 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
 | 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | 1/1 | Complete | 2026-04-23 |
-| 5. Redirect Load Balancing | 0/0 | Not started | - |
+| 5. Redirect Load Balancing | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-04-23*
