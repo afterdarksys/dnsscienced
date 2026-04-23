@@ -1,11 +1,26 @@
+---
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: milestone
+status: executing
+last_updated: "2026-04-23T23:33:21Z"
+last_activity: 2026-04-23 — Phase 5 Plan 01 complete (UpstreamPool + RedirectConfig + Firewall wiring)
+progress:
+  total_phases: 5
+  completed_phases: 4
+  total_plans: 11
+  completed_plans: 10
+  percent: 91
+---
+
 # State
 
 ## Current Position
 
 Phase: 5 — Redirect Load Balancing
-Plan: TBD
-Status: Context gathered — ready to plan
-Last activity: 2026-04-23 — Phase 5 context gathered (redirect pool decisions locked; see 05-CONTEXT.md)
+Plan: 05-02
+Status: Executing — 1 of 2 plans complete, 1 remaining
+Last activity: 2026-04-23 — Phase 5 Plan 01 complete: UpstreamPool + RedirectConfig + pool wired into Firewall.New() and Check()
 
 ## Project Reference
 
@@ -52,3 +67,8 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - extractCustomerID: r.IsEdns0() → range opt.Option → type-assert *dns.EDNS0_LOCAL → compare local.Code != edns0CustomerIDCode → 64-byte cap with debug log on oversized
 - Integration tests use Config{} struct literal with ThreatIntelConfig.CustomerMeta map — defaultTestConfig() and SetCustomerTrust() do not exist in the package
 - Phase 4 complete: CUST-01, CUST-02, CUST-03 delivered; QueryContext.CustomerID populated at intake before all policy/junk/intel evaluation
+- Phase 5 Plan 01 complete: UpstreamPool struct with atomic.Uint64 round-robin in forwarder.go; RedirectConfig{Upstreams []string} + Redirect field in config.go; pool *UpstreamPool field + New() init + Check() pool-fill + SERVFAIL-on-empty in firewalld.go; 36 firewalld tests pass (31 pre-existing + 5 new); go build ./... passes
+- UpstreamPool.Next() uses (counter.Add(1)-1) % len(upstreams) for 0-indexed round-robin; empty pool returns error (D-13)
+- New() validates at startup: redirect rules with no redirect_server and empty pool return fmt.Errorf — fail fast before serving traffic
+- starlark.pool = pool wiring deferred to Plan 02 (StarlarkEngine does not yet have pool field)
+- TDD used for Plan 01 Task 1: RED commit a2b86a8, GREEN commit 4a5dc2a, Task 2 (auto) commit 59733ac
