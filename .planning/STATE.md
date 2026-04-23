@@ -3,9 +3,9 @@
 ## Current Position
 
 Phase: 2 — gRPC Admin
-Plan: 02 complete (02-02-PLAN.md)
-Status: In progress — ready for Plan 03
-Last activity: 2026-04-23 — 02-02 executed (GetFirewall() accessor chain, LoadSource() on Firewall)
+Plan: 03 complete (02-03-PLAN.md)
+Status: In progress — ready for Plan 04
+Last activity: 2026-04-23 — 02-03 executed (FirewallService impl + unit tests, all 4 gRPC admin RPCs)
 
 ## Project Reference
 
@@ -29,3 +29,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 2 Plan 02 complete: LoadSource(id, src) on *Firewall; GetFirewall() accessor chain wired through SrvAdapter to serverSrvAdapter and NoopSrvAdapter; go build ./... passes
 - NoopSrvAdapter.GetFirewall() returns nil — nil guard required at call site in Plan 04 RegisterAll
 - firewalld import added to api/grpc/services/management.go and api/grpc/registry/register.go
+- Phase 2 Plan 03 complete: FirewallService struct implements FirewallAdminServiceServer; all 4 RPCs (FirewallStats, LoadScript, RemoveScript, InjectScore) implemented with validation and delegation; 13 unit tests passing
+- TotalNxdomain (lowercase d) is the correct proto-generated field name for total_nxdomain
+- api/grpc/services/firewall.go and firewall_test.go created; go test ./api/grpc/services/ -run TestFirewallService exits 0
