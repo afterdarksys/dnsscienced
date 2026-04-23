@@ -178,6 +178,7 @@ func (fw *Firewall) Check(r *dns.Msg, clientIP net.IP) *Decision {
 		Name:     strings.ToLower(q.Name),
 		Qtype:    q.Qtype,
 	}
+	qctx.CustomerID = extractCustomerID(r, fw.logger)
 
 	// 1. Static policy rules.
 	if d := fw.policy.Evaluate(qctx); d.Verdict != VerdictAllow {
