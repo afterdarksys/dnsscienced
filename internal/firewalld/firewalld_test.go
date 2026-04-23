@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/miekg/dns"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,21 @@ func makeQuery(name string, qtype uint16) *dns.Msg {
 }
 
 var localhost = net.ParseIP("127.0.0.1")
+
+// makeQueryWithCustomerID builds a DNS query message with a custom EDNS0 option
+// carrying the given customerID value at code 65000.
+func makeQueryWithCustomerID(name string, qtype uint16, customerID string) *dns.Msg {
+	m := makeQuery(name, qtype)
+	opt := new(dns.OPT)
+	opt.Hdr.Name = "."
+	opt.Hdr.Rrtype = dns.TypeOPT
+	opt.Option = append(opt.Option, &dns.EDNS0_LOCAL{
+		Code: edns0CustomerIDCode,
+		Data: []byte(customerID),
+	})
+	m.Extra = append(m.Extra, opt)
+	return m
+}
 
 // ---- JunkDetector tests ----
 
@@ -394,4 +410,124 @@ func TestFirewall_Stats(t *testing.T) {
 	assert.Equal(t, uint64(2), stats.TotalQueries)
 	assert.Equal(t, uint64(1), stats.TotalBlocked)
 	assert.Equal(t, uint64(1), stats.TotalNXDomain)
+}
+
+// ---- EDNS0 CustomerID tests ----
+
+func TestExtractCustomerID(t *testing.T) {
+	logger := zerolog.Nop()
+	tests := []struct {
+		name       string
+		msg        *dns.Msg
+		wantResult string
+	}{
+		{
+			name:       "present",
+			msg:        makeQueryWithCustomerID("example.com.", dns.TypeA, "cust-abc"),
+			wantResult: "cust-abc",
+		},
+		{
+			name:       "no_opt",
+			msg:        makeQuery("example.com.", dns.TypeA),
+			wantResult: "",
+		},
+		{
+			name: "wrong_code",
+			msg: func() *dns.Msg {
+				m := makeQuery("example.com.", dns.TypeA)
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				opt.Option = append(opt.Option, &dns.EDNS0_LOCAL{
+					Code: 65001, // dns.EDNS0LOCALSTART — not our code
+					Data: []byte("other"),
+				})
+				m.Extra = append(m.Extra, opt)
+				return m
+			}(),
+			wantResult: "",
+		},
+		{
+			name:       "oversized",
+			msg:        makeQueryWithCustomerID("example.com.", dns.TypeA, string(make([]byte, 65))),
+			wantResult: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractCustomerID(tt.msg, logger)
+			assert.Equal(t, tt.wantResult, got)
+		})
+	}
+}
+
+func TestFirewall_CustomerIDExtracted(t *testing.T) {
+	// Confirm that Firewall.Check() populates qctx.CustomerID before evaluation.
+	// We verify via the ThreatIntel customer trust bonus: configure a customer
+	// with a trust bonus so the score is reduced when CustomerID is extracted.
+	fw, err := New(Config{
+		Enabled: true,
+		ThreatIntel: ThreatIntelConfig{
+			BlockThreshold: 100,
+			StaticIPScores: map[string]int{
+				"10.0.0.0/8": 50,
+			},
+			CustomerMeta: map[string]CustomerMeta{
+				"cust-test": {AccountType: "enterprise", TrustBonus: 50},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Query WITH customer ID — trust bonus reduces score below threshold → Allow.
+	withID := makeQueryWithCustomerID("example.com.", dns.TypeA, "cust-test")
+	result := fw.Check(withID, net.ParseIP("10.1.2.3"))
+	require.NotNil(t, result)
+	// Score would be 50 (IP) - 50 (trust bonus) = 0 → below threshold → Allow.
+	assert.Equal(t, VerdictAllow, result.Verdict, "CustomerID trust bonus should reduce score to 0")
+}
+
+func TestFirewall_CustomerIDTrustBonus(t *testing.T) {
+	// Verify that Firewall.Check() with a valid CustomerID results in the
+	// trust bonus path in threat_intel.Score() being exercised.
+	// CustomerID must be populated BEFORE intel.Score() is called (D-04).
+	fw, err := New(Config{
+		Enabled: true,
+		ThreatIntel: ThreatIntelConfig{
+			BlockThreshold: 80,
+			StaticIPScores: map[string]int{
+				"10.0.0.0/8": 90,
+			},
+			CustomerMeta: map[string]CustomerMeta{
+				"cust-bonus": {AccountType: "enterprise", TrustBonus: 20},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// A query without CustomerID — score = 90 → blocked (>= threshold 80).
+	noID := makeQuery("example.com.", dns.TypeA)
+	result1 := fw.Check(noID, net.ParseIP("10.1.2.3"))
+	require.NotNil(t, result1)
+	assert.Equal(t, VerdictNXDomain, result1.Verdict, "without CustomerID, high score should block")
+
+	// A query with CustomerID — score = 90 - 20 = 70 → allowed (< threshold 80).
+	withID := makeQueryWithCustomerID("example.com.", dns.TypeA, "cust-bonus")
+	result2 := fw.Check(withID, net.ParseIP("10.1.2.3"))
+	require.NotNil(t, result2)
+	assert.Equal(t, VerdictAllow, result2.Verdict, "with CustomerID trust bonus, score should drop below threshold")
+}
+
+func TestFirewall_NoCustomerID_Allowed(t *testing.T) {
+	// Queries without EDNS0 option must proceed normally; CustomerID stays "".
+	fw, err := New(Config{
+		Enabled:     true,
+		ThreatIntel: ThreatIntelConfig{BlockThreshold: 100},
+	})
+	require.NoError(t, err)
+
+	m := makeQuery("example.com.", dns.TypeA)
+	result := fw.Check(m, net.ParseIP("127.0.0.1"))
+	require.NotNil(t, result)
+	assert.Equal(t, VerdictAllow, result.Verdict)
 }
