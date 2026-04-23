@@ -9,6 +9,7 @@ import (
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
+	"github.com/dnsscience/dnsscienced/internal/dnssec"
 	"github.com/dnsscience/dnsscienced/internal/packet"
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/random"
@@ -61,6 +62,12 @@ type Config struct {
 	// Enable RRL
 	EnableRRL bool       `yaml:"enable_rrl"`
 	RRLConfig rrl.Config `yaml:"rrl"`
+
+	// DNSSEC validation. When enabled the resolver validates responses before
+	// caching them and sets DNSSECValidated / DNSSECBogus on each cache entry.
+	// Required for AggressiveNSEC to function correctly.
+	EnableDNSSEC bool                   `yaml:"enable_dnssec"`
+	DNSSECConfig dnssec.ValidatorConfig `yaml:"dnssec"`
 }
 
 // Recursive implements a full recursive DNS resolver
@@ -69,6 +76,7 @@ type Recursive struct {
 	workerPool *worker.Pool
 	cookies    *cookie.Manager
 	rrl        *rrl.Limiter
+	validator  *dnssec.Validator
 
 	cfg Config
 
@@ -115,7 +123,39 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 		r.rrl = rrl.NewLimiter(cfg.RRLConfig)
 	}
 
+	// Initialize DNSSEC validator if enabled. The validator uses this resolver
+	// as its upstream for DNSKEY/DS lookups (r implements dnssec.DNSResolver).
+	if cfg.EnableDNSSEC {
+		vcfg := cfg.DNSSECConfig
+		if vcfg.MaxChainDepth == 0 {
+			vcfg = dnssec.DefaultValidatorConfig()
+		}
+		v, err := dnssec.NewValidator(vcfg, r)
+		if err != nil {
+			return nil, fmt.Errorf("init dnssec validator: %w", err)
+		}
+		r.validator = v
+	}
+
+	// Register prefetch callback when prefetch is enabled.
+	if cfg.CacheConfig.Prefetch {
+		r.cache.SetPrefetchFunc(func(qname string, qtype, qclass uint16) {
+			msg := new(dns.Msg)
+			msg.SetQuestion(qname, qtype)
+			// Best-effort background refresh; errors are silently discarded.
+			_, _ = r.Resolve(context.Background(), msg, nil)
+		})
+	}
+
 	return r, nil
+}
+
+// Query implements dnssec.DNSResolver so the DNSSEC validator can look up
+// DNSKEY and DS records through this resolver's cache and iterative resolution.
+func (r *Recursive) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
+	msg := new(dns.Msg)
+	msg.SetQuestion(name, qtype)
+	return r.Resolve(ctx, msg, nil)
 }
 
 // Resolve performs recursive resolution for a query
@@ -126,20 +166,35 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 
 	question := q.Question[0]
 
-	// Check cache first
+	// 1. Check cache first.
 	cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)
 	if entry, ok := r.cache.Get(cacheKey); ok && !entry.IsExpired() {
-		// Cache hit!
+		// Bogus entries are quarantined: serve SERVFAIL so clients don't use
+		// DNSSEC-invalid data, but avoid re-querying until BogusTTL expires.
+		if entry.DNSSECBogus {
+			m := new(dns.Msg)
+			m.SetRcode(q, dns.RcodeServerFailure)
+			return m, nil
+		}
+
 		resp := pool.GetMessage()
 		defer pool.PutMessage(resp)
-
 		if err := resp.Unpack(entry.Data); err == nil {
-			resp.Id = q.Id // Use query's transaction ID
+			resp.Id = q.Id
+			if entry.DNSSECValidated {
+				resp.AuthenticatedData = true
+			}
 			return resp.Copy(), nil
 		}
 	}
 
-	// Cache miss - perform iterative resolution
+	// 2. Aggressive NSEC synthesis (RFC 8198): answer from cached NSEC proofs
+	// without hitting the network when the name is provably non-existent.
+	if synth := r.cache.SynthesizeNXDOMAIN(question.Name, question.Qtype, question.Qclass, q.Id); synth != nil {
+		return synth, nil
+	}
+
+	// 3. Cache miss — perform iterative resolution.
 	resp, err := r.resolveIterative(ctx, question.Name, question.Qtype, question.Qclass)
 	if err != nil {
 		return nil, err
@@ -148,16 +203,56 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	resp.Id = q.Id
 	resp.RecursionAvailable = true
 
-	// Cache the response
+	// 4. DNS rebinding check: discard responses that map a public name to a
+	// private IP (Unbound private-address). Never cache or serve such responses.
+	if !r.cache.IsSafeResponse(resp, question.Name) {
+		m := new(dns.Msg)
+		m.SetRcode(q, dns.RcodeServerFailure)
+		return m, nil
+	}
+
+	// 5. DNSSEC validation before caching.
+	var dnssecValidated, dnssecBogus bool
+	if r.validator != nil {
+		result, _ := r.validator.Validate(ctx, resp, question.Name, question.Qtype)
+		if result != nil {
+			dnssecValidated = result.Secure
+			dnssecBogus = result.Bogus
+			if result.Secure {
+				resp.AuthenticatedData = true
+			}
+		}
+	}
+
+	// 6. Cache the response.
+	ttl := getTTL(resp)
 	if packed, err := resp.Pack(); err == nil {
-		r.cache.Set(cacheKey, &cache.Entry{
-			Data:      packed,
-			ExpiresAt: time.Now().Add(time.Duration(getTTL(resp)) * time.Second),
-			OrigTTL:   getTTL(resp),
-			QName:     question.Name,
-			QType:     question.Qtype,
-			QClass:    question.Qclass,
-		})
+		entry := &cache.Entry{
+			Data:            packed,
+			ExpiresAt:       time.Now().Add(time.Duration(ttl) * time.Second),
+			OrigTTL:         ttl,
+			QName:           question.Name,
+			QType:           question.Qtype,
+			QClass:          question.Qclass,
+			DNSSECValidated: dnssecValidated,
+			DNSSECBogus:     dnssecBogus,
+		}
+
+		// Build negative-cache entry metadata for NXDOMAIN / NODATA.
+		if resp.Rcode == dns.RcodeNameError {
+			entry.IsNegative = true
+			entry.NegType = "NXDOMAIN"
+		} else if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) == 0 {
+			entry.IsNegative = true
+			entry.NegType = "NODATA"
+		}
+
+		r.cache.Set(cacheKey, entry)
+
+		// Store NSEC records for aggressive synthesis if response was validated.
+		if dnssecValidated && entry.IsNegative {
+			r.cache.StoreNSEC(resp, question.Name)
+		}
 	}
 
 	return resp, nil
@@ -234,7 +329,9 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 		Qtype:  qtype,
 		Qclass: qclass,
 	}}
-	msg.SetEdns0(4096, false)
+	// 1232 bytes: DNS Flag Day 2020 recommendation (IPv6 min MTU 1280 - 48 bytes headers).
+	// Prevents IP fragmentation-based amplification attacks.
+	msg.SetEdns0(1232, false)
 
 	// Send query with timeout
 	queryCtx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)

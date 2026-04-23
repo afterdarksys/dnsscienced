@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	"github.com/miekg/dns"
 )
 
 const (
@@ -141,6 +142,28 @@ type ShardedCache struct {
 	maxStaleTTL  time.Duration
 	staleRefresh bool
 
+	// TTL enforcement (Unbound-inspired)
+	minTTL         time.Duration
+	maxTTL         time.Duration
+	minNegativeTTL time.Duration
+	maxNegativeTTL time.Duration
+	bogusTTL       time.Duration
+
+	// Prefetch (Unbound-inspired)
+	prefetch          bool
+	prefetchMinTTLPct float64
+	prefetchFn        func(qname string, qtype, qclass uint16)
+
+	// DNS rebinding protection (Unbound private-address)
+	rebinding *RebindingGuard
+
+	// Aggressive NSEC caching (RFC 8198)
+	nsecCache *NSECCache
+
+	// Unwanted reply poisoning detection (Unbound unwanted-reply-threshold)
+	unwantedReplies   atomic.Uint64
+	unwantedThreshold uint64
+
 	// Threat enrichment
 	enricher *ThreatScorer
 
@@ -182,6 +205,45 @@ type Config struct {
 
 	// Threat Intelligence
 	DarkAPIKey string `yaml:"darkapi_key"`
+
+	// TTL enforcement (Unbound cache-min-ttl / cache-max-ttl)
+	// Clamps TTLs on positive responses before caching. Prevents zero-TTL bypass
+	// and over-long TTLs that delay revocation of compromised records.
+	MinTTL time.Duration `yaml:"min_ttl"`
+	MaxTTL time.Duration `yaml:"max_ttl"`
+
+	// Negative TTL enforcement (Unbound cache-min-negative-ttl / cache-max-negative-ttl)
+	// Applied to NXDOMAIN and NODATA responses.
+	MinNegativeTTL time.Duration `yaml:"min_negative_ttl"`
+	MaxNegativeTTL time.Duration `yaml:"max_negative_ttl"`
+
+	// BogusTTL controls how long DNSSEC-bogus entries are quarantined in cache
+	// before re-validation is attempted. Prevents hammering the validator on
+	// repeatedly invalid zones (Unbound val-bogus-ttl, default 60s).
+	BogusTTL time.Duration `yaml:"bogus_ttl"`
+
+	// Prefetch triggers background refresh when a cache entry has less than
+	// PrefetchMinTTLPct of its original TTL remaining. This keeps popular records
+	// perpetually fresh and reduces the re-query window that an attacker could race
+	// to inject a poisoned response. (Unbound prefetch: yes)
+	Prefetch         bool    `yaml:"prefetch"`
+	PrefetchMinTTLPct float64 `yaml:"prefetch_min_ttl_pct"` // default 0.1 (10%)
+
+	// RebindingProtection prevents public names from resolving to RFC-1918 / loopback
+	// addresses, blocking browser-based DNS rebinding attacks. (Unbound private-address)
+	RebindingProtection bool     `yaml:"rebinding_protection"`
+	PrivateAddresses    []string `yaml:"private_addresses"` // CIDRs; empty = use defaults
+	PrivateDomains      []string `yaml:"private_domains"`   // Exempt from rebinding check
+
+	// AggressiveNSEC enables RFC 8198 synthesis: NXDOMAIN responses for names
+	// covered by cached NSEC records, without querying the network. Requires
+	// DNSSEC validation to be active. (Unbound aggressive-nsec: yes)
+	AggressiveNSEC bool `yaml:"aggressive_nsec"`
+
+	// UnwantedReplyThreshold flushes the entire cache when this many unsolicited
+	// (non-matching) replies are counted, indicating an active cache poisoning
+	// attempt. 0 disables. (Unbound unwanted-reply-threshold)
+	UnwantedReplyThreshold uint64 `yaml:"unwanted_reply_threshold"`
 }
 
 // NewShardedCache creates a new sharded cache
@@ -208,6 +270,21 @@ func NewShardedCache(cfg Config) *ShardedCache {
 
 	shardSize := cfg.MaxEntries / cfg.ShardCount
 
+	prefetchRatio := cfg.PrefetchMinTTLPct
+	if prefetchRatio == 0 {
+		prefetchRatio = 0.1
+	}
+
+	bogusTTL := cfg.BogusTTL
+	if bogusTTL == 0 {
+		bogusTTL = 60 * time.Second // Unbound default
+	}
+
+	maxNegTTL := cfg.MaxNegativeTTL
+	if maxNegTTL == 0 {
+		maxNegTTL = time.Hour // Unbound cache-max-negative-ttl default
+	}
+
 	c := &ShardedCache{
 		shards:       make([]*shard, cfg.ShardCount),
 		shardCount:   cfg.ShardCount,
@@ -215,12 +292,30 @@ func NewShardedCache(cfg Config) *ShardedCache {
 		serveStale:   cfg.ServeStale,
 		maxStaleTTL:  cfg.MaxStaleTTL,
 		staleRefresh: cfg.StaleRefresh,
-		// Deduplication handled
+
+		minTTL:         cfg.MinTTL,
+		maxTTL:         cfg.MaxTTL,
+		minNegativeTTL: cfg.MinNegativeTTL,
+		maxNegativeTTL: maxNegTTL,
+		bogusTTL:       bogusTTL,
+
+		prefetch:          cfg.Prefetch,
+		prefetchMinTTLPct: prefetchRatio,
+
+		unwantedThreshold: cfg.UnwantedReplyThreshold,
 
 		enricher:       NewThreatScorer(cfg.DarkAPIKey),
 		validationMode: cfg.ValidationMode,
 		broadcaster:    NewBroadcaster(),
 		stopCleanup:    make(chan struct{}),
+	}
+
+	if cfg.RebindingProtection {
+		c.rebinding = NewRebindingGuard(cfg.PrivateAddresses, cfg.PrivateDomains)
+	}
+
+	if cfg.AggressiveNSEC {
+		c.nsecCache = NewNSECCache()
 	}
 
 	// Calculate memory limit per shard
@@ -282,10 +377,99 @@ func (c *ShardedCache) Get(hash uint64) (*Entry, bool) {
 		c.misses.Add(1)
 	} else {
 		c.hits.Add(1)
+
+		// Prefetch: trigger background refresh when entry is within the last
+		// PrefetchMinTTLPct of its original TTL (Unbound prefetch: yes).
+		if c.prefetch && c.prefetchFn != nil && entry.OrigTTL > 0 {
+			remaining := time.Until(entry.ExpiresAt)
+			total := time.Duration(entry.OrigTTL) * time.Second
+			if float64(remaining)/float64(total) < c.prefetchMinTTLPct {
+				go c.prefetchFn(entry.QName, entry.QType, entry.QClass)
+			}
+		}
 	}
 
 	entry.Hits.Add(1)
 	return entry, true
+}
+
+// SynthesizeNXDOMAIN attempts to answer a query from cached NSEC records
+// without hitting the network (RFC 8198 aggressive NSEC). Returns nil when
+// no synthesis is possible. Only available when AggressiveNSEC is enabled.
+func (c *ShardedCache) SynthesizeNXDOMAIN(qname string, qtype, qclass uint16, queryID uint16) *dns.Msg {
+	if c.nsecCache == nil {
+		return nil
+	}
+	return c.nsecCache.SynthesizeNXDOMAIN(qname, qtype, qclass, queryID)
+}
+
+// StoreNSEC stores validated NSEC records from a DNSSEC-confirmed NXDOMAIN
+// response for later use in aggressive synthesis (RFC 8198).
+func (c *ShardedCache) StoreNSEC(msg *dns.Msg, zone string) {
+	if c.nsecCache != nil {
+		c.nsecCache.Store(msg, zone)
+	}
+}
+
+// SetPrefetchFunc registers the callback invoked when an entry needs a background
+// refresh. The function is called in a new goroutine and must be safe to call
+// concurrently. Set this before the cache receives traffic.
+func (c *ShardedCache) SetPrefetchFunc(fn func(qname string, qtype, qclass uint16)) {
+	c.prefetchFn = fn
+}
+
+// RecordUnwantedReply increments the unsolicited-reply counter. When the count
+// reaches UnwantedReplyThreshold the entire cache is flushed to expunge any
+// poison that may have been injected (Unbound unwanted-reply-threshold).
+func (c *ShardedCache) RecordUnwantedReply() {
+	if c.unwantedThreshold == 0 {
+		return
+	}
+	if count := c.unwantedReplies.Add(1); count >= c.unwantedThreshold {
+		c.unwantedReplies.Store(0)
+		c.Flush()
+		fmt.Printf("[CACHE-SECURITY] unwanted-reply threshold (%d) reached — cache flushed to remove potential poison\n",
+			c.unwantedThreshold)
+	}
+}
+
+// IsSafeResponse checks a DNS response against the rebinding guard before caching.
+// Returns false when a public name resolves to a private IP (rebinding attack).
+// Always returns true when rebinding protection is disabled.
+func (c *ShardedCache) IsSafeResponse(msg *dns.Msg, qname string) bool {
+	if c.rebinding == nil {
+		return true
+	}
+	return c.rebinding.IsSafe(msg, qname)
+}
+
+// applyTTLPolicy clamps an entry's TTL to the configured min/max bounds.
+// Bogus entries get a short quarantine TTL to avoid hammering the validator.
+func (c *ShardedCache) applyTTLPolicy(entry *Entry) {
+	now := time.Now()
+	remaining := entry.ExpiresAt.Sub(now)
+
+	if entry.DNSSECBogus && c.bogusTTL > 0 {
+		// Quarantine bogus entries with a short TTL regardless of other bounds.
+		entry.ExpiresAt = now.Add(c.bogusTTL)
+		return
+	}
+
+	if entry.IsNegative {
+		if c.minNegativeTTL > 0 && remaining < c.minNegativeTTL {
+			entry.ExpiresAt = now.Add(c.minNegativeTTL)
+		}
+		if c.maxNegativeTTL > 0 && remaining > c.maxNegativeTTL {
+			entry.ExpiresAt = now.Add(c.maxNegativeTTL)
+		}
+	} else {
+		if c.minTTL > 0 && remaining < c.minTTL {
+			entry.ExpiresAt = now.Add(c.minTTL)
+		}
+		if c.maxTTL > 0 && remaining > c.maxTTL {
+			entry.ExpiresAt = now.Add(c.maxTTL)
+		}
+	}
 }
 
 // Set stores an entry in cache
@@ -306,6 +490,9 @@ func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 			fmt.Printf("[CACHE] Validation failure for %s (LogOnly)\n", entry.QName)
 		}
 	}
+
+	// Apply TTL enforcement before caching (Unbound cache-min/max-ttl).
+	c.applyTTLPolicy(entry)
 
 	if c.enricher != nil {
 		c.enricher.EnrichEntry(entry)

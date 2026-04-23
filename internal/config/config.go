@@ -69,9 +69,9 @@ type ZoneConfig struct {
 	ForwardMode string `yaml:"forward_mode,omitempty"`
 
 	// Security features
-	Enable0x20      *bool `yaml:"enable_0x20,omitempty"`       // Override global 0x20 setting (nil = use global)
-	EnableDNSSEC    *bool `yaml:"enable_dnssec,omitempty"`     // Enable DNSSEC for this zone
-	EnableScrubbing *bool `yaml:"enable_scrubbing,omitempty"`  // Override global scrubbing setting
+	Enable0x20      *bool `yaml:"enable_0x20,omitempty"`      // Override global 0x20 setting (nil = use global)
+	EnableDNSSEC    *bool `yaml:"enable_dnssec,omitempty"`    // Enable DNSSEC for this zone
+	EnableScrubbing *bool `yaml:"enable_scrubbing,omitempty"` // Override global scrubbing setting
 
 	// DNSSEC signing configuration (for primary zones)
 	DNSSECSigning *ZoneDNSSECConfig `yaml:"dnssec_signing,omitempty"`
@@ -81,8 +81,30 @@ type ZoneConfig struct {
 	AlsoNotify    []string `yaml:"also_notify,omitempty"`    // Additional NOTIFY targets
 
 	// Zone transfer options (for secondary zones)
-	TransferSource string        `yaml:"transfer_source,omitempty"` // Source IP for AXFR
+	TransferSource  string        `yaml:"transfer_source,omitempty"`  // Source IP for AXFR
 	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
+
+	// AllowAXFRFallback controls whether IXFR failures fall back to a full AXFR.
+	// Set to false to force operators to fix IXFR issues rather than silently
+	// pulling full zones (NSD allow-axfr-fallback: no). Defaults to true.
+	AllowAXFRFallback *bool `yaml:"allow_axfr_fallback,omitempty"`
+
+	// Zone freshness bounds prevent transfer flooding (too-frequent NOTIFY) and
+	// stale-zone attacks (ignoring SOA TTL refresh). (NSD min/max-refresh/retry-time)
+	MaxRefreshTime time.Duration `yaml:"max_refresh_time,omitempty"` // Upper bound on SOA refresh
+	MinRefreshTime time.Duration `yaml:"min_refresh_time,omitempty"` // Lower bound on SOA refresh
+	MaxRetryTime   time.Duration `yaml:"max_retry_time,omitempty"`   // Upper bound on transfer retry
+	MinRetryTime   time.Duration `yaml:"min_retry_time,omitempty"`   // Lower bound on transfer retry
+
+	// RRLWhitelist lists response types exempt from RRL for this zone.
+	// Valid values: "nxdomain", "noerror", "error", "referral", "wildcard", "any".
+	// (NSD rrl-whitelist per-zone directive)
+	RRLWhitelist []string `yaml:"rrl_whitelist,omitempty"`
+
+	// VerifyZONEMD enables RFC 8976 ZONEMD integrity verification at zone load.
+	// A zone whose digest does not match its ZONEMD RR will be refused.
+	// (NSD 4.3.0+ automatic ZONEMD verification)
+	VerifyZONEMD bool `yaml:"verify_zonemd,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone

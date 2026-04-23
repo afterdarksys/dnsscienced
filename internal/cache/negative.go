@@ -48,12 +48,14 @@ func CreateNegativeCacheEntry(msg *dns.Msg, wireData []byte) (*Entry, bool) {
 		}
 	}
 
-	// Apply reasonable bounds
-	if negativeTTL < 60 {
-		negativeTTL = 60 // Minimum 1 minute
+	// Apply hard floor/ceiling before per-cache config overrides.
+	// These are conservative absolute bounds; ShardedCache.applyTTLPolicy()
+	// further enforces the operator-configured min/max negative TTL on top.
+	if negativeTTL < 10 {
+		negativeTTL = 10 // Absolute floor — prevent zero-TTL cache bypass
 	}
-	if negativeTTL > 3600 {
-		negativeTTL = 3600 // Maximum 1 hour for negative caching
+	if negativeTTL > 10800 {
+		negativeTTL = 10800 // Absolute ceiling — 3 hours
 	}
 
 	entry := &Entry{

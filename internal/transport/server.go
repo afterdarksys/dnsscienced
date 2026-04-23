@@ -25,6 +25,11 @@ type ServerConfig struct {
 	EnableScrubbing bool
 	EnableQNAMEMin  bool
 
+	// MinimalResponses strips the authority and additional sections from positive
+	// answers, reducing response size and eliminating additional-section injection
+	// vectors. Necessary NS + glue is preserved for referrals. (NSD minimal-responses)
+	MinimalResponses bool
+
 	// TCP connection limits
 	MaxTCPConnections int           // Maximum concurrent TCP connections (default: 1000)
 	TCPReadTimeout    time.Duration // TCP read timeout (default: 5s)
@@ -284,9 +289,21 @@ func (s *Server) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		q := req.Question[0]
 
 		if q.Qtype == dns.TypeANY {
+			// RFC 8482: respond with a minimal HINFO record instead of NOTIMP.
+			// This satisfies the protocol while preventing ANY-query amplification
+			// (historically the largest amplification ratios in DNS). (NSD refuse-any)
 			m := new(dns.Msg)
-			m.SetRcode(req, dns.RcodeNotImplemented)
-			appendEDE(m, 15, "ANY queries unsupported") // 15 = Blocked
+			m.SetReply(req)
+			m.Answer = []dns.RR{&dns.HINFO{
+				Hdr: dns.RR_Header{
+					Name:   q.Name,
+					Rrtype: dns.TypeHINFO,
+					Class:  dns.ClassINET,
+					Ttl:    300,
+				},
+				Cpu: "RFC8482",
+				Os:  "ANY obsoleted",
+			}}
 			w.WriteMsg(m)
 			return
 		}
@@ -324,7 +341,30 @@ func (s *Server) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	// This allows blocking based on resolved IPs
 	// TODO: Implement IP-based RPZ triggers
 
+	// Minimal responses: strip authority + additional from positive answers to
+	// reduce amplification and prevent additional-section poisoning. (NSD minimal-responses)
+	if s.config.MinimalResponses && len(resp.Answer) > 0 {
+		resp.Ns = nil
+		resp.Extra = stripNonOPT(resp.Extra)
+	}
+
+	// Cap EDNS UDP payload size to 1232 bytes in all responses (DNS Flag Day 2020).
+	if opt := resp.IsEdns0(); opt != nil && opt.UDPSize() > 1232 {
+		opt.SetUDPSize(1232)
+	}
+
 	w.WriteMsg(resp)
+}
+
+// stripNonOPT removes all additional-section records except the OPT RR (EDNS0).
+func stripNonOPT(extra []dns.RR) []dns.RR {
+	var out []dns.RR
+	for _, rr := range extra {
+		if rr.Header().Rrtype == dns.TypeOPT {
+			out = append(out, rr)
+		}
+	}
+	return out
 }
 
 // HandleDNS implements the Handler interface for DoT/DoH integration.
