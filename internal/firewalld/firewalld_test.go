@@ -3,6 +3,7 @@ package firewalld
 import (
 	"net"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
@@ -530,4 +531,32 @@ func TestFirewall_NoCustomerID_Allowed(t *testing.T) {
 	result := fw.Check(m, net.ParseIP("127.0.0.1"))
 	require.NotNil(t, result)
 	assert.Equal(t, VerdictAllow, result.Verdict)
+}
+
+// --- TDD RED: redirect builtin uses pool (REDIR-03) ---
+// This test fails until starlark.go is updated to call pool.Next() instead of
+// requiring server= kwarg.
+
+func TestRedirect_PoolBehavior_RED(t *testing.T) {
+	fw, err := New(Config{
+		Enabled:       true,
+		DefaultAction: "allow",
+		ScriptTimeout: 2 * time.Millisecond,
+		Redirect:      RedirectConfig{Upstreams: []string{"1.1.1.1:53", "2.2.2.2:53"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, fw)
+
+	// Script calls redirect() with NO server= arg — pool should be used.
+	script := `
+def on_query(q, score):
+    firewall.redirect(reason="pool test")
+`
+	require.NoError(t, fw.LoadSource("red-test", script))
+
+	q := makeQuery("example.com", dns.TypeA)
+	d := fw.Check(q, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictRedirect, d.Verdict)
+	assert.Contains(t, []string{"1.1.1.1:53", "2.2.2.2:53"}, d.Server,
+		"redirect must select from configured pool upstreams")
 }
