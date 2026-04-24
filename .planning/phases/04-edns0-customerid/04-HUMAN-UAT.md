@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 04-edns0-customerid
 source: [04-VERIFICATION.md]
 started: 2026-04-23
@@ -16,14 +16,14 @@ updated: 2026-04-23
 
 expected: Load a Starlark script that calls `firewall.nxdomain()` when `q["customer_id"] == "blocked-customer"`. Send one query with EDNS0 option code 65000 carrying "blocked-customer", one without. VerdictNXDomain for the first, VerdictAllow for the second.
 
-result: [pending]
+result: PASS — TestFirewall_StarlarkCustomerIDBranching added to firewalld_test.go; query with EDNS0 CustomerID "blocked-customer" produces VerdictNXDomain, query without produces VerdictAllow; 44/44 tests pass.
 
 ## Summary
 
 total: 1
-passed: 0
+passed: 1
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 

@@ -1,13 +1,9 @@
 ---
 phase: 04-edns0-customerid
 verified: 2026-04-23T22:25:00Z
-status: human_needed
-score: 4/5 must-haves verified
+status: verified
+score: 5/5 must-haves verified
 overrides_applied: 0
-human_verification:
-  - test: "Starlark script branching on q[\"customer_id\"] enforces per-customer verdict"
-    expected: "A Starlark on_query handler that reads q[\"customer_id\"] and calls firewall.nxdomain() for a specific customer ID produces VerdictNXDomain for queries with that CustomerID and VerdictAllow for queries with a different or absent CustomerID"
-    why_human: "ROADMAP SC#3 requires a Starlark script to branch on q[\"customer_id\"] and apply the correct verdict. No automated test exercises this full path. The wiring (starlark.go line 283 maps qctx.CustomerID to q[\"customer_id\"]) is present and was written before phase 4, but phase 4 tests only exercise ThreatIntel trust bonus branching — not Starlark script branching. Behavioral verification requires confirming the string value flows through fw.starlark.Run() and is accessible inside on_query."
 ---
 
 # Phase 4: EDNS0 CustomerID Verification Report

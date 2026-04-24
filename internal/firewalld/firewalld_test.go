@@ -680,6 +680,25 @@ func TestStaticRedirectRule_PerRuleOverride(t *testing.T) {
 		"per-rule redirect_server must bypass pool")
 }
 
+func TestFirewall_StarlarkCustomerIDBranching(t *testing.T) {
+	fw, err := New(Config{Enabled: true, ThreatIntel: ThreatIntelConfig{BlockThreshold: 100}})
+	require.NoError(t, err)
+	src := `
+def on_query(q, score):
+    if q["customer_id"] == "blocked-customer":
+        firewall.nxdomain(reason="per-customer block")
+`
+	require.NoError(t, fw.starlark.Load("test-custid", src))
+
+	withID := makeQueryWithCustomerID("example.com.", dns.TypeA, "blocked-customer")
+	d1 := fw.Check(withID, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictNXDomain, d1.Verdict)
+
+	noID := makeQuery("example.com.", dns.TypeA)
+	d2 := fw.Check(noID, net.ParseIP("127.0.0.1"))
+	assert.Equal(t, VerdictAllow, d2.Verdict)
+}
+
 func TestNew_EmptyPoolWithPoolRedirectRule(t *testing.T) {
 	_, err := New(Config{
 		Enabled:       true,
