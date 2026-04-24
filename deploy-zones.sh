@@ -12,7 +12,7 @@ case "$(uname -s)" in
     Darwin) COMPILE_BIN="$SCRIPT_DIR/dnsscienced-compile-darwin" ;;
     *)      COMPILE_BIN="$SCRIPT_DIR/dnsscienced-compile" ;;
 esac
-DNS_SERVERS=("gdns1" "gdns2")
+DNS_SERVERS=("ns1" "ns2")
 REMOTE_ZONES="/opt/dnsscienced/zones"
 REMOTE_COMPILE="/opt/dnsscienced/bin/dnsscienced-compile"
 
@@ -83,12 +83,12 @@ log "Verifying DNS resolution..."
 sleep 2
 for zone_file in "${ZONE_FILES[@]}"; do
     domain=$(basename "$zone_file" .dnszone)
-    r1=$(dig @166.0.192.27 "$domain" A +short +time=3 2>/dev/null | head -1)
-    r2=$(dig @108.165.120.57 "$domain" A +short +time=3 2>/dev/null | head -1)
+    r1=$(dig @ns1.idoms.net "$domain" A +short +time=3 2>/dev/null | head -1)
+    r2=$(dig @ns2.idoms.net "$domain" A +short +time=3 2>/dev/null | head -1)
     if [ "$r1" = "$r2" ] && [ -n "$r1" ]; then
         log "✓ $domain -> $r1"
     else
-        warn "✗ $domain: gdns1=$r1 gdns2=$r2"
+        warn "✗ $domain: ns1=$r1 ns2=$r2"
     fi
 done
 
