@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: milestone
-status: complete
-last_updated: "2026-04-23T23:41:24.330Z"
-last_activity: "2026-04-23 — Phase 5 Plan 02 complete: Starlark redirect builtin uses pool.Next(); compileRule relaxed; REDIR-03/04 integration tests pass"
+milestone_name: dnsfirewalld Completion
+status: archived
+last_updated: "2026-04-23T00:00:00.000Z"
+last_activity: "2026-04-23 — v1.1 milestone archived; 44 firewalld tests passing; git tag v1.1 created"
 progress:
   total_phases: 5
   completed_phases: 5
@@ -27,7 +27,7 @@ Last activity: 2026-04-23 — Phase 5 Plan 02 complete: Starlark redirect builti
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** v1.1 — dnsfirewalld Completion
+**Current focus:** Planning next milestone
 
 ## Accumulated Context
 

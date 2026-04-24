@@ -1,108 +1,42 @@
-# Roadmap: dnsscienced — dnsfirewalld Completion
+# Roadmap: dnsscienced — DNS Firewall
 
-**Milestone:** v1.1 — dnsfirewalld Completion
-**Phases:** 4 (numbered 2-5, continuing from v1.0 Phase 1)
-**Requirements:** 16 mapped
+## Milestones
+
+- ✅ **v1.0 MVP** — Phase 1 (shipped 2026-04-22)
+- ✅ **v1.1 dnsfirewalld Completion** — Phases 2–5 (shipped 2026-04-23)
 
 ## Phases
 
-- [x] **Phase 2: gRPC Admin** — Expose firewall management via gRPC RPCs
-- [x] **Phase 3: Live Threat Feed** — Poll external feed URL and ingest domain/IP threat scores
-- [x] **Phase 4: EDNS0 CustomerID** — Extract customer identity from DNS queries at intake
-- [x] **Phase 5: Redirect Load Balancing** — Distribute redirect verdicts across multiple upstream targets
+<details>
+<summary>✅ v1.0 MVP (Phase 1) — SHIPPED 2026-04-22</summary>
 
-## Phase Details
+- [x] Phase 1: dnsfirewalld Foundation (single-commit greenfield build) — completed 2026-04-22
 
-### Phase 2: gRPC Admin
+See archive: `.planning/milestones/v1.0-*` (if present)
 
-**Goal**: Operators can manage the firewall (stats, script load/remove, score injection) over gRPC in addition to HTTP.
-**Depends on**: Phase 1 (v1.0 — HTTP admin baseline)
-**Requirements**: GRPC-01, GRPC-02, GRPC-03, GRPC-04, GRPC-05
+</details>
 
-**Success criteria:**
-1. `grpcurl` call to FirewallStats returns current counter values matching the HTTP /stats endpoint
-2. `grpcurl` call to LoadScript with a valid Starlark script body causes it to execute on subsequent queries
-3. `grpcurl` call to RemoveScript unloads the named script; later queries no longer trigger it
-4. `grpcurl` call to InjectScore for a domain raises its threat score, verifiable via FirewallStats
+<details>
+<summary>✅ v1.1 dnsfirewalld Completion (Phases 2–5) — SHIPPED 2026-04-23</summary>
 
-**Plans:** 4 plans
+- [x] Phase 2: gRPC Admin (4/4 plans) — completed 2026-04-23
+- [x] Phase 3: Live Threat Feed (3/3 plans) — completed 2026-04-23
+- [x] Phase 4: EDNS0 CustomerID (1/1 plan) — completed 2026-04-23
+- [x] Phase 5: Redirect Load Balancing (2/2 plans) — completed 2026-04-23
 
-Plans:
-- [x] 02-01-PLAN.md — Proto definition + codegen (FirewallAdminService + 8 messages in admin.proto; run generate.sh)
-- [x] 02-02-PLAN.md — Go accessor chain (LoadSource on *Firewall; GetFirewall accessor; SrvAdapter interface extension; serverSrvAdapter + NoopSrvAdapter implementations)
-- [x] 02-03-PLAN.md — FirewallService implementation + unit tests (firewall.go + firewall_test.go)
-- [x] 02-04-PLAN.md — Registry wiring (conditional RegisterFirewallAdminServiceServer in RegisterAll)
+See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
----
+</details>
 
-### Phase 3: Live Threat Feed
+## Progress
 
-**Goal**: Server autonomously pulls domain and IP threat scores from a configured HTTP feed URL and applies them without operator intervention.
-**Depends on**: Phase 2
-**Requirements**: FEED-01, FEED-02, FEED-03, FEED-04
-
-**Success criteria:**
-1. With `feed_url` and `poll_interval` set in config.yaml, the server starts a background poller that fetches the URL on schedule (observable via log lines)
-2. Entries from the feed appear in threat intel scores — a domain listed in the feed scores above 0 at query time
-3. A feed that returns HTTP errors or malformed lines logs the error and continues polling without crashing the server
-4. Removing or blanking `feed_url` from config disables the poller (no polling activity in logs)
-
-**Plans:** 3 plans
-
-Plans:
-- [x] 03-01-PLAN.md — Config extension + RemoveIPScore (add 6 feed fields to ThreatIntelConfig; add RemoveIPScore to ThreatIntel)
-- [x] 03-02-PLAN.md — FeedClient implementation (feed.go: newFeedClient, StartFeed, run, fetchAndApply, fetch, parseFeed, apply)
-- [x] 03-03-PLAN.md — Server wiring + tests (StartFeed call in server.go New(); feed_test.go with 6 unit tests covering FEED-01 through FEED-04)
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|---------------|--------|-----------|
+| 1. dnsfirewalld Foundation | v1.0 | 1/1 | Complete | 2026-04-22 |
+| 2. gRPC Admin | v1.1 | 4/4 | Complete | 2026-04-23 |
+| 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
+| 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
+| 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
 
 ---
-
-### Phase 4: EDNS0 CustomerID
-
-**Goal**: Every DNS query carries its customer identity into the firewall policy engine so scripts can apply per-customer rules.
-**Depends on**: Phase 2
-**Requirements**: CUST-01, CUST-02, CUST-03
-
-**Success criteria:**
-1. A query carrying a known EDNS0 option (custom option code) with a CustomerID value results in `q.customer_id` being non-empty inside a Starlark on_query handler
-2. A query without the EDNS0 option still resolves normally — `q.customer_id` is an empty string, no error
-3. A Starlark script that branches on `q.customer_id` applies the correct per-customer verdict
-
-**Plans:** 1 plan
-
-Plans:
-- [x] 04-01-PLAN.md — EDNS0 extraction + wire + tests (edns0.go new file with constant + helper; firewalld.go 1-line insertion; firewalld_test.go 7 new tests)
-
----
-
-### Phase 5: Redirect Load Balancing
-
-**Goal**: Redirect verdicts (both static rules and Starlark) are distributed across a configured pool of upstream DNS targets using round-robin selection.
-**Depends on**: Phase 3, Phase 4
-**Requirements**: REDIR-01, REDIR-02, REDIR-03, REDIR-04
-
-**Success criteria:**
-1. With two upstreams configured in `firewall.redirect.upstreams`, repeated redirect queries cycle between both targets (observable via query logs showing alternating upstream addresses)
-2. A static rule with VerdictRedirect uses the pool — not a hardcoded single address
-3. A Starlark script calling `redirect()` uses the same pool as static rules
-4. Config with a single upstream entry behaves identically to the existing single-target behavior
-
-**Plans:** 2 plans
-
-Plans:
-- [x] 05-01-PLAN.md — UpstreamPool + RedirectConfig + Firewall wiring (forwarder.go: UpstreamPool + Next(); config.go: RedirectConfig + Redirect field; firewalld.go: pool field + New() init + Check() pool-empty SERVFAIL)
-- [x] 05-02-PLAN.md — Starlark builtin + policy relaxation + tests (starlark.go: pool field + updated redirect builtin; policy.go: compileRule relaxation; firewalld_test.go: 8 new tests covering REDIR-01 through REDIR-04)
-
----
-
-## Progress Table
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 2. gRPC Admin | 4/4 | Complete | 2026-04-23 |
-| 3. Live Threat Feed | 3/3 | Complete | 2026-04-23 |
-| 4. EDNS0 CustomerID | 1/1 | Complete | 2026-04-23 |
-| 5. Redirect Load Balancing | 2/2 | Complete | 2026-04-23 |
-
----
-*Roadmap created: 2026-04-23*
-*Milestone: v1.1 — dnsfirewalld Completion*
+*Last updated: 2026-04-23 — v1.1 milestone archived*

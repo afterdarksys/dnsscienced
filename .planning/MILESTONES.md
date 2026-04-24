@@ -17,14 +17,19 @@
 
 ---
 
-## v1.1 — dnsfirewalld Completion (Active)
+## v1.1 — dnsfirewalld Completion (Completed)
 
-**Started:** 2026-04-23
+**Shipped:** 2026-04-23
+**Phases:** 2–5 (4 phases, 10 plans, 63 commits)
+**Git range:** 39930b0..9f287b3
+**Files changed:** 73 files, +14,589 / -134 lines
+**Test suite:** 19 → 44 firewalld tests (all passing under -race)
 
-**Goal:** Ship remaining 4 subsystems for production readiness.
+**Key accomplishments:**
+1. gRPC admin — FirewallAdminService with 4 RPCs (Stats, LoadScript, RemoveScript, InjectScore) conditionally registered via nil-guard
+2. Live threat feed — FeedClient polls any HTTP URL, full-replace semantics, auth token never logged, error-resilient
+3. EDNS0 CustomerID — extractCustomerID() reads option code 65000; CustomerID in QueryContext before all policy stages
+4. Redirect load balancing — UpstreamPool atomic round-robin; Starlark and static rules share the pool; empty pool → SERVFAIL at startup
+5. Starlark CustomerID branching verified — q["customer_id"] flows through on_query handler end-to-end
 
-**Target features:**
-- gRPC admin RPCs
-- Live threat feed integration
-- EDNS0 CustomerID extraction
-- VerdictRedirect load balancing
+**Archive:** `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`
