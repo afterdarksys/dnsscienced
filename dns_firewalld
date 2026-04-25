@@ -1,0 +1,40 @@
+I'm stealing this idea from a popular commercial DNS vendor, they both copied off each other
+Now it's my turn:
+
+Product: "dnsfirewalld"
+Works as a compontent of dnsscienced
+
+how it works, two parts:
+   -> view into live query API
+   -> View into threat intel from dnsscience
+   -> What we do: if the sources are:
+	- high volume
+	- junk queries
+	- bogus domains
+	- IP reputation
+	- Other Metrics
+	- meta_data:
+		     - customer
+		     - acct_type
+		     - zone1:score:score:sore
+		     - zone2:same
+
+Now we can do threat intel and tie it back to: A domain or a Customer
+
+We know what customers, querying parties are legit vs fake va. bots. va other
+
+This could also be an expressive policy and can go all out:
+	- fix broken queries on the fly
+	- fix broken records or misconfigurations clients don't or can't fix.
+	- think "fix up" / firewall for badactors
+	- This firewalld will be able to:
+	   1. rewrite -> send to new server
+	   2. fix broken queries
+	   3. provide an elegant way of dealing with junk queries, example:
+		bot queries 3334dcscs-$(date +%s).foo.com 
+		intercept return NXDomain
+
+This will be written in Go, but you might need some CGO -> pass things off to nftables for heavy lifting
+
+Needs many enhancements or an even cooler idea: a starlark driven DNS Policy Language maybe with this coupled and put it in the dnsfirewalld
+
