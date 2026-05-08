@@ -8,9 +8,9 @@ COMPILE="$SCRIPT_DIR/dnsscienced-compile-linux-new"
 ADMINCLI="$SCRIPT_DIR/dnsscienced-admin-linux"
 JUMP="root@108.165.123.229"
 
-# ns1 / ns2 are only reachable via the apps jump host
-NS1="root@166.0.192.27"
-NS2="root@108.165.120.57"
+# ns1 / ns2 are only reachable via apps (their own SSH keys, not ours)
+NS1="166.0.192.27"
+NS2="108.165.120.57"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -34,68 +34,68 @@ echo ""
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-# run a command on a nameserver via the jump host
+# Run a command on a nameserver — apps server proxies the SSH connection
+# because ns1/ns2 are not directly reachable from local.
 ns_ssh() {
-    local target="$1"; shift
-    ssh -J "$JUMP" "$target" "$@"
+    local target_ip="$1"; shift
+    ssh root@108.165.123.229 "ssh -o StrictHostKeyChecking=no root@${target_ip} \"$*\""
 }
 
-# copy a local file to a nameserver via the jump host
+# Copy a local file to a nameserver: local → apps → ns
 ns_scp() {
     local src="$1"
-    local target="$2"
+    local target_ip="$2"
     local dest="$3"
-    # scp with ProxyJump
-    scp -o "ProxyJump=$JUMP" "$src" "${target}:${dest}"
+    local tmpfile="/tmp/$(basename "$src").deploy"
+    # Step 1: local → apps
+    scp "$src" "root@108.165.123.229:${tmpfile}"
+    # Step 2: apps → ns
+    ssh root@108.165.123.229 "scp -o StrictHostKeyChecking=no ${tmpfile} root@${target_ip}:${dest} && rm -f ${tmpfile}"
 }
 
 # ── deploy to one server ─────────────────────────────────────────────────────
 
 deploy_to() {
-    local label="$1"   # e.g. "ns1"
-    local target="$2"  # e.g. root@166.0.192.27
+    local label="$1"  # e.g. "ns1"
+    local ip="$2"     # e.g. 166.0.192.27
 
     log "[$label] Creating /opt/dnsscienced/bin/ ..."
-    ns_ssh "$target" "mkdir -p /opt/dnsscienced/bin"
+    ns_ssh "$ip" "mkdir -p /opt/dnsscienced/bin /opt/dnsscienced/logs"
 
     log "[$label] Uploading daemon ..."
-    ns_scp "$DAEMON"  "$target" "/opt/dnsscienced/bin/dnsscienced.new"
+    ns_scp "$DAEMON"   "$ip" "/opt/dnsscienced/bin/dnsscienced.new"
 
     log "[$label] Uploading compiler ..."
-    ns_scp "$COMPILE" "$target" "/opt/dnsscienced/bin/dnsscienced-compile.new"
+    ns_scp "$COMPILE"  "$ip" "/opt/dnsscienced/bin/dnsscienced-compile.new"
 
     log "[$label] Uploading admin CLI ..."
-    ns_scp "$ADMINCLI" "$target" "/opt/dnsscienced/bin/dnsscienced-admin"
-    ns_ssh "$target" "chmod +x /opt/dnsscienced/bin/dnsscienced-admin"
+    ns_scp "$ADMINCLI" "$ip" "/opt/dnsscienced/bin/dnsscienced-admin"
 
     log "[$label] Swapping binaries and restarting ..."
-    ns_ssh "$target" bash -s << 'REMOTE'
-set -e
-chmod +x /opt/dnsscienced/bin/dnsscienced.new
-chmod +x /opt/dnsscienced/bin/dnsscienced-compile.new
-
-# Atomic swap
-mv /opt/dnsscienced/bin/dnsscienced.new   /opt/dnsscienced/bin/dnsscienced
-mv /opt/dnsscienced/bin/dnsscienced-compile.new /opt/dnsscienced/bin/dnsscienced-compile
-
-# Restart via systemd (or kill+start if no systemd unit)
-if systemctl is-active --quiet dnsscienced 2>/dev/null; then
-    systemctl restart dnsscienced
-    sleep 2
-    systemctl status dnsscienced --no-pager -l | head -20
-elif pgrep -x dnsscienced > /dev/null; then
-    pkill -x dnsscienced || true
-    sleep 1
-    nohup /opt/dnsscienced/bin/dnsscienced \
-        -config /opt/dnsscienced/config/dnsscienced.yaml \
-        >> /opt/dnsscienced/logs/dnsscienced.log 2>&1 &
-    sleep 2
-    pgrep -x dnsscienced && echo "dnsscienced running" || echo "WARNING: dnsscienced not running"
-else
-    echo "WARNING: dnsscienced is not currently running — not starting automatically"
-    echo "  Start with: systemctl start dnsscienced"
-fi
-REMOTE
+    # Build the remote script as a string (no heredoc — we're inside double-SSH)
+    ns_ssh "$ip" "
+        set -e
+        chmod +x /opt/dnsscienced/bin/dnsscienced.new
+        chmod +x /opt/dnsscienced/bin/dnsscienced-compile.new
+        chmod +x /opt/dnsscienced/bin/dnsscienced-admin
+        mv /opt/dnsscienced/bin/dnsscienced.new         /opt/dnsscienced/bin/dnsscienced
+        mv /opt/dnsscienced/bin/dnsscienced-compile.new /opt/dnsscienced/bin/dnsscienced-compile
+        echo 'Binaries swapped.'
+        if systemctl is-active --quiet dnsscienced 2>/dev/null; then
+            systemctl restart dnsscienced
+            sleep 2
+            systemctl status dnsscienced --no-pager -l | head -15
+        elif pgrep -x dnsscienced > /dev/null; then
+            pkill -x dnsscienced || true
+            sleep 1
+            nohup /opt/dnsscienced/bin/dnsscienced -config /opt/dnsscienced/config/dnsscienced.yaml >> /opt/dnsscienced/logs/dnsscienced.log 2>&1 &
+            sleep 2
+            pgrep -x dnsscienced && echo 'dnsscienced running (pid '$(pgrep -x dnsscienced)')' || echo 'WARNING: dnsscienced not running'
+        else
+            echo 'WARNING: dnsscienced is not currently running'
+            echo '  Start with: systemctl start dnsscienced'
+        fi
+    "
 
     log "[$label] Done."
 }
@@ -109,36 +109,27 @@ ADMIN_KEY="6cqNMyu5YF5TmIy-_i_gsLs4xvVTK56RIgwCgJcKZiM"
 
 patch_config() {
     local label="$1"
-    local target="$2"
+    local ip="$2"
     local cfg="/opt/dnsscienced/config/dnsscienced.yaml"
 
-    # Check if api_keys is already set
-    if ns_ssh "$target" "grep -q 'api_keys' $cfg 2>/dev/null"; then
+    if ns_ssh "$ip" "grep -q 'api_keys' $cfg 2>/dev/null"; then
         log "[$label] api_keys already in config, skipping."
         return
     fi
 
     log "[$label] Patching config to add api_keys ..."
-    ns_ssh "$target" bash -s <<REMOTE
-set -e
-# Append api_keys under the admin section
-python3 - << 'PY'
-import re, sys
-
-cfg = open('/opt/dnsscienced/config/dnsscienced.yaml').read()
-
-# If admin section exists but has no api_keys, add it
+    ns_ssh "$ip" "
+        python3 -c \"
+import sys
+cfg = open('$cfg').read()
 if 'admin:' in cfg and 'api_keys' not in cfg:
-    cfg = cfg.replace(
-        '  enabled: true',
-        '  enabled: true\n  api_keys:\n    - "${ADMIN_KEY}"'
-    )
-    open('/opt/dnsscienced/config/dnsscienced.yaml', 'w').write(cfg)
+    cfg = cfg.replace('  enabled: true', '  enabled: true\n  api_keys:\n    - ${ADMIN_KEY}')
+    open('$cfg', 'w').write(cfg)
     print('Patched.')
 else:
     print('No change needed.')
-PY
-REMOTE
+\"
+    "
 }
 
 # ── main ─────────────────────────────────────────────────────────────────────
