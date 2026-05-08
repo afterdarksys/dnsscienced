@@ -4,7 +4,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/mock"
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
@@ -37,31 +36,16 @@ type SrvIface = services.SrvAdapter
 // zonesDir is the directory where .dnszone / .dzc files live.
 // compileBin is the path to the dnsscienced-compile binary.
 func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string) {
-	// Engine-backed managers for the existing 5 services.
+	// Engine-backed managers.
 	resolver := engine.NewResolver("")
-	zoneMgr := engine.NewZoneManager()
-
-	// Seed a demonstration zone so the existing ZoneService tests pass.
-	zoneMgr.AddZone(ports.ZoneInfo{
-		Name:   "example.com.",
-		Type:   "primary",
-		Status: "active",
-		SOA: ports.SOA{
-			Primary: "ns1.example.com.",
-			Admin:   "hostmaster.example.com.",
-			Serial:  2024010101,
-		},
-	}, []ports.ResourceRecord{
-		{Name: "example.com.", Type: "A", TTL: 3600, Data: "127.0.0.1"},
-		{Name: "www.example.com.", Type: "CNAME", TTL: 3600, Data: "example.com."},
-	})
-
 	dnssec := &mock.DNSSECMgr{}
 
 	threatScorer := cache.NewThreatScorer("")
 
 	pb.RegisterDNSServiceServer(s, services.NewDNSService(resolver))
-	pb.RegisterZoneServiceServer(s, services.NewZoneService(zoneMgr))
+	// Use LiveZoneManager so ZoneService.UpdateRecords writes to the live server.
+	liveZoneMgr := services.NewLiveZoneManager(srv, zonesDir, compileBin)
+	pb.RegisterZoneServiceServer(s, services.NewZoneService(liveZoneMgr))
 	pb.RegisterCacheServiceServer(s, services.NewCacheService(newLiveCacheMgr(srv), threatScorer))
 	pb.RegisterServerServiceServer(s, services.NewServerService(newLiveControlMgr(srv, version)))
 	pb.RegisterDNSSECServiceServer(s, services.NewDNSSECService(dnssec))
