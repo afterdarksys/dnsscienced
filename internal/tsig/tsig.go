@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/miekg/dns"
 )
@@ -28,8 +29,11 @@ type KeyConfig struct {
 }
 
 // KeyRing holds a set of TSIG keys indexed by normalized FQDN name.
+// It is safe for concurrent use; all mutations acquire the write lock.
 type KeyRing struct {
-	keys map[string]keyEntry // name (FQDN) → entry
+	mu      sync.RWMutex
+	keys    map[string]keyEntry // name (FQDN) → entry
+	secrets map[string]string   // name (FQDN) → base64 secret — SHARED with dns.Server.TsigSecret
 }
 
 type keyEntry struct {
@@ -40,7 +44,10 @@ type keyEntry struct {
 // NewKeyRing validates and builds a KeyRing from configuration.
 // Returns an error if any key has an invalid algorithm or malformed base64 secret.
 func NewKeyRing(keys []KeyConfig) (*KeyRing, error) {
-	kr := &KeyRing{keys: make(map[string]keyEntry, len(keys))}
+	kr := &KeyRing{
+		keys:    make(map[string]keyEntry, len(keys)),
+		secrets: make(map[string]string, len(keys)),
+	}
 	for _, k := range keys {
 		if err := ValidateAlgorithm(k.Algorithm); err != nil {
 			return nil, fmt.Errorf("key %q: %w", k.Name, err)
@@ -51,6 +58,7 @@ func NewKeyRing(keys []KeyConfig) (*KeyRing, error) {
 		name := dns.Fqdn(strings.ToLower(k.Name))
 		alg := normalizeAlgorithm(k.Algorithm)
 		kr.keys[name] = keyEntry{algorithm: alg, secret: k.Secret}
+		kr.secrets[name] = k.Secret
 	}
 	return kr, nil
 }
@@ -61,6 +69,8 @@ func (kr *KeyRing) Secret(name string) (string, bool) {
 	if kr == nil {
 		return "", false
 	}
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
 	e, ok := kr.keys[dns.Fqdn(strings.ToLower(name))]
 	if !ok {
 		return "", false
@@ -73,6 +83,8 @@ func (kr *KeyRing) Algorithm(name string) (string, bool) {
 	if kr == nil {
 		return "", false
 	}
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
 	e, ok := kr.keys[dns.Fqdn(strings.ToLower(name))]
 	if !ok {
 		return "", false
@@ -80,17 +92,14 @@ func (kr *KeyRing) Algorithm(name string) (string, bool) {
 	return e.algorithm, true
 }
 
-// TsigSecretMap returns the map[string]string suitable for dns.Server.TsigSecret.
-// Keys are FQDN key names, values are base64-encoded secrets.
+// TsigSecretMap returns the internal secrets map. This is the SAME map reference
+// that should be assigned to dns.Server.TsigSecret — mutations via Add/Remove
+// are visible to the dns.Server on the next request.
 func (kr *KeyRing) TsigSecretMap() map[string]string {
-	if kr == nil || len(kr.keys) == 0 {
+	if kr == nil {
 		return nil
 	}
-	m := make(map[string]string, len(kr.keys))
-	for name, entry := range kr.keys {
-		m[name] = entry.secret
-	}
-	return m
+	return kr.secrets
 }
 
 // Names returns all key names in the ring.
@@ -98,6 +107,8 @@ func (kr *KeyRing) Names() []string {
 	if kr == nil {
 		return nil
 	}
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
 	names := make([]string, 0, len(kr.keys))
 	for name := range kr.keys {
 		names = append(names, name)
@@ -110,7 +121,67 @@ func (kr *KeyRing) Len() int {
 	if kr == nil {
 		return 0
 	}
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
 	return len(kr.keys)
+}
+
+// Add inserts a new TSIG key into the ring at runtime.
+// Returns an error if the key name already exists, algorithm is invalid, or secret is malformed.
+// The change is immediately visible to dns.Server via the shared secrets map.
+func (kr *KeyRing) Add(cfg KeyConfig) error {
+	if err := ValidateAlgorithm(cfg.Algorithm); err != nil {
+		return err
+	}
+	if _, err := base64.StdEncoding.DecodeString(cfg.Secret); err != nil {
+		return fmt.Errorf("invalid base64 secret: %w", err)
+	}
+
+	name := dns.Fqdn(strings.ToLower(cfg.Name))
+	alg := normalizeAlgorithm(cfg.Algorithm)
+
+	kr.mu.Lock()
+	defer kr.mu.Unlock()
+
+	if _, exists := kr.keys[name]; exists {
+		return fmt.Errorf("key %q already exists", name)
+	}
+
+	kr.keys[name] = keyEntry{algorithm: alg, secret: cfg.Secret}
+	kr.secrets[name] = cfg.Secret
+	return nil
+}
+
+// Remove deletes a TSIG key from the ring by name.
+// Returns true if the key was found and removed, false if not found.
+// The change is immediately visible to dns.Server via the shared secrets map.
+func (kr *KeyRing) Remove(name string) bool {
+	fqdn := dns.Fqdn(strings.ToLower(name))
+
+	kr.mu.Lock()
+	defer kr.mu.Unlock()
+
+	if _, exists := kr.keys[fqdn]; !exists {
+		return false
+	}
+
+	delete(kr.keys, fqdn)
+	delete(kr.secrets, fqdn)
+	return true
+}
+
+// Algorithms returns a map of key name → algorithm for all keys (for ListTsigKeys RPC).
+func (kr *KeyRing) Algorithms() map[string]string {
+	if kr == nil {
+		return nil
+	}
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
+	result := make(map[string]string, len(kr.keys))
+	for name, entry := range kr.keys {
+		result[name] = entry.algorithm
+	}
+	return result
 }
 
 // Verify validates the TSIG on a raw DNS wire-format message.

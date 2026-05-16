@@ -178,3 +178,63 @@ func TestTSIG_NilKeyRing(t *testing.T) {
 		t.Error("Sign with nil keyRing should error")
 	}
 }
+
+func TestTSIG_KeyRing_Add(t *testing.T) {
+	kr, _ := NewKeyRing(nil)
+
+	err := kr.Add(KeyConfig{Name: "new.example.com.", Algorithm: "hmac-sha256", Secret: generateTestSecret()})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if kr.Len() != 1 {
+		t.Errorf("expected 1 key, got %d", kr.Len())
+	}
+
+	// Duplicate should fail
+	err = kr.Add(KeyConfig{Name: "new.example.com.", Algorithm: "hmac-sha256", Secret: generateTestSecret()})
+	if err == nil {
+		t.Fatal("expected error for duplicate key")
+	}
+}
+
+func TestTSIG_KeyRing_Remove(t *testing.T) {
+	secret := generateTestSecret()
+	kr, _ := NewKeyRing([]KeyConfig{
+		{Name: "rm.example.com.", Algorithm: "hmac-sha256", Secret: secret},
+	})
+
+	if !kr.Remove("rm.example.com.") {
+		t.Fatal("Remove returned false for existing key")
+	}
+	if kr.Len() != 0 {
+		t.Errorf("expected 0 keys after remove, got %d", kr.Len())
+	}
+	if kr.Remove("rm.example.com.") {
+		t.Fatal("Remove returned true for non-existent key")
+	}
+
+	// Verify the secrets map is also updated (dns.Server sees the change)
+	m := kr.TsigSecretMap()
+	if _, exists := m["rm.example.com."]; exists {
+		t.Error("secrets map still contains removed key")
+	}
+}
+
+func TestTSIG_KeyRing_SharedMap(t *testing.T) {
+	kr, _ := NewKeyRing(nil)
+	sharedMap := kr.TsigSecretMap()
+
+	// Add a key — should appear in the shared map
+	secret := generateTestSecret()
+	_ = kr.Add(KeyConfig{Name: "live.example.com.", Algorithm: "hmac-sha256", Secret: secret})
+
+	if sharedMap["live.example.com."] != secret {
+		t.Error("shared map did not reflect Add")
+	}
+
+	// Remove — should disappear from shared map
+	kr.Remove("live.example.com.")
+	if _, exists := sharedMap["live.example.com."]; exists {
+		t.Error("shared map did not reflect Remove")
+	}
+}
