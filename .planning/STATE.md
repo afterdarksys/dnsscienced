@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T16:18:43.340Z"
+last_updated: "2026-05-16T16:25:15.551Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 17
-  completed_plans: 7
-  percent: 41
+  completed_plans: 8
+  percent: 47
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 07 (admin-auth-hardening) — EXECUTING
-Plan: 2 of 7
-Status: Ready to execute (07-00 complete)
-Last activity: 2026-05-16 -- 07-00 test stubs created (12 stub functions, 3 files)
+Plan: 3 of 7
+Status: Ready to execute (07-01 complete)
+Last activity: 2026-05-16 -- 07-01 APIKey struct + atomicKeySet foundation
 
 ## Project Reference
 
@@ -102,3 +102,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 7 Plan 00 complete: 12 stub test functions created across 3 test files (server_auth_test.go, audit_test.go, service_conn_test.go); all compile and skip; go test ./api/grpc/... ./internal/admin/... exits 0
 - server_auth_test.go placed in package server (white-box) for Plan 06 unexported access; service_conn_test.go in package admin_test to avoid import cycle
 - Stub-first TDD: t.Skip() stubs registered so Plans 01-06 can use go test -run TestFunctionName in verify blocks before implementation exists
+- Phase 7 Plan 01 complete: APIKey struct exported from config.go (ID+Secret yaml tags per D-04); AdminConfig.APIKeys []APIKey + TLS fields; grpcserver.Config.TLSClientCAs + APIKeys []config.APIKey; atomicKeySet with dual keyIndex (secretToID+idSet) per D-05; Lookup(secret)->(id,ok) + IDExists(id) + Len(); go build ./... passes; TestAtomicKeySet + TestAtomicKeyReload + TestConfig_HasTLSClientCAs all PASS
+- APIKey.Secret never returned by Lookup — only the id (T-07-01-02 mitigated); keyIndex unexported
+- cmd/dnsscience-grpc synthesizes IDs (key-N, cli-N) from legacy []string api-keys config for backwards compat
