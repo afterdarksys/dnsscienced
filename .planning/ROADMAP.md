@@ -70,13 +70,21 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 **Scope:**
 - DSYNC record type 66: parser, serializer, zone file support (miekg/dns unknown-type workaround)
-- Inbound NOTIFY handler: accept NOTIFY with qtype=CDS (type 60) and NOTIFY with qtype=CSYNC (type 62) on port 53; dispatch to delegation maintenance handler
-- Rate limiting on NOTIFY processing (MUST per RFC 9859 §4)
+- Inbound NOTIFY handler: accept NOTIFY with qtype=CDS (type 59) and NOTIFY with qtype=CSYNC (type 62) on port 53; dispatch to delegation maintenance handler
+- Rate limiting on NOTIFY processing (MUST per RFC 9859 §5)
 - Outbound notification sender: when zone CDS/CSYNC records change, discover parent via `_dsync.<parent>` lookup and send NOTIFY
 - `_dsync` zone entry support: serve DSYNC records from zone files for zones that publish endpoints
 - DNSSEC signing of zones containing DSYNC records (RECOMMENDED)
 
-**Files:** `internal/zone/`, `internal/server/server.go`, `internal/notify/` (new package), `api/grpc/proto/dns.proto`, `api/grpc/proto/zones.proto`
+**Files:** `internal/dsync/` (new package), `internal/zone/`, `internal/server/server.go`, `internal/config/config.go`
+
+**Plans:** 4 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — DSYNC type 66 codec + per-IP rate limiter (TDD, Wave 1)
+- [ ] 08-02-PLAN.md — Inbound NOTIFY handler + _dsync discovery + outbound sender (Wave 2)
+- [ ] 08-03-PLAN.md — Config structs + server opcode dispatch wiring (Wave 3)
+- [ ] 08-04-PLAN.md — Zone file TYPE66 test + full build/test gate (Wave 4)
 
 </details>
 
@@ -91,7 +99,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
 | 6. Admin API — Stubs & Registration | v1.2 | 0/? | Planning | — |
 | 7. Admin Auth Hardening | v1.2 | 0/? | Planning | — |
-| 8. RFC 9859 DSYNC | v1.2 | 0/? | Planning | — |
+| 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 
 ---
-*Last updated: 2026-05-16 — v1.2 milestone added*
+*Last updated: 2026-05-16 — Phase 8 planned (4 plans, 4 waves)*
