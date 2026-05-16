@@ -21,6 +21,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/server"
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"google.golang.org/grpc"
 )
@@ -66,6 +67,10 @@ func (a *serverSrvAdapter) GetAdminStats() admin.AdminSrvStats {
 		Errors:     raw.Errors,
 		NXDomain:   raw.NXDOMAIN,
 	}
+}
+
+func (a *serverSrvAdapter) GetTsigKeyRing() *tsig.KeyRing {
+	return a.s.GetTsigKeyRing()
 }
 
 var (

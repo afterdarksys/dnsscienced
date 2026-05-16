@@ -47,6 +47,11 @@ service AdminService {
   // Connection management
   rpc ListConnections(AdminListConnectionsRequest) returns (AdminListConnectionsResponse);
   rpc KillConnection(AdminKillConnectionRequest) returns (AdminKillConnectionResponse);
+
+  // TSIG Key Management (RFC 2845)
+  rpc AddTsigKey(AdminAddTsigKeyRequest) returns (AdminAddTsigKeyResponse);
+  rpc RemoveTsigKey(AdminRemoveTsigKeyRequest) returns (AdminRemoveTsigKeyResponse);
+  rpc ListTsigKeys(google.protobuf.Empty) returns (AdminListTsigKeysResponse);
 }
 
 // Cache operations
@@ -344,6 +349,38 @@ message AdminRecordInfo {
   string content = 4;
   int32 ttl = 5;
   int32 priority = 6;
+}
+
+// TSIG Key Management Messages
+
+message AdminAddTsigKeyRequest {
+  string name = 1;      // Key name (FQDN, e.g., "xfer-key.example.com.")
+  string algorithm = 2; // "hmac-sha256", "hmac-sha384", or "hmac-sha512"
+  string secret = 3;    // Base64-encoded shared secret
+}
+
+message AdminAddTsigKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminRemoveTsigKeyRequest {
+  string name = 1; // Key name to remove
+}
+
+message AdminRemoveTsigKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message AdminListTsigKeysResponse {
+  repeated TsigKeyInfo keys = 1;
+}
+
+message TsigKeyInfo {
+  string name = 1;      // Key name (FQDN)
+  string algorithm = 2; // Algorithm in use
+  // NOTE: secret is intentionally NOT returned for security
 }
 
 // FirewallAdminService exposes firewall management operations over gRPC.

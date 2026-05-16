@@ -2773,6 +2773,310 @@ func (x *AdminRecordInfo) GetPriority() int32 {
 	return 0
 }
 
+type AdminAddTsigKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`           // Key name (FQDN, e.g., "xfer-key.example.com.")
+	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"` // "hmac-sha256", "hmac-sha384", or "hmac-sha512"
+	Secret        string                 `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`       // Base64-encoded shared secret
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminAddTsigKeyRequest) Reset() {
+	*x = AdminAddTsigKeyRequest{}
+	mi := &file_admin_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminAddTsigKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminAddTsigKeyRequest) ProtoMessage() {}
+
+func (x *AdminAddTsigKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminAddTsigKeyRequest.ProtoReflect.Descriptor instead.
+func (*AdminAddTsigKeyRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *AdminAddTsigKeyRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *AdminAddTsigKeyRequest) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *AdminAddTsigKeyRequest) GetSecret() string {
+	if x != nil {
+		return x.Secret
+	}
+	return ""
+}
+
+type AdminAddTsigKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminAddTsigKeyResponse) Reset() {
+	*x = AdminAddTsigKeyResponse{}
+	mi := &file_admin_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminAddTsigKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminAddTsigKeyResponse) ProtoMessage() {}
+
+func (x *AdminAddTsigKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminAddTsigKeyResponse.ProtoReflect.Descriptor instead.
+func (*AdminAddTsigKeyResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *AdminAddTsigKeyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *AdminAddTsigKeyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type AdminRemoveTsigKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // Key name to remove
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminRemoveTsigKeyRequest) Reset() {
+	*x = AdminRemoveTsigKeyRequest{}
+	mi := &file_admin_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminRemoveTsigKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminRemoveTsigKeyRequest) ProtoMessage() {}
+
+func (x *AdminRemoveTsigKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminRemoveTsigKeyRequest.ProtoReflect.Descriptor instead.
+func (*AdminRemoveTsigKeyRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *AdminRemoveTsigKeyRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type AdminRemoveTsigKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminRemoveTsigKeyResponse) Reset() {
+	*x = AdminRemoveTsigKeyResponse{}
+	mi := &file_admin_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminRemoveTsigKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminRemoveTsigKeyResponse) ProtoMessage() {}
+
+func (x *AdminRemoveTsigKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminRemoveTsigKeyResponse.ProtoReflect.Descriptor instead.
+func (*AdminRemoveTsigKeyResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *AdminRemoveTsigKeyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *AdminRemoveTsigKeyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type AdminListTsigKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []*TsigKeyInfo         `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminListTsigKeysResponse) Reset() {
+	*x = AdminListTsigKeysResponse{}
+	mi := &file_admin_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminListTsigKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminListTsigKeysResponse) ProtoMessage() {}
+
+func (x *AdminListTsigKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminListTsigKeysResponse.ProtoReflect.Descriptor instead.
+func (*AdminListTsigKeysResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *AdminListTsigKeysResponse) GetKeys() []*TsigKeyInfo {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+type TsigKeyInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`           // Key name (FQDN)
+	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"` // Algorithm in use
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TsigKeyInfo) Reset() {
+	*x = TsigKeyInfo{}
+	mi := &file_admin_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TsigKeyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TsigKeyInfo) ProtoMessage() {}
+
+func (x *TsigKeyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TsigKeyInfo.ProtoReflect.Descriptor instead.
+func (*TsigKeyInfo) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *TsigKeyInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TsigKeyInfo) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
 type FirewallStatsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -2781,7 +3085,7 @@ type FirewallStatsRequest struct {
 
 func (x *FirewallStatsRequest) Reset() {
 	*x = FirewallStatsRequest{}
-	mi := &file_admin_proto_msgTypes[43]
+	mi := &file_admin_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2793,7 +3097,7 @@ func (x *FirewallStatsRequest) String() string {
 func (*FirewallStatsRequest) ProtoMessage() {}
 
 func (x *FirewallStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[43]
+	mi := &file_admin_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2806,7 +3110,7 @@ func (x *FirewallStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallStatsRequest.ProtoReflect.Descriptor instead.
 func (*FirewallStatsRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{43}
+	return file_admin_proto_rawDescGZIP(), []int{49}
 }
 
 type FirewallStatsResponse struct {
@@ -2822,7 +3126,7 @@ type FirewallStatsResponse struct {
 
 func (x *FirewallStatsResponse) Reset() {
 	*x = FirewallStatsResponse{}
-	mi := &file_admin_proto_msgTypes[44]
+	mi := &file_admin_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2834,7 +3138,7 @@ func (x *FirewallStatsResponse) String() string {
 func (*FirewallStatsResponse) ProtoMessage() {}
 
 func (x *FirewallStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[44]
+	mi := &file_admin_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2847,7 +3151,7 @@ func (x *FirewallStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallStatsResponse.ProtoReflect.Descriptor instead.
 func (*FirewallStatsResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{44}
+	return file_admin_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *FirewallStatsResponse) GetTotalQueries() uint64 {
@@ -2895,7 +3199,7 @@ type FirewallLoadScriptRequest struct {
 
 func (x *FirewallLoadScriptRequest) Reset() {
 	*x = FirewallLoadScriptRequest{}
-	mi := &file_admin_proto_msgTypes[45]
+	mi := &file_admin_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2907,7 +3211,7 @@ func (x *FirewallLoadScriptRequest) String() string {
 func (*FirewallLoadScriptRequest) ProtoMessage() {}
 
 func (x *FirewallLoadScriptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[45]
+	mi := &file_admin_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2920,7 +3224,7 @@ func (x *FirewallLoadScriptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallLoadScriptRequest.ProtoReflect.Descriptor instead.
 func (*FirewallLoadScriptRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{45}
+	return file_admin_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *FirewallLoadScriptRequest) GetScriptId() string {
@@ -2946,7 +3250,7 @@ type FirewallLoadScriptResponse struct {
 
 func (x *FirewallLoadScriptResponse) Reset() {
 	*x = FirewallLoadScriptResponse{}
-	mi := &file_admin_proto_msgTypes[46]
+	mi := &file_admin_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2958,7 +3262,7 @@ func (x *FirewallLoadScriptResponse) String() string {
 func (*FirewallLoadScriptResponse) ProtoMessage() {}
 
 func (x *FirewallLoadScriptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[46]
+	mi := &file_admin_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2971,7 +3275,7 @@ func (x *FirewallLoadScriptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallLoadScriptResponse.ProtoReflect.Descriptor instead.
 func (*FirewallLoadScriptResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{46}
+	return file_admin_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *FirewallLoadScriptResponse) GetScriptId() string {
@@ -2990,7 +3294,7 @@ type FirewallRemoveScriptRequest struct {
 
 func (x *FirewallRemoveScriptRequest) Reset() {
 	*x = FirewallRemoveScriptRequest{}
-	mi := &file_admin_proto_msgTypes[47]
+	mi := &file_admin_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3002,7 +3306,7 @@ func (x *FirewallRemoveScriptRequest) String() string {
 func (*FirewallRemoveScriptRequest) ProtoMessage() {}
 
 func (x *FirewallRemoveScriptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[47]
+	mi := &file_admin_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3015,7 +3319,7 @@ func (x *FirewallRemoveScriptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallRemoveScriptRequest.ProtoReflect.Descriptor instead.
 func (*FirewallRemoveScriptRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{47}
+	return file_admin_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *FirewallRemoveScriptRequest) GetScriptId() string {
@@ -3033,7 +3337,7 @@ type FirewallRemoveScriptResponse struct {
 
 func (x *FirewallRemoveScriptResponse) Reset() {
 	*x = FirewallRemoveScriptResponse{}
-	mi := &file_admin_proto_msgTypes[48]
+	mi := &file_admin_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3045,7 +3349,7 @@ func (x *FirewallRemoveScriptResponse) String() string {
 func (*FirewallRemoveScriptResponse) ProtoMessage() {}
 
 func (x *FirewallRemoveScriptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[48]
+	mi := &file_admin_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3058,7 +3362,7 @@ func (x *FirewallRemoveScriptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallRemoveScriptResponse.ProtoReflect.Descriptor instead.
 func (*FirewallRemoveScriptResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{48}
+	return file_admin_proto_rawDescGZIP(), []int{54}
 }
 
 type FirewallInjectScoreRequest struct {
@@ -3075,7 +3379,7 @@ type FirewallInjectScoreRequest struct {
 
 func (x *FirewallInjectScoreRequest) Reset() {
 	*x = FirewallInjectScoreRequest{}
-	mi := &file_admin_proto_msgTypes[49]
+	mi := &file_admin_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3087,7 +3391,7 @@ func (x *FirewallInjectScoreRequest) String() string {
 func (*FirewallInjectScoreRequest) ProtoMessage() {}
 
 func (x *FirewallInjectScoreRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[49]
+	mi := &file_admin_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3100,7 +3404,7 @@ func (x *FirewallInjectScoreRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallInjectScoreRequest.ProtoReflect.Descriptor instead.
 func (*FirewallInjectScoreRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{49}
+	return file_admin_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *FirewallInjectScoreRequest) GetTarget() isFirewallInjectScoreRequest_Target {
@@ -3159,7 +3463,7 @@ type FirewallInjectScoreResponse struct {
 
 func (x *FirewallInjectScoreResponse) Reset() {
 	*x = FirewallInjectScoreResponse{}
-	mi := &file_admin_proto_msgTypes[50]
+	mi := &file_admin_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3171,7 +3475,7 @@ func (x *FirewallInjectScoreResponse) String() string {
 func (*FirewallInjectScoreResponse) ProtoMessage() {}
 
 func (x *FirewallInjectScoreResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[50]
+	mi := &file_admin_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3184,7 +3488,7 @@ func (x *FirewallInjectScoreResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallInjectScoreResponse.ProtoReflect.Descriptor instead.
 func (*FirewallInjectScoreResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{50}
+	return file_admin_proto_rawDescGZIP(), []int{56}
 }
 
 var File_admin_proto protoreflect.FileDescriptor
@@ -3403,7 +3707,24 @@ const file_admin_proto_rawDesc = "" +
 	"recordType\x12\x18\n" +
 	"\acontent\x18\x04 \x01(\tR\acontent\x12\x10\n" +
 	"\x03ttl\x18\x05 \x01(\x05R\x03ttl\x12\x1a\n" +
-	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\x16\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\"b\n" +
+	"\x16AdminAddTsigKeyRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x16\n" +
+	"\x06secret\x18\x03 \x01(\tR\x06secret\"M\n" +
+	"\x17AdminAddTsigKeyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"/\n" +
+	"\x19AdminRemoveTsigKeyRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"P\n" +
+	"\x1aAdminRemoveTsigKeyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"K\n" +
+	"\x19AdminListTsigKeysResponse\x12.\n" +
+	"\x04keys\x18\x01 \x03(\v2\x1a.dnsscience.v1.TsigKeyInfoR\x04keys\"?\n" +
+	"\vTsigKeyInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\"\x16\n" +
 	"\x14FirewallStatsRequest\"\xd8\x01\n" +
 	"\x15FirewallStatsResponse\x12#\n" +
 	"\rtotal_queries\x18\x01 \x01(\x04R\ftotalQueries\x12#\n" +
@@ -3424,7 +3745,7 @@ const file_admin_proto_rawDesc = "" +
 	"\x02ip\x18\x02 \x01(\tH\x00R\x02ip\x12\x14\n" +
 	"\x05score\x18\x03 \x01(\x05R\x05scoreB\b\n" +
 	"\x06target\"\x1d\n" +
-	"\x1bFirewallInjectScoreResponse2\xe6\x10\n" +
+	"\x1bFirewallInjectScoreResponse2\xfb\x12\n" +
 	"\fAdminService\x12[\n" +
 	"\n" +
 	"FlushCache\x12%.dnsscience.v1.AdminFlushCacheRequest\x1a&.dnsscience.v1.AdminFlushCacheResponse\x12O\n" +
@@ -3454,7 +3775,11 @@ const file_admin_proto_rawDesc = "" +
 	"GetMetrics\x12\x16.google.protobuf.Empty\x1a#.dnsscience.v1.AdminMetricsResponse\x12[\n" +
 	"\x0eShutdownServer\x12#.dnsscience.v1.AdminShutdownRequest\x1a$.dnsscience.v1.AdminShutdownResponse\x12j\n" +
 	"\x0fListConnections\x12*.dnsscience.v1.AdminListConnectionsRequest\x1a+.dnsscience.v1.AdminListConnectionsResponse\x12g\n" +
-	"\x0eKillConnection\x12).dnsscience.v1.AdminKillConnectionRequest\x1a*.dnsscience.v1.AdminKillConnectionResponse2\xa4\x03\n" +
+	"\x0eKillConnection\x12).dnsscience.v1.AdminKillConnectionRequest\x1a*.dnsscience.v1.AdminKillConnectionResponse\x12[\n" +
+	"\n" +
+	"AddTsigKey\x12%.dnsscience.v1.AdminAddTsigKeyRequest\x1a&.dnsscience.v1.AdminAddTsigKeyResponse\x12d\n" +
+	"\rRemoveTsigKey\x12(.dnsscience.v1.AdminRemoveTsigKeyRequest\x1a).dnsscience.v1.AdminRemoveTsigKeyResponse\x12P\n" +
+	"\fListTsigKeys\x12\x16.google.protobuf.Empty\x1a(.dnsscience.v1.AdminListTsigKeysResponse2\xa4\x03\n" +
 	"\x14FirewallAdminService\x12Z\n" +
 	"\rFirewallStats\x12#.dnsscience.v1.FirewallStatsRequest\x1a$.dnsscience.v1.FirewallStatsResponse\x12a\n" +
 	"\n" +
@@ -3475,7 +3800,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
 var file_admin_proto_goTypes = []any{
 	(AdminFlushCacheRequest_FlushType)(0),   // 0: dnsscience.v1.AdminFlushCacheRequest.FlushType
 	(*AdminFlushCacheRequest)(nil),          // 1: dnsscience.v1.AdminFlushCacheRequest
@@ -3521,86 +3846,99 @@ var file_admin_proto_goTypes = []any{
 	(*AdminListRecordsRequest)(nil),         // 41: dnsscience.v1.AdminListRecordsRequest
 	(*AdminListRecordsResponse)(nil),        // 42: dnsscience.v1.AdminListRecordsResponse
 	(*AdminRecordInfo)(nil),                 // 43: dnsscience.v1.AdminRecordInfo
-	(*FirewallStatsRequest)(nil),            // 44: dnsscience.v1.FirewallStatsRequest
-	(*FirewallStatsResponse)(nil),           // 45: dnsscience.v1.FirewallStatsResponse
-	(*FirewallLoadScriptRequest)(nil),       // 46: dnsscience.v1.FirewallLoadScriptRequest
-	(*FirewallLoadScriptResponse)(nil),      // 47: dnsscience.v1.FirewallLoadScriptResponse
-	(*FirewallRemoveScriptRequest)(nil),     // 48: dnsscience.v1.FirewallRemoveScriptRequest
-	(*FirewallRemoveScriptResponse)(nil),    // 49: dnsscience.v1.FirewallRemoveScriptResponse
-	(*FirewallInjectScoreRequest)(nil),      // 50: dnsscience.v1.FirewallInjectScoreRequest
-	(*FirewallInjectScoreResponse)(nil),     // 51: dnsscience.v1.FirewallInjectScoreResponse
-	(*timestamppb.Timestamp)(nil),           // 52: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                   // 53: google.protobuf.Empty
+	(*AdminAddTsigKeyRequest)(nil),          // 44: dnsscience.v1.AdminAddTsigKeyRequest
+	(*AdminAddTsigKeyResponse)(nil),         // 45: dnsscience.v1.AdminAddTsigKeyResponse
+	(*AdminRemoveTsigKeyRequest)(nil),       // 46: dnsscience.v1.AdminRemoveTsigKeyRequest
+	(*AdminRemoveTsigKeyResponse)(nil),      // 47: dnsscience.v1.AdminRemoveTsigKeyResponse
+	(*AdminListTsigKeysResponse)(nil),       // 48: dnsscience.v1.AdminListTsigKeysResponse
+	(*TsigKeyInfo)(nil),                     // 49: dnsscience.v1.TsigKeyInfo
+	(*FirewallStatsRequest)(nil),            // 50: dnsscience.v1.FirewallStatsRequest
+	(*FirewallStatsResponse)(nil),           // 51: dnsscience.v1.FirewallStatsResponse
+	(*FirewallLoadScriptRequest)(nil),       // 52: dnsscience.v1.FirewallLoadScriptRequest
+	(*FirewallLoadScriptResponse)(nil),      // 53: dnsscience.v1.FirewallLoadScriptResponse
+	(*FirewallRemoveScriptRequest)(nil),     // 54: dnsscience.v1.FirewallRemoveScriptRequest
+	(*FirewallRemoveScriptResponse)(nil),    // 55: dnsscience.v1.FirewallRemoveScriptResponse
+	(*FirewallInjectScoreRequest)(nil),      // 56: dnsscience.v1.FirewallInjectScoreRequest
+	(*FirewallInjectScoreResponse)(nil),     // 57: dnsscience.v1.FirewallInjectScoreResponse
+	(*timestamppb.Timestamp)(nil),           // 58: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                   // 59: google.protobuf.Empty
 }
 var file_admin_proto_depIdxs = []int32{
 	0,  // 0: dnsscience.v1.AdminFlushCacheRequest.type:type_name -> dnsscience.v1.AdminFlushCacheRequest.FlushType
 	9,  // 1: dnsscience.v1.AdminListZonesResponse.zones:type_name -> dnsscience.v1.AdminZoneInfo
-	52, // 2: dnsscience.v1.AdminZoneInfo.last_loaded:type_name -> google.protobuf.Timestamp
-	52, // 3: dnsscience.v1.AdminServerStatusResponse.start_time:type_name -> google.protobuf.Timestamp
+	58, // 2: dnsscience.v1.AdminZoneInfo.last_loaded:type_name -> google.protobuf.Timestamp
+	58, // 3: dnsscience.v1.AdminServerStatusResponse.start_time:type_name -> google.protobuf.Timestamp
 	18, // 4: dnsscience.v1.AdminServerStatusResponse.components:type_name -> dnsscience.v1.AdminComponentStatus
 	24, // 5: dnsscience.v1.AdminListConnectionsResponse.connections:type_name -> dnsscience.v1.AdminConnectionInfo
-	52, // 6: dnsscience.v1.AdminConnectionInfo.connected_at:type_name -> google.protobuf.Timestamp
+	58, // 6: dnsscience.v1.AdminConnectionInfo.connected_at:type_name -> google.protobuf.Timestamp
 	9,  // 7: dnsscience.v1.AdminGetZoneResponse.zone:type_name -> dnsscience.v1.AdminZoneInfo
 	43, // 8: dnsscience.v1.AdminListRecordsResponse.records:type_name -> dnsscience.v1.AdminRecordInfo
-	1,  // 9: dnsscience.v1.AdminService.FlushCache:input_type -> dnsscience.v1.AdminFlushCacheRequest
-	53, // 10: dnsscience.v1.AdminService.GetCacheStats:input_type -> google.protobuf.Empty
-	4,  // 11: dnsscience.v1.AdminService.PurgeCache:input_type -> dnsscience.v1.AdminPurgeCacheRequest
-	6,  // 12: dnsscience.v1.AdminService.RefreshZone:input_type -> dnsscience.v1.AdminRefreshZoneRequest
-	53, // 13: dnsscience.v1.AdminService.ListZones:input_type -> google.protobuf.Empty
-	53, // 14: dnsscience.v1.AdminService.ReloadZones:input_type -> google.protobuf.Empty
-	27, // 15: dnsscience.v1.AdminService.CreateZone:input_type -> dnsscience.v1.AdminCreateZoneRequest
-	29, // 16: dnsscience.v1.AdminService.UpdateZone:input_type -> dnsscience.v1.AdminUpdateZoneRequest
-	31, // 17: dnsscience.v1.AdminService.DeleteZone:input_type -> dnsscience.v1.AdminDeleteZoneRequest
-	33, // 18: dnsscience.v1.AdminService.GetZone:input_type -> dnsscience.v1.AdminGetZoneRequest
-	35, // 19: dnsscience.v1.AdminService.CreateRecord:input_type -> dnsscience.v1.AdminCreateRecordRequest
-	37, // 20: dnsscience.v1.AdminService.UpdateRecord:input_type -> dnsscience.v1.AdminUpdateRecordRequest
-	39, // 21: dnsscience.v1.AdminService.DeleteRecord:input_type -> dnsscience.v1.AdminDeleteRecordRequest
-	41, // 22: dnsscience.v1.AdminService.ListRecords:input_type -> dnsscience.v1.AdminListRecordsRequest
-	11, // 23: dnsscience.v1.AdminService.SetQueryLogging:input_type -> dnsscience.v1.AdminSetQueryLoggingRequest
-	53, // 24: dnsscience.v1.AdminService.GetQueryLoggingStatus:input_type -> google.protobuf.Empty
-	14, // 25: dnsscience.v1.AdminService.SetRateLimit:input_type -> dnsscience.v1.AdminSetRateLimitRequest
-	53, // 26: dnsscience.v1.AdminService.GetRateLimitStatus:input_type -> google.protobuf.Empty
-	53, // 27: dnsscience.v1.AdminService.GetServerStatus:input_type -> google.protobuf.Empty
-	53, // 28: dnsscience.v1.AdminService.GetMetrics:input_type -> google.protobuf.Empty
-	20, // 29: dnsscience.v1.AdminService.ShutdownServer:input_type -> dnsscience.v1.AdminShutdownRequest
-	22, // 30: dnsscience.v1.AdminService.ListConnections:input_type -> dnsscience.v1.AdminListConnectionsRequest
-	25, // 31: dnsscience.v1.AdminService.KillConnection:input_type -> dnsscience.v1.AdminKillConnectionRequest
-	44, // 32: dnsscience.v1.FirewallAdminService.FirewallStats:input_type -> dnsscience.v1.FirewallStatsRequest
-	46, // 33: dnsscience.v1.FirewallAdminService.LoadScript:input_type -> dnsscience.v1.FirewallLoadScriptRequest
-	48, // 34: dnsscience.v1.FirewallAdminService.RemoveScript:input_type -> dnsscience.v1.FirewallRemoveScriptRequest
-	50, // 35: dnsscience.v1.FirewallAdminService.InjectScore:input_type -> dnsscience.v1.FirewallInjectScoreRequest
-	2,  // 36: dnsscience.v1.AdminService.FlushCache:output_type -> dnsscience.v1.AdminFlushCacheResponse
-	3,  // 37: dnsscience.v1.AdminService.GetCacheStats:output_type -> dnsscience.v1.AdminCacheStatsResponse
-	5,  // 38: dnsscience.v1.AdminService.PurgeCache:output_type -> dnsscience.v1.AdminPurgeCacheResponse
-	7,  // 39: dnsscience.v1.AdminService.RefreshZone:output_type -> dnsscience.v1.AdminRefreshZoneResponse
-	8,  // 40: dnsscience.v1.AdminService.ListZones:output_type -> dnsscience.v1.AdminListZonesResponse
-	10, // 41: dnsscience.v1.AdminService.ReloadZones:output_type -> dnsscience.v1.AdminReloadZonesResponse
-	28, // 42: dnsscience.v1.AdminService.CreateZone:output_type -> dnsscience.v1.AdminCreateZoneResponse
-	30, // 43: dnsscience.v1.AdminService.UpdateZone:output_type -> dnsscience.v1.AdminUpdateZoneResponse
-	32, // 44: dnsscience.v1.AdminService.DeleteZone:output_type -> dnsscience.v1.AdminDeleteZoneResponse
-	34, // 45: dnsscience.v1.AdminService.GetZone:output_type -> dnsscience.v1.AdminGetZoneResponse
-	36, // 46: dnsscience.v1.AdminService.CreateRecord:output_type -> dnsscience.v1.AdminCreateRecordResponse
-	38, // 47: dnsscience.v1.AdminService.UpdateRecord:output_type -> dnsscience.v1.AdminUpdateRecordResponse
-	40, // 48: dnsscience.v1.AdminService.DeleteRecord:output_type -> dnsscience.v1.AdminDeleteRecordResponse
-	42, // 49: dnsscience.v1.AdminService.ListRecords:output_type -> dnsscience.v1.AdminListRecordsResponse
-	12, // 50: dnsscience.v1.AdminService.SetQueryLogging:output_type -> dnsscience.v1.AdminSetQueryLoggingResponse
-	13, // 51: dnsscience.v1.AdminService.GetQueryLoggingStatus:output_type -> dnsscience.v1.AdminQueryLoggingStatusResponse
-	15, // 52: dnsscience.v1.AdminService.SetRateLimit:output_type -> dnsscience.v1.AdminSetRateLimitResponse
-	16, // 53: dnsscience.v1.AdminService.GetRateLimitStatus:output_type -> dnsscience.v1.AdminRateLimitStatusResponse
-	17, // 54: dnsscience.v1.AdminService.GetServerStatus:output_type -> dnsscience.v1.AdminServerStatusResponse
-	19, // 55: dnsscience.v1.AdminService.GetMetrics:output_type -> dnsscience.v1.AdminMetricsResponse
-	21, // 56: dnsscience.v1.AdminService.ShutdownServer:output_type -> dnsscience.v1.AdminShutdownResponse
-	23, // 57: dnsscience.v1.AdminService.ListConnections:output_type -> dnsscience.v1.AdminListConnectionsResponse
-	26, // 58: dnsscience.v1.AdminService.KillConnection:output_type -> dnsscience.v1.AdminKillConnectionResponse
-	45, // 59: dnsscience.v1.FirewallAdminService.FirewallStats:output_type -> dnsscience.v1.FirewallStatsResponse
-	47, // 60: dnsscience.v1.FirewallAdminService.LoadScript:output_type -> dnsscience.v1.FirewallLoadScriptResponse
-	49, // 61: dnsscience.v1.FirewallAdminService.RemoveScript:output_type -> dnsscience.v1.FirewallRemoveScriptResponse
-	51, // 62: dnsscience.v1.FirewallAdminService.InjectScore:output_type -> dnsscience.v1.FirewallInjectScoreResponse
-	36, // [36:63] is the sub-list for method output_type
-	9,  // [9:36] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	49, // 9: dnsscience.v1.AdminListTsigKeysResponse.keys:type_name -> dnsscience.v1.TsigKeyInfo
+	1,  // 10: dnsscience.v1.AdminService.FlushCache:input_type -> dnsscience.v1.AdminFlushCacheRequest
+	59, // 11: dnsscience.v1.AdminService.GetCacheStats:input_type -> google.protobuf.Empty
+	4,  // 12: dnsscience.v1.AdminService.PurgeCache:input_type -> dnsscience.v1.AdminPurgeCacheRequest
+	6,  // 13: dnsscience.v1.AdminService.RefreshZone:input_type -> dnsscience.v1.AdminRefreshZoneRequest
+	59, // 14: dnsscience.v1.AdminService.ListZones:input_type -> google.protobuf.Empty
+	59, // 15: dnsscience.v1.AdminService.ReloadZones:input_type -> google.protobuf.Empty
+	27, // 16: dnsscience.v1.AdminService.CreateZone:input_type -> dnsscience.v1.AdminCreateZoneRequest
+	29, // 17: dnsscience.v1.AdminService.UpdateZone:input_type -> dnsscience.v1.AdminUpdateZoneRequest
+	31, // 18: dnsscience.v1.AdminService.DeleteZone:input_type -> dnsscience.v1.AdminDeleteZoneRequest
+	33, // 19: dnsscience.v1.AdminService.GetZone:input_type -> dnsscience.v1.AdminGetZoneRequest
+	35, // 20: dnsscience.v1.AdminService.CreateRecord:input_type -> dnsscience.v1.AdminCreateRecordRequest
+	37, // 21: dnsscience.v1.AdminService.UpdateRecord:input_type -> dnsscience.v1.AdminUpdateRecordRequest
+	39, // 22: dnsscience.v1.AdminService.DeleteRecord:input_type -> dnsscience.v1.AdminDeleteRecordRequest
+	41, // 23: dnsscience.v1.AdminService.ListRecords:input_type -> dnsscience.v1.AdminListRecordsRequest
+	11, // 24: dnsscience.v1.AdminService.SetQueryLogging:input_type -> dnsscience.v1.AdminSetQueryLoggingRequest
+	59, // 25: dnsscience.v1.AdminService.GetQueryLoggingStatus:input_type -> google.protobuf.Empty
+	14, // 26: dnsscience.v1.AdminService.SetRateLimit:input_type -> dnsscience.v1.AdminSetRateLimitRequest
+	59, // 27: dnsscience.v1.AdminService.GetRateLimitStatus:input_type -> google.protobuf.Empty
+	59, // 28: dnsscience.v1.AdminService.GetServerStatus:input_type -> google.protobuf.Empty
+	59, // 29: dnsscience.v1.AdminService.GetMetrics:input_type -> google.protobuf.Empty
+	20, // 30: dnsscience.v1.AdminService.ShutdownServer:input_type -> dnsscience.v1.AdminShutdownRequest
+	22, // 31: dnsscience.v1.AdminService.ListConnections:input_type -> dnsscience.v1.AdminListConnectionsRequest
+	25, // 32: dnsscience.v1.AdminService.KillConnection:input_type -> dnsscience.v1.AdminKillConnectionRequest
+	44, // 33: dnsscience.v1.AdminService.AddTsigKey:input_type -> dnsscience.v1.AdminAddTsigKeyRequest
+	46, // 34: dnsscience.v1.AdminService.RemoveTsigKey:input_type -> dnsscience.v1.AdminRemoveTsigKeyRequest
+	59, // 35: dnsscience.v1.AdminService.ListTsigKeys:input_type -> google.protobuf.Empty
+	50, // 36: dnsscience.v1.FirewallAdminService.FirewallStats:input_type -> dnsscience.v1.FirewallStatsRequest
+	52, // 37: dnsscience.v1.FirewallAdminService.LoadScript:input_type -> dnsscience.v1.FirewallLoadScriptRequest
+	54, // 38: dnsscience.v1.FirewallAdminService.RemoveScript:input_type -> dnsscience.v1.FirewallRemoveScriptRequest
+	56, // 39: dnsscience.v1.FirewallAdminService.InjectScore:input_type -> dnsscience.v1.FirewallInjectScoreRequest
+	2,  // 40: dnsscience.v1.AdminService.FlushCache:output_type -> dnsscience.v1.AdminFlushCacheResponse
+	3,  // 41: dnsscience.v1.AdminService.GetCacheStats:output_type -> dnsscience.v1.AdminCacheStatsResponse
+	5,  // 42: dnsscience.v1.AdminService.PurgeCache:output_type -> dnsscience.v1.AdminPurgeCacheResponse
+	7,  // 43: dnsscience.v1.AdminService.RefreshZone:output_type -> dnsscience.v1.AdminRefreshZoneResponse
+	8,  // 44: dnsscience.v1.AdminService.ListZones:output_type -> dnsscience.v1.AdminListZonesResponse
+	10, // 45: dnsscience.v1.AdminService.ReloadZones:output_type -> dnsscience.v1.AdminReloadZonesResponse
+	28, // 46: dnsscience.v1.AdminService.CreateZone:output_type -> dnsscience.v1.AdminCreateZoneResponse
+	30, // 47: dnsscience.v1.AdminService.UpdateZone:output_type -> dnsscience.v1.AdminUpdateZoneResponse
+	32, // 48: dnsscience.v1.AdminService.DeleteZone:output_type -> dnsscience.v1.AdminDeleteZoneResponse
+	34, // 49: dnsscience.v1.AdminService.GetZone:output_type -> dnsscience.v1.AdminGetZoneResponse
+	36, // 50: dnsscience.v1.AdminService.CreateRecord:output_type -> dnsscience.v1.AdminCreateRecordResponse
+	38, // 51: dnsscience.v1.AdminService.UpdateRecord:output_type -> dnsscience.v1.AdminUpdateRecordResponse
+	40, // 52: dnsscience.v1.AdminService.DeleteRecord:output_type -> dnsscience.v1.AdminDeleteRecordResponse
+	42, // 53: dnsscience.v1.AdminService.ListRecords:output_type -> dnsscience.v1.AdminListRecordsResponse
+	12, // 54: dnsscience.v1.AdminService.SetQueryLogging:output_type -> dnsscience.v1.AdminSetQueryLoggingResponse
+	13, // 55: dnsscience.v1.AdminService.GetQueryLoggingStatus:output_type -> dnsscience.v1.AdminQueryLoggingStatusResponse
+	15, // 56: dnsscience.v1.AdminService.SetRateLimit:output_type -> dnsscience.v1.AdminSetRateLimitResponse
+	16, // 57: dnsscience.v1.AdminService.GetRateLimitStatus:output_type -> dnsscience.v1.AdminRateLimitStatusResponse
+	17, // 58: dnsscience.v1.AdminService.GetServerStatus:output_type -> dnsscience.v1.AdminServerStatusResponse
+	19, // 59: dnsscience.v1.AdminService.GetMetrics:output_type -> dnsscience.v1.AdminMetricsResponse
+	21, // 60: dnsscience.v1.AdminService.ShutdownServer:output_type -> dnsscience.v1.AdminShutdownResponse
+	23, // 61: dnsscience.v1.AdminService.ListConnections:output_type -> dnsscience.v1.AdminListConnectionsResponse
+	26, // 62: dnsscience.v1.AdminService.KillConnection:output_type -> dnsscience.v1.AdminKillConnectionResponse
+	45, // 63: dnsscience.v1.AdminService.AddTsigKey:output_type -> dnsscience.v1.AdminAddTsigKeyResponse
+	47, // 64: dnsscience.v1.AdminService.RemoveTsigKey:output_type -> dnsscience.v1.AdminRemoveTsigKeyResponse
+	48, // 65: dnsscience.v1.AdminService.ListTsigKeys:output_type -> dnsscience.v1.AdminListTsigKeysResponse
+	51, // 66: dnsscience.v1.FirewallAdminService.FirewallStats:output_type -> dnsscience.v1.FirewallStatsResponse
+	53, // 67: dnsscience.v1.FirewallAdminService.LoadScript:output_type -> dnsscience.v1.FirewallLoadScriptResponse
+	55, // 68: dnsscience.v1.FirewallAdminService.RemoveScript:output_type -> dnsscience.v1.FirewallRemoveScriptResponse
+	57, // 69: dnsscience.v1.FirewallAdminService.InjectScore:output_type -> dnsscience.v1.FirewallInjectScoreResponse
+	40, // [40:70] is the sub-list for method output_type
+	10, // [10:40] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -3608,7 +3946,7 @@ func file_admin_proto_init() {
 	if File_admin_proto != nil {
 		return
 	}
-	file_admin_proto_msgTypes[49].OneofWrappers = []any{
+	file_admin_proto_msgTypes[55].OneofWrappers = []any{
 		(*FirewallInjectScoreRequest_Domain)(nil),
 		(*FirewallInjectScoreRequest_Ip)(nil),
 	}
@@ -3618,7 +3956,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   51,
+			NumMessages:   57,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

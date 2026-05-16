@@ -23,6 +23,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/reload"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
@@ -45,6 +46,7 @@ type AdminSrvAdapter interface {
 	AddZone(z *zone.Zone) error
 	RemoveZone(origin string)
 	GetAdminStats() AdminSrvStats
+	GetTsigKeyRing() *tsig.KeyRing
 }
 
 // Service implements the AdminService gRPC interface
@@ -59,10 +61,11 @@ type Service struct {
 	shutdownFn func() error
 
 	// New fields for zone/record CRUD, metrics, rate limiting
-	srv        AdminSrvAdapter
-	zonesDir   string
-	compileBin string
-	rrlLimiter *rrl.Limiter // may be nil; nil-guarded at call sites
+	srv         AdminSrvAdapter
+	zonesDir    string
+	compileBin  string
+	rrlLimiter  *rrl.Limiter  // may be nil; nil-guarded at call sites
+	tsigKeyRing *tsig.KeyRing // may be nil; set from server's key ring
 }
 
 // NewService creates a new admin service
@@ -76,18 +79,20 @@ func NewService(
 	zonesDir string,
 	compileBin string,
 	rrlLimiter *rrl.Limiter,
+	tsigKeyRing *tsig.KeyRing, // may be nil
 ) *Service {
 	return &Service{
-		cache:      cache,
-		reloadMgr:  reloadMgr,
-		healthMgr:  healthMgr,
-		logger:     logger,
-		startTime:  time.Now(),
-		shutdownFn: shutdownFn,
-		srv:        srv,
-		zonesDir:   zonesDir,
-		compileBin: compileBin,
-		rrlLimiter: rrlLimiter,
+		cache:       cache,
+		reloadMgr:   reloadMgr,
+		healthMgr:   healthMgr,
+		logger:      logger,
+		startTime:   time.Now(),
+		shutdownFn:  shutdownFn,
+		srv:         srv,
+		zonesDir:    zonesDir,
+		compileBin:  compileBin,
+		rrlLimiter:  rrlLimiter,
+		tsigKeyRing: tsigKeyRing,
 	}
 }
 
@@ -946,6 +951,70 @@ func (s *Service) ListConnections(ctx context.Context, req *pb.AdminListConnecti
 func (s *Service) KillConnection(ctx context.Context, req *pb.AdminKillConnectionRequest) (*pb.AdminKillConnectionResponse, error) {
 	// Connection tracking requires a transport-layer registry that does not yet exist.
 	return nil, status.Error(codes.Unimplemented, "connection tracking not yet implemented")
+}
+
+// AddTsigKey adds a new TSIG key to the live key ring.
+func (s *Service) AddTsigKey(ctx context.Context, req *pb.AdminAddTsigKeyRequest) (*pb.AdminAddTsigKeyResponse, error) {
+	if s.tsigKeyRing == nil {
+		return nil, status.Error(codes.FailedPrecondition, "TSIG key ring not configured (no keys in config)")
+	}
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if req.Secret == "" {
+		return nil, status.Error(codes.InvalidArgument, "secret is required")
+	}
+
+	cfg := tsig.KeyConfig{
+		Name:      req.Name,
+		Algorithm: req.Algorithm,
+		Secret:    req.Secret,
+	}
+	if err := s.tsigKeyRing.Add(cfg); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "add TSIG key: %v", err)
+	}
+
+	return &pb.AdminAddTsigKeyResponse{
+		Success: true,
+		Message: fmt.Sprintf("TSIG key %q added (algorithm: %s)", req.Name, req.Algorithm),
+	}, nil
+}
+
+// RemoveTsigKey removes a TSIG key from the live key ring.
+func (s *Service) RemoveTsigKey(ctx context.Context, req *pb.AdminRemoveTsigKeyRequest) (*pb.AdminRemoveTsigKeyResponse, error) {
+	if s.tsigKeyRing == nil {
+		return nil, status.Error(codes.FailedPrecondition, "TSIG key ring not configured")
+	}
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+
+	if !s.tsigKeyRing.Remove(req.Name) {
+		return nil, status.Errorf(codes.NotFound, "TSIG key %q not found", req.Name)
+	}
+
+	return &pb.AdminRemoveTsigKeyResponse{
+		Success: true,
+		Message: fmt.Sprintf("TSIG key %q removed", req.Name),
+	}, nil
+}
+
+// ListTsigKeys returns all configured TSIG key names and algorithms (secrets are NOT returned).
+func (s *Service) ListTsigKeys(ctx context.Context, req *emptypb.Empty) (*pb.AdminListTsigKeysResponse, error) {
+	if s.tsigKeyRing == nil {
+		return &pb.AdminListTsigKeysResponse{}, nil
+	}
+
+	algs := s.tsigKeyRing.Algorithms()
+	keys := make([]*pb.TsigKeyInfo, 0, len(algs))
+	for name, alg := range algs {
+		keys = append(keys, &pb.TsigKeyInfo{
+			Name:      name,
+			Algorithm: alg,
+		})
+	}
+
+	return &pb.AdminListTsigKeysResponse{Keys: keys}, nil
 }
 
 // Helper functions

@@ -11,6 +11,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 )
 
@@ -28,6 +29,7 @@ func (NoopSrvAdapter) GetStats() services.SrvStats               { return servic
 func (NoopSrvAdapter) GetFirewall() *firewalld.Firewall          { return nil }
 func (NoopSrvAdapter) GetShardedCache() *cache.ShardedCache      { return nil }
 func (NoopSrvAdapter) GetAdminStats() admin.AdminSrvStats        { return admin.AdminSrvStats{} }
+func (NoopSrvAdapter) GetTsigKeyRing() *tsig.KeyRing             { return nil }
 
 // SrvIface is the interface that RegisterAll requires from the DNS server.
 // It matches services.SrvAdapter so the caller can pass a *server.Server directly.
@@ -72,7 +74,8 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 		srv, // AdminSrvAdapter — srv satisfies interface via GetAdminStats/GetZone/AddZone/RemoveZone
 		zonesDir,
 		compileBin,
-		nil, // rrlLimiter — wired in Phase 7
+		nil,                    // rrlLimiter — wired in Phase 7
+		srv.GetTsigKeyRing(),  // may be nil if no TSIG keys configured
 	)
 	pb.RegisterAdminServiceServer(s, adminSvc)
 }

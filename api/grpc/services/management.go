@@ -19,6 +19,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/admin"
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 )
 
@@ -32,6 +33,7 @@ type SrvAdapter interface {
 	GetFirewall() *firewalld.Firewall
 	GetShardedCache() *cache.ShardedCache
 	GetAdminStats() admin.AdminSrvStats
+	GetTsigKeyRing() *tsig.KeyRing
 }
 
 // SrvStats carries the statistics fields that ManagementService reads.

@@ -43,6 +43,9 @@ const (
 	AdminService_ShutdownServer_FullMethodName        = "/dnsscience.v1.AdminService/ShutdownServer"
 	AdminService_ListConnections_FullMethodName       = "/dnsscience.v1.AdminService/ListConnections"
 	AdminService_KillConnection_FullMethodName        = "/dnsscience.v1.AdminService/KillConnection"
+	AdminService_AddTsigKey_FullMethodName            = "/dnsscience.v1.AdminService/AddTsigKey"
+	AdminService_RemoveTsigKey_FullMethodName         = "/dnsscience.v1.AdminService/RemoveTsigKey"
+	AdminService_ListTsigKeys_FullMethodName          = "/dnsscience.v1.AdminService/ListTsigKeys"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -82,6 +85,10 @@ type AdminServiceClient interface {
 	// Connection management
 	ListConnections(ctx context.Context, in *AdminListConnectionsRequest, opts ...grpc.CallOption) (*AdminListConnectionsResponse, error)
 	KillConnection(ctx context.Context, in *AdminKillConnectionRequest, opts ...grpc.CallOption) (*AdminKillConnectionResponse, error)
+	// TSIG Key Management (RFC 2845)
+	AddTsigKey(ctx context.Context, in *AdminAddTsigKeyRequest, opts ...grpc.CallOption) (*AdminAddTsigKeyResponse, error)
+	RemoveTsigKey(ctx context.Context, in *AdminRemoveTsigKeyRequest, opts ...grpc.CallOption) (*AdminRemoveTsigKeyResponse, error)
+	ListTsigKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AdminListTsigKeysResponse, error)
 }
 
 type adminServiceClient struct {
@@ -322,6 +329,36 @@ func (c *adminServiceClient) KillConnection(ctx context.Context, in *AdminKillCo
 	return out, nil
 }
 
+func (c *adminServiceClient) AddTsigKey(ctx context.Context, in *AdminAddTsigKeyRequest, opts ...grpc.CallOption) (*AdminAddTsigKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminAddTsigKeyResponse)
+	err := c.cc.Invoke(ctx, AdminService_AddTsigKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) RemoveTsigKey(ctx context.Context, in *AdminRemoveTsigKeyRequest, opts ...grpc.CallOption) (*AdminRemoveTsigKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminRemoveTsigKeyResponse)
+	err := c.cc.Invoke(ctx, AdminService_RemoveTsigKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ListTsigKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*AdminListTsigKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminListTsigKeysResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListTsigKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -359,6 +396,10 @@ type AdminServiceServer interface {
 	// Connection management
 	ListConnections(context.Context, *AdminListConnectionsRequest) (*AdminListConnectionsResponse, error)
 	KillConnection(context.Context, *AdminKillConnectionRequest) (*AdminKillConnectionResponse, error)
+	// TSIG Key Management (RFC 2845)
+	AddTsigKey(context.Context, *AdminAddTsigKeyRequest) (*AdminAddTsigKeyResponse, error)
+	RemoveTsigKey(context.Context, *AdminRemoveTsigKeyRequest) (*AdminRemoveTsigKeyResponse, error)
+	ListTsigKeys(context.Context, *emptypb.Empty) (*AdminListTsigKeysResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -437,6 +478,15 @@ func (UnimplementedAdminServiceServer) ListConnections(context.Context, *AdminLi
 }
 func (UnimplementedAdminServiceServer) KillConnection(context.Context, *AdminKillConnectionRequest) (*AdminKillConnectionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method KillConnection not implemented")
+}
+func (UnimplementedAdminServiceServer) AddTsigKey(context.Context, *AdminAddTsigKeyRequest) (*AdminAddTsigKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddTsigKey not implemented")
+}
+func (UnimplementedAdminServiceServer) RemoveTsigKey(context.Context, *AdminRemoveTsigKeyRequest) (*AdminRemoveTsigKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveTsigKey not implemented")
+}
+func (UnimplementedAdminServiceServer) ListTsigKeys(context.Context, *emptypb.Empty) (*AdminListTsigKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTsigKeys not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -873,6 +923,60 @@ func _AdminService_KillConnection_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_AddTsigKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminAddTsigKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).AddTsigKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_AddTsigKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).AddTsigKey(ctx, req.(*AdminAddTsigKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_RemoveTsigKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminRemoveTsigKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).RemoveTsigKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_RemoveTsigKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).RemoveTsigKey(ctx, req.(*AdminRemoveTsigKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ListTsigKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListTsigKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListTsigKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListTsigKeys(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -971,6 +1075,18 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "KillConnection",
 			Handler:    _AdminService_KillConnection_Handler,
+		},
+		{
+			MethodName: "AddTsigKey",
+			Handler:    _AdminService_AddTsigKey_Handler,
+		},
+		{
+			MethodName: "RemoveTsigKey",
+			Handler:    _AdminService_RemoveTsigKey_Handler,
+		},
+		{
+			MethodName: "ListTsigKeys",
+			Handler:    _AdminService_ListTsigKeys_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
