@@ -890,18 +890,28 @@ func (s *Service) GetServerStatus(ctx context.Context, req *emptypb.Empty) (*pb.
 
 // GetMetrics returns server metrics
 func (s *Service) GetMetrics(ctx context.Context, req *emptypb.Empty) (*pb.AdminMetricsResponse, error) {
-	stats := s.cache.GetStats()
+	resp := &pb.AdminMetricsResponse{
+		AvgLatencyMs: 0.0, // TODO: add EMA tracking in a future phase
+		P99LatencyMs: 0.0, // TODO: add histogram tracking in a future phase
+	}
 
-	return &pb.AdminMetricsResponse{
-		QueriesTotal:     stats.Hits + stats.Misses,
-		QueriesUdp:       0, // Would need to track
-		QueriesTcp:       0, // Would need to track
-		CacheHits:        stats.Hits,
-		CacheMisses:      stats.Misses,
-		UpstreamFailures: 0, // Would need to track
-		AvgLatencyMs:     0.0,
-		P99LatencyMs:     0.0,
-	}, nil
+	// Live server stats (queries, UDP/TCP split, errors)
+	if s.srv != nil {
+		srvStats := s.srv.GetAdminStats()
+		resp.QueriesTotal = srvStats.Queries
+		resp.QueriesUdp = srvStats.UDPQueries
+		resp.QueriesTcp = srvStats.TCPQueries
+		resp.UpstreamFailures = srvStats.Errors
+	}
+
+	// Cache stats
+	if s.cache != nil {
+		cacheStats := s.cache.GetStats()
+		resp.CacheHits = cacheStats.Hits
+		resp.CacheMisses = cacheStats.Misses
+	}
+
+	return resp, nil
 }
 
 // ShutdownServer gracefully shuts down the server
@@ -927,20 +937,15 @@ func (s *Service) ShutdownServer(ctx context.Context, req *pb.AdminShutdownReque
 
 // ListConnections lists active connections
 func (s *Service) ListConnections(ctx context.Context, req *pb.AdminListConnectionsRequest) (*pb.AdminListConnectionsResponse, error) {
-	// Would require tracking connections in the transport layer
-	return &pb.AdminListConnectionsResponse{
-		Connections: []*pb.AdminConnectionInfo{},
-		TotalCount:  0,
-	}, nil
+	// Connection tracking requires a transport-layer registry that does not yet exist.
+	// Return Unimplemented so callers can distinguish "not done" from "tried and failed".
+	return nil, status.Error(codes.Unimplemented, "connection tracking not yet implemented")
 }
 
 // KillConnection terminates a specific connection
 func (s *Service) KillConnection(ctx context.Context, req *pb.AdminKillConnectionRequest) (*pb.AdminKillConnectionResponse, error) {
-	// Would require connection tracking and termination capability
-	return &pb.AdminKillConnectionResponse{
-		Success: false,
-		Message: "Connection management not yet implemented",
-	}, nil
+	// Connection tracking requires a transport-layer registry that does not yet exist.
+	return nil, status.Error(codes.Unimplemented, "connection tracking not yet implemented")
 }
 
 // Helper functions
