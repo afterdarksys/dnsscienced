@@ -511,26 +511,21 @@ grpcCfg := grpcserver.Config{
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Is API key auth still required when mTLS is configured?**
-   - What we know: The phase description says "mandatory key enforcement" AND "mTLS"
-   - What's unclear: If a cert-authenticated client also must provide a Bearer token
-   - Recommendation: Treat the two mechanisms as OR logic (either is sufficient) unless the
-     operator requires both. Fail to start if neither is configured. This mirrors how most
-     production gRPC services handle dual-auth.
+1. **Is API key auth still required when mTLS is configured?** (RESOLVED — D-01)
+   - Resolution: YES. D-01 mandates "Both mTLS and API key auth are required simultaneously.
+     Client must present a valid cert AND a valid named API key. Cert proves machine identity;
+     key proves operator intent." This is AND logic, not OR.
 
-2. **ReloadAPIKeys: dedicated RPC or SIGHUP only?**
-   - What we know: Phase description mentions "ReloadAPIKeys RPC or SIGHUP-triggered reload"
-   - What's unclear: Whether to add a proto definition for `ReloadAPIKeys` to `admin.proto`
-   - Recommendation: Implement SIGHUP first (no proto change needed); add the RPC as optional.
-     Adding an RPC requires rerunning `protoc` which is a bigger surface area.
+2. **ReloadAPIKeys: dedicated RPC or SIGHUP only?** (RESOLVED — D-10)
+   - Resolution: SIGHUP only. D-10 states "No ReloadAPIKeys RPC — SIGHUP is the sole reload
+     mechanism. Simpler surface, auditable via OS process logs."
 
-3. **Key identity for audit log: hash or prefix?**
-   - What we know: We need to log "which key was used" without logging the key itself
-   - What's unclear: Whether to log the full key, a SHA256 hash, or a configured key alias
-   - Recommendation: Log `sha256(key)[:8]` as the key ID — compact, unique, not reversible.
-
+3. **Key identity for audit log: hash or prefix?** (RESOLVED — D-04/D-08)
+   - Resolution: Named key ID. D-04 introduces named key structs {id, secret}. D-08 mandates
+     "Secret is never logged — only the id from the named key config." No hash needed;
+     the configured human-readable id is logged directly.
 ---
 
 ## Environment Availability
