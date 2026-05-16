@@ -791,22 +791,22 @@ Step 2.6: SKIPPED (no external dependencies beyond already-present Go toolchain 
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should inbound NOTIFY(CDS/CSYNC) trigger actual DS record updates?**
    - What we know: RFC 9859 says "schedule an immediate check"; the check validates CDS records.
    - What's unclear: Does dnsscienced act as a parent-side registry (that would update DS records in its zones), or only as a child (that publishes CDS records)?
-   - Recommendation: For this phase, implement the inbound handler as "acknowledge + log + schedule check"; full delegation maintenance engine can be a later phase.
+   - RESOLVED: For this phase, implement the inbound handler as "acknowledge + log + schedule check"; full delegation maintenance engine can be a later phase.
 
 2. **Where does the delegation check implementation live?**
    - What we know: RFC 9859 §4.3 says to run "the same DNS lookups and verifications that would otherwise be triggered based on a timer."
    - What's unclear: No such timer or delegation maintenance engine exists in dnsscienced today.
-   - Recommendation: The `scheduleDelegationCheck` goroutine in this phase logs and records the NOTIFY; full verification is deferred.
+   - RESOLVED: The `scheduleDelegationCheck` goroutine in this phase logs and records the NOTIFY; full verification is deferred.
 
 3. **Does the BIND zone parser parse `TYPE66` in presentation format correctly?**
    - What we know: miekg/dns scanner falls back to RFC3597 for unknown types; the `\# length hex` format is supported.
    - What's unclear: Whether the ZoneParser will parse `DSYNC CDS NOTIFY 53 target.` mnemonic form (it will not — mnemonics are only known for registered types).
-   - Recommendation: Zone files must use `TYPE66 \# length hexdata` format unless we register a custom parse hook in miekg/dns (not worth it given library version).
+   - RESOLVED: Zone files must use `TYPE66 \# length hexdata` format unless we register a custom parse hook in miekg/dns (not worth it given library version).
 
 ---
 
