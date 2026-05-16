@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"sync/atomic"
 
 	"google.golang.org/grpc"
@@ -112,6 +113,79 @@ func (a *atomicKeySet) IDExists(id string) bool {
 	return ok
 }
 
+// ConfigHolder provides atomic full config reload per D-11.
+// On SIGHUP, the handler calls Reload() which atomically swaps the key set
+// and rebuilds TLS credentials if paths changed. No half-reloaded state.
+type ConfigHolder struct {
+	mu     sync.RWMutex
+	keySet *atomicKeySet
+	cfg    Config
+	creds  credentials.TransportCredentials
+}
+
+// NewConfigHolder creates a holder with the initial config state.
+func NewConfigHolder(cfg Config, keySet *atomicKeySet, creds credentials.TransportCredentials) *ConfigHolder {
+	return &ConfigHolder{
+		keySet: keySet,
+		cfg:    cfg,
+		creds:  creds,
+	}
+}
+
+// Reload atomically swaps to a new config per D-09/D-11.
+// Rebuilds TLS credentials if TLS paths changed; reloads API keys.
+// Returns error if new TLS creds cannot be built (current config retained).
+func (h *ConfigHolder) Reload(newCfg Config) error {
+	// Validate new config has required auth (D-01/D-02)
+	if newCfg.TLSClientCAs == "" {
+		return fmt.Errorf("reload: tls_client_cas is required (D-02)")
+	}
+	if len(newCfg.APIKeys) == 0 {
+		return fmt.Errorf("reload: at least one API key is required (D-01)")
+	}
+
+	// Rebuild TLS creds if any TLS path changed
+	var newCreds credentials.TransportCredentials
+	h.mu.RLock()
+	tlsChanged := newCfg.TLSCertFile != h.cfg.TLSCertFile ||
+		newCfg.TLSKeyFile != h.cfg.TLSKeyFile ||
+		newCfg.TLSClientCAs != h.cfg.TLSClientCAs
+	h.mu.RUnlock()
+
+	if tlsChanged && (newCfg.TLSCertFile != "" && newCfg.TLSKeyFile != "") {
+		var err error
+		newCreds, err = buildCreds(newCfg)
+		if err != nil {
+			return fmt.Errorf("reload: failed to build new TLS credentials: %w", err)
+		}
+	}
+
+	// Atomic swap (D-11): update everything under write lock
+	h.mu.Lock()
+	h.keySet.Store(newCfg.APIKeys)
+	h.cfg = newCfg
+	if newCreds != nil {
+		h.creds = newCreds
+	}
+	h.mu.Unlock()
+
+	return nil
+}
+
+// CurrentConfig returns a copy of the current config (for diagnostics).
+func (h *ConfigHolder) CurrentConfig() Config {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.cfg
+}
+
+// GetCreds returns the current TLS credentials (for future dynamic TLS reload).
+func (h *ConfigHolder) GetCreds() credentials.TransportCredentials {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.creds
+}
+
 type Deps struct {
 	Register func(s *grpc.Server) // function to register all service servers
 	Unary    []grpc.UnaryServerInterceptor
@@ -119,29 +193,31 @@ type Deps struct {
 }
 
 // New creates a TLS gRPC server with fail-closed auth guards per D-01 and D-02.
-// Returns (*grpc.Server, net.Listener, *ConnRegistry, error).
-// Plan 05 will change this to 5-return (adding ConfigHolder).
-func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, error) {
+// Returns (*grpc.Server, net.Listener, *ConnRegistry, *ConfigHolder, error).
+// ConfigHolder enables SIGHUP full config reload per D-09/D-11.
+func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, *ConfigHolder, error) {
 	// D-02: Fail closed - refuse to start without BOTH auth mechanisms.
 	// D-01: Both mTLS and API key auth are required simultaneously.
 	if cfg.TLSClientCAs == "" {
-		return nil, nil, nil, fmt.Errorf("admin server requires tls_client_cas to be configured (D-02: fail closed)")
+		return nil, nil, nil, nil, fmt.Errorf("admin server requires tls_client_cas to be configured (D-02: fail closed)")
 	}
 	if len(cfg.APIKeys) == 0 {
-		return nil, nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
+		return nil, nil, nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
 	}
 
 	// Create connection registry and wire as stats handler (Plan 04).
 	registry := NewConnRegistry()
 
 	var opts []grpc.ServerOption
+	var builtCreds credentials.TransportCredentials
 
 	// TLS config via buildCreds (mTLS-capable; supports RequireAndVerifyClientCert when TLSClientCAs is set)
 	if cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" {
 		creds, err := buildCreds(cfg)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("tls: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("tls: %w", err)
 		}
+		builtCreds = creds
 		opts = append(opts, grpc.Creds(creds))
 	}
 
@@ -164,9 +240,13 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, erro
 
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return gs, ln, registry, nil
+
+	// Create ConfigHolder for SIGHUP full config reload per D-09/D-11.
+	configHolder := NewConfigHolder(cfg, keySet, builtCreds)
+
+	return gs, ln, registry, configHolder, nil
 }
 
 // apiKeyUnaryInterceptor enforces Bearer token auth on every request.
