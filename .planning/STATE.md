@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T16:46:35.070Z"
+last_updated: "2026-05-16T16:56:55.988Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 17
-  completed_plans: 11
-  percent: 65
+  completed_plans: 12
+  percent: 71
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 07 (admin-auth-hardening) — EXECUTING
-Plan: 6 of 7
-Status: Ready to execute (07-04 complete)
-Last activity: 2026-05-16 -- 07-04 ConnRegistry StatsHandler + ListConnections wired
+Plan: 7 of 7
+Status: 07-05 complete — ready to execute 07-06
+Last activity: 2026-05-16 -- 07-05 ConfigHolder + SIGHUP full config reload wired
 
 ## Project Reference
 
@@ -114,3 +114,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - grpcserver.New() 4-return signature: srv, lis, registry, err := grpcserver.New(cfg, deps); Plan 05 will extend to 5-return with ConfigHolder
 - ConnIDFromContext exported for auth interceptor to call registry.EnrichConn(connID, keyID, certCN) in Plan 05
 - Chicken-and-egg: connRegistry passed as nil to RegisterAll (Register runs inside New() before registry returned); Plan 05 restructures to pass live registry post-construction
+- Phase 7 Plan 05 complete: ConfigHolder type with sync.RWMutex added to server.go; New() updated to 5-return with ConfigHolder; main.go wires TLSCertFile/TLSKeyFile/TLSClientCAs, AuditUnaryInterceptor/AuditStreamInterceptor; SIGHUP loop calls configHolder.Reload() with full config (D-09/D-11); grpcserver.New() error is os.Exit(1); go build ./... passes; all tests pass
+- ConfigHolder.Reload() validates D-01/D-02 before swapping; bad config leaves current intact; TLS creds rebuilt only when cert/key/CA paths changed (guard: TLSCertFile+TLSKeyFile both non-empty)
+- logging.NewLogger is the correct function name (not logging.New); break sigloop used instead of goto (Go goto restriction across declarations)
