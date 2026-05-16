@@ -59,7 +59,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 Plans:
 - [x] 06-01-PLAN.md ��� Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
 - [x] 06-02-PLAN.md — AdminService registration + SrvAdapter wiring + SrvStats UDP/TCP (Wave 2)
-- [ ] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
+- [x] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
 - [ ] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
 - [ ] 06-05-PLAN.md — TSIG package: KeyRing + Verify + Sign + config + server wiring (Wave 4)
 - [ ] 06-06-PLAN.md — TSIG admin RPCs: AddTsigKey + RemoveTsigKey + ListTsigKeys + proto regen (Wave 5)

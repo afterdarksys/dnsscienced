@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T14:05:38.825Z"
+last_updated: "2026-05-16T14:11:24.194Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 16
-  completed_plans: 2
-  percent: 13
+  completed_plans: 3
+  percent: 19
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 06 (admin-api-stubs-registration) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
-Last activity: 2026-05-16 -- 06-02-PLAN.md complete
+Last activity: 2026-05-16 -- 06-03-PLAN.md complete
 
 ## Project Reference
 
@@ -83,3 +83,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 6 Plan 02 complete: pb.RegisterAdminServiceServer called in RegisterAll; admin.Service extended with AdminSrvAdapter/zonesDir/compileBin/rrlLimiter; services.SrvStats gets UDPQueries/TCPQueries; cache accessor chain via resolver.GetCache->server.GetCache->GetShardedCache; nil guards on RefreshZone/ListZones/ReloadZones/GetServerStatus; go build ./... passes
 - AdminSrvAdapter interface defined in internal/admin (not services) to avoid import cycle; services.SrvAdapter includes GetAdminStats/GetShardedCache so SrvIface carries both
 - NoopSrvAdapter.GetShardedCache() returns nil (safe for test/standalone use — FlushCache nil-guards in Plan 03)
+- Phase 6 Plan 03 complete: CreateZone/UpdateZone/DeleteZone/GetZone/ListZones (SourceFile/Compiled/Serial fixed) + CreateRecord/UpdateRecord/DeleteRecord/ListRecords + SetQueryLogging/GetQueryLoggingStatus/SetRateLimit/GetRateLimitStatus all implemented; go build ./... passes
+- zone.Zone has no RemoveRecord or ForEachRecord — adminRemoveRecord implemented inline via z.Records map; enumeration uses z.GetAllRecords()
+- validateZoneName rejects zone_name containing '/' or '..' before any file I/O (T-06-07 mitigated)
+- SetQueryLogging/SetRateLimit return codes.Unimplemented when nil-guarded — Phase 7 wires these; GetQueryLoggingStatus/GetRateLimitStatus return Enabled=false gracefully when nil
