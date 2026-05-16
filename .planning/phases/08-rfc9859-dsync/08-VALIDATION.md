@@ -2,7 +2,7 @@
 phase: 8
 slug: rfc9859-dsync
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-05-16
 ---
@@ -38,17 +38,21 @@ created: 2026-05-16
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 08-01-01 | 01 | 1 | DSYNC-01 | — | encode→decode roundtrip produces identical record | unit | `go test ./internal/dsync/... -run TestDSYNCCodec` | ❌ W0 | ⬜ pending |
-| 08-01-02 | 01 | 1 | DSYNC-02 | — | reject rdata < 6 bytes with error | unit | `go test ./internal/dsync/... -run TestDSYNCDecodeTooShort` | ❌ W0 | ⬜ pending |
-| 08-01-03 | 01 | 1 | DSYNC-04 | T-08-01 | rate limiter blocks excess NOTIFY from single IP | unit | `go test ./internal/dsync/... -run TestNotifyRateLimiter` | ❌ W0 | ⬜ pending |
-| 08-01-04 | 01 | 1 | DSYNC-05 | — | rate limiter visitor map evicts stale entries | unit | `go test ./internal/dsync/... -run TestRateLimiterEviction` | ❌ W0 | ⬜ pending |
-| 08-02-01 | 02 | 2 | DSYNC-03 | — | inbound NOTIFY(CDS) dispatches to handler | unit | `go test ./internal/dsync/... -run TestHandleInboundNotifyCDS` | ❌ W0 | ⬜ pending |
-| 08-02-02 | 02 | 2 | DSYNC-06 | — | _dsync discovery returns DSYNC records | unit | `go test ./internal/dsync/... -run TestDiscoverDSYNC` | ❌ W0 | ⬜ pending |
-| 08-02-03 | 02 | 2 | DSYNC-07 | — | outbound NOTIFY(CDS) carries correct qtype | unit | `go test ./internal/dsync/... -run TestSendNotifyQtype` | ❌ W0 | ⬜ pending |
-| 08-03-01 | 03 | 3 | DSYNC-08 | — | handleDNS dispatches NOTIFY opcode to dsync handler | integration | `go test ./internal/server/... -run TestHandleDNSNotifyOpcode` | ❌ W0 | ⬜ pending |
-| 08-04-01 | 04 | 4 | DSYNC-09 | — | zone file with TYPE66 loads and serves correctly | unit | `go test ./internal/zone/... -run TestDSYNCZoneFile` | ❌ W0 | ⬜ pending |
+| 08-01-01 | 01 | 1 | DSYNC-01 | — | encode→decode roundtrip produces identical record | unit | `go test ./internal/dsync/... -run TestDSYNCCodec` | W0 | pending |
+| 08-01-02 | 01 | 1 | DSYNC-02 | — | reject rdata < 6 bytes with error | unit | `go test ./internal/dsync/... -run TestDSYNCDecodeTooShort` | W0 | pending |
+| 08-01-03 | 01 | 1 | DSYNC-04 | T-08-01 | rate limiter blocks excess NOTIFY from single IP | unit | `go test ./internal/dsync/... -run TestNotifyRateLimiter` | W0 | pending |
+| 08-01-04 | 01 | 1 | DSYNC-05 | — | rate limiter visitor map evicts stale entries | unit | `go test ./internal/dsync/... -run TestRateLimiterEviction` | W0 | pending |
+| 08-02-01 | 02 | 2 | DSYNC-03 | — | inbound NOTIFY(CDS) dispatches to handler | unit | `go test ./internal/dsync/... -run TestHandleInboundNotifyCDS` | W0 | pending |
+| 08-02-02 | 02 | 2 | DSYNC-06 | — | _dsync discovery returns DSYNC records | unit | `go test ./internal/dsync/... -run TestDiscoverDSYNC` | W0 | pending |
+| 08-02-03 | 02 | 2 | DSYNC-07 | — | outbound NOTIFY(CDS) carries correct qtype | unit | `go test ./internal/dsync/... -run TestSendNotifyQtype` | W0 | pending |
+| 08-03-01 | 03 | 3 | DSYNC-08 | — | handleDNS dispatches NOTIFY opcode to dsync handler | integration | `go test ./internal/server/... -run TestHandleDNSNotifyOpcode` | W0 | pending |
+| 08-04-01 | 04 | 4 | DSYNC-09 | — | zone file with TYPE66 loads and serves correctly | unit | `go test ./internal/zone/... -run TestDSYNCZoneFile` | W0 | pending |
+| 08-05-01 | 05 | 4 | DSYNC-03 | T-08-13 | source ACL rejects IPs not in allowlist | unit | `go test ./internal/dsync/... -run TestSourceACL` | W0 | pending |
+| 08-05-02 | 05 | 4 | DSYNC-03 | T-08-14 | webhook fires POST with JSON body | unit | `go test ./internal/dsync/... -run TestWebhookClient` | W0 | pending |
+| 08-06-01 | 06 | 5 | DSYNC-08 | T-08-17 | SendDSYNCNotify validates input and enqueues | unit | `go test ./api/grpc/services/... -run TestSendDSYNCNotify` | W0 | pending |
+| 08-06-02 | 06 | 5 | DSYNC-07 | — | metrics counters increment on NOTIFY processing | unit | `go test ./internal/dsync/... -run TestMetrics` | W0 | pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: pending / green / red / flaky*
 
 ---
 
@@ -74,11 +78,11 @@ created: 2026-05-16
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** confirmed
