@@ -12,6 +12,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
+	"github.com/dnsscience/dnsscienced/internal/dsync"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/pool"
@@ -21,6 +22,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
+	"github.com/rs/zerolog"
 )
 
 // Config holds DNS server configuration
@@ -133,13 +135,14 @@ type Server struct {
 	cfg Config
 
 	// Components
-	recursive   *resolver.Recursive
-	cookies     *cookie.Manager
-	rrl         *rrl.Limiter
-	defensive   *defensive.Manager
-	protective  *protective.Engine
-	firewall    *firewalld.Firewall
-	tsigKeyRing *tsig.KeyRing
+	recursive    *resolver.Recursive
+	cookies      *cookie.Manager
+	rrl          *rrl.Limiter
+	defensive    *defensive.Manager
+	protective   *protective.Engine
+	firewall     *firewalld.Firewall
+	tsigKeyRing  *tsig.KeyRing
+	dsyncHandler *dsync.Handler
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -234,6 +237,21 @@ func New(cfg Config) (*Server, error) {
 	// Initialize RRL if enabled
 	if cfg.EnableRRL {
 		s.rrl = rrl.NewLimiter(cfg.RRLConfig)
+	}
+
+	// Initialize DSYNC inbound handler if enabled (RFC 9859)
+	if cfg.DSYNC.Enabled {
+		rpm := cfg.DSYNC.RateLimitPerMin
+		if rpm <= 0 {
+			rpm = 5 // default: 5 NOTIFY/min per source IP (per D-13)
+		}
+		burst := cfg.DSYNC.Burst
+		if burst <= 0 {
+			burst = 10
+		}
+		rps := float64(rpm) / 60.0
+		limiter := dsync.NewNotifyLimiter(rps, burst)
+		s.dsyncHandler = dsync.NewHandler(limiter, dsync.AllowAllACL(), zerolog.Nop())
 	}
 
 	// Set defensive manager if provided
@@ -401,6 +419,20 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		clientIP = addr.IP
 	} else if addr, ok := w.RemoteAddr().(*net.TCPAddr); ok {
 		clientIP = addr.IP
+	}
+
+	// RFC 9859: dispatch NOTIFY opcode before query processing.
+	// This must be FIRST — before pool.GetMessage, before defensive checks.
+	if r.Opcode == dns.OpcodeNotify {
+		if s.dsyncHandler != nil {
+			s.dsyncHandler.HandleInbound(w, r, clientIP)
+		} else {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeNotImplemented
+			w.WriteMsg(m) //nolint:errcheck
+		}
+		return
 	}
 
 	// Check blackhole/ACL first
