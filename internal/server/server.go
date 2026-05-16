@@ -18,6 +18,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
@@ -55,6 +56,11 @@ type Config struct {
 
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
+
+	// TSIG keys for authenticated transfers/updates (set by main.go from config.TsigKeys).
+	// Populated externally after config load — not decoded from server yaml section directly.
+	// Conversion from config.TsigKeyConfig to tsig.KeyConfig happens at config load time.
+	TsigKeys []tsig.KeyConfig `yaml:"-"`
 
 	// Performance tuning
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
@@ -111,12 +117,13 @@ type Server struct {
 	cfg Config
 
 	// Components
-	recursive  *resolver.Recursive
-	cookies    *cookie.Manager
-	rrl        *rrl.Limiter
-	defensive  *defensive.Manager
-	protective *protective.Engine
-	firewall   *firewalld.Firewall
+	recursive   *resolver.Recursive
+	cookies     *cookie.Manager
+	rrl         *rrl.Limiter
+	defensive   *defensive.Manager
+	protective  *protective.Engine
+	firewall    *firewalld.Firewall
+	tsigKeyRing *tsig.KeyRing
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -216,6 +223,16 @@ func New(cfg Config) (*Server, error) {
 	// Set defensive manager if provided
 	s.defensive = cfg.DefensiveManager
 
+	// Initialize TSIG key ring if keys are configured
+	if len(cfg.TsigKeys) > 0 {
+		var err error
+		s.tsigKeyRing, err = tsig.NewKeyRing(cfg.TsigKeys)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init TSIG key ring: %w", err)
+		}
+	}
+
 	// Create UDP servers (SO_REUSEPORT)
 	for i := 0; i < cfg.UDPListeners; i++ {
 		udpServer := &dns.Server{
@@ -227,7 +244,8 @@ func New(cfg Config) (*Server, error) {
 			ReadTimeout:  cfg.ReadTimeout,
 			WriteTimeout: cfg.WriteTimeout,
 
-			UDPSize: 4096,
+			UDPSize:    4096,
+			TsigSecret: s.tsigSecretMap(), // populate for automatic TSIG verification
 		}
 
 		s.udpServers = append(s.udpServers, udpServer)
@@ -241,6 +259,7 @@ func New(cfg Config) (*Server, error) {
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+		TsigSecret:   s.tsigSecretMap(), // populate for automatic TSIG verification
 	}
 
 	return s, nil
@@ -334,6 +353,19 @@ func (s *Server) GetCache() *cache.ShardedCache {
 		return nil
 	}
 	return s.recursive.GetCache()
+}
+
+// tsigSecretMap returns the TsigSecret map for dns.Server, or nil if no keys configured.
+func (s *Server) tsigSecretMap() map[string]string {
+	if s.tsigKeyRing == nil {
+		return nil
+	}
+	return s.tsigKeyRing.TsigSecretMap()
+}
+
+// GetTsigKeyRing returns the server's TSIG key ring (may be nil if no keys configured).
+func (s *Server) GetTsigKeyRing() *tsig.KeyRing {
+	return s.tsigKeyRing
 }
 
 // handleDNS is the main DNS query handler

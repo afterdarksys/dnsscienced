@@ -39,6 +39,19 @@ type Config struct {
 
 	// Zones - per-zone configuration (BIND-style zone stanzas)
 	Zones []ZoneConfig `yaml:"zones"`
+
+	// TSIG keys for authenticated zone transfers (RFC 2845)
+	TsigKeys []TsigKeyConfig `yaml:"tsig_keys"`
+}
+
+// TsigKeyConfig holds TSIG key configuration for zone transfers and dynamic updates (RFC 2845).
+type TsigKeyConfig struct {
+	// Name is the key name (FQDN, e.g., "xfer-key.example.com.")
+	Name string `yaml:"name"`
+	// Algorithm: "hmac-sha256", "hmac-sha384", or "hmac-sha512"
+	Algorithm string `yaml:"algorithm"`
+	// Secret is the base64-encoded shared secret
+	Secret string `yaml:"secret"`
 }
 
 // AdminConfig holds admin API configuration
