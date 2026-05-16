@@ -104,7 +104,7 @@ Plans:
 **Plans:** 6 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — DSYNC type 66 codec + per-IP rate limiter (TDD, Wave 1)
+- [x] 08-01-PLAN.md — DSYNC type 66 codec + per-IP rate limiter (TDD, Wave 1)
 - [ ] 08-02-PLAN.md — Inbound NOTIFY handler + _dsync discovery + outbound sender (Wave 2)
 - [ ] 08-03-PLAN.md — Config structs + server opcode dispatch wiring (Wave 3)
 - [ ] 08-04-PLAN.md — Zone file TYPE66 test + full build/test gate (Wave 4)
@@ -124,7 +124,7 @@ Plans:
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
 | 6. Admin API — Stubs & Registration | v1.2 | 5/6 | In Progress|  |
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
-| 8. RFC 9859 DSYNC | v1.2 | 0/6 | Planned | — |
+| 8. RFC 9859 DSYNC | v1.2 | 1/6 | In Progress|  |
 
 ---
 *Last updated: 2026-05-16 — Phase 6 gap plans added (6 plans, 5 waves — TSIG support added)*

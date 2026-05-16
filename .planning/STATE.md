@@ -3,31 +3,31 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T20:05:24.630Z"
-last_activity: 2026-05-16 -- Phase 8 planning complete
+last_updated: "2026-05-16T21:55:21.985Z"
+last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 19
-  completed_plans: 13
-  percent: 68
+  completed_plans: 14
+  percent: 74
 ---
 
 # State
 
 ## Current Position
 
-Phase: 08
-Plan: Not started
+Phase: 08 (rfc9859-dsync) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-05-16 -- Phase 8 planning complete
+Last activity: 2026-05-16
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 07 — admin-auth-hardening
+**Current focus:** Phase 08 — rfc9859-dsync
 
 ## Accumulated Context
 
@@ -119,3 +119,8 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - logging.NewLogger is the correct function name (not logging.New); break sigloop used instead of goto (Go goto restriction across declarations)
 - Phase 7 Plan 06 complete: Phase 7 test suite written; all 7 requirements have concrete passing assertions (AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01/02); TestMTLS_NoCert uses ephemeral ecdsa certs; TestAuditInterceptor captures output via bytes.Buffer-backed logging.NewWithWriter; go test ./api/grpc/server/... ./api/grpc/middleware/... ./internal/admin/... exits 0; go build ./... passes
 - logging.NewWithWriter(io.Writer) added to logging package for test-time buffer capture; Phase 7 admin-auth-hardening phase complete
+- Phase 8 Plan 01 complete: internal/dsync package created; TypeDSYNC=66, DSYNCRecord, EncodeDSYNC/DecodeDSYNC/ParseRFC3597 (hex codec via dns.PackDomainName/UnpackDomainName); NotifyLimiter with per-IP token bucket (x/time/rate), background sweepStale() goroutine (5min sweep, 10min TTL), sync.Once Close(); 10 tests pass; go build/test ./internal/dsync/... exits 0
+- TypeDSYNC=66: miekg/dns v1.1.72 does not define it; defined in internal/dsync (verified by direct grep of installed module)
+- DSYNCRecord plain struct codec (not dns.RR interface); EncodeDSYNC returns hex string for dns.RFC3597.Rdata; DecodeDSYNC minimum 6-byte length check before any field access (T-08-01 mitigated)
+- NotifyLimiter.Close() uses sync.Once — safe for defer + explicit call patterns without double-close panic (T-08-02: sweepStale evicts visitors lastSeen > 10min)
+- Test helpers exported on NotifyLimiter: ForceLastSeen, SweepStaleForTest, VisitorCount for white-box eviction testing
