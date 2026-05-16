@@ -85,7 +85,7 @@ Plans:
 - [x] 07-03-PLAN.md — AuditUnaryInterceptor + AuditStreamInterceptor in middleware (Wave 2, parallel)
 - [x] 07-04-PLAN.md — ConnRegistry StatsHandler + wire ListConnections + key-ID context injection (Wave 3)
 - [x] 07-05-PLAN.md — main.go wiring: TLS fields, audit interceptors, ConnRegistry, SIGHUP reload (Wave 4)
-- [ ] 07-06-PLAN.md — Test suite: AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01 (Wave 5, TDD)
+- [x] 07-06-PLAN.md — Test suite: AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01 (Wave 5, TDD)
 
 ### Phase 8: RFC 9859 — Generalized DNS Notifications (DSYNC)
 
@@ -121,7 +121,7 @@ Plans:
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
 | 6. Admin API — Stubs & Registration | v1.2 | 5/6 | In Progress|  |
-| 7. Admin Auth Hardening | v1.2 | 2/7 | In Progress|  |
+| 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
 | 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 
 ---

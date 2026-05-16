@@ -2,25 +2,25 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-16T16:56:55.988Z"
+status: verifying
+last_updated: "2026-05-16T17:10:37.047Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 17
-  completed_plans: 12
-  percent: 71
+  completed_plans: 13
+  percent: 76
 ---
 
 # State
 
 ## Current Position
 
-Phase: 07 (admin-auth-hardening) — EXECUTING
-Plan: 7 of 7
-Status: 07-05 complete — ready to execute 07-06
-Last activity: 2026-05-16 -- 07-05 ConfigHolder + SIGHUP full config reload wired
+Phase: 07 (admin-auth-hardening) — COMPLETE
+Plan: 7 of 7 (ALL COMPLETE)
+Status: 07-06 complete — Phase 7 test suite all requirements passing; ready for phase close
+Last activity: 2026-05-16 -- 07-06 Phase 7 auth+audit+conn test suite written and passing
 
 ## Project Reference
 
@@ -117,3 +117,5 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 7 Plan 05 complete: ConfigHolder type with sync.RWMutex added to server.go; New() updated to 5-return with ConfigHolder; main.go wires TLSCertFile/TLSKeyFile/TLSClientCAs, AuditUnaryInterceptor/AuditStreamInterceptor; SIGHUP loop calls configHolder.Reload() with full config (D-09/D-11); grpcserver.New() error is os.Exit(1); go build ./... passes; all tests pass
 - ConfigHolder.Reload() validates D-01/D-02 before swapping; bad config leaves current intact; TLS creds rebuilt only when cert/key/CA paths changed (guard: TLSCertFile+TLSKeyFile both non-empty)
 - logging.NewLogger is the correct function name (not logging.New); break sigloop used instead of goto (Go goto restriction across declarations)
+- Phase 7 Plan 06 complete: Phase 7 test suite written; all 7 requirements have concrete passing assertions (AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01/02); TestMTLS_NoCert uses ephemeral ecdsa certs; TestAuditInterceptor captures output via bytes.Buffer-backed logging.NewWithWriter; go test ./api/grpc/server/... ./api/grpc/middleware/... ./internal/admin/... exits 0; go build ./... passes
+- logging.NewWithWriter(io.Writer) added to logging package for test-time buffer capture; Phase 7 admin-auth-hardening phase complete
