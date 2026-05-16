@@ -15,6 +15,8 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/registry"
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
+	"github.com/dnsscience/dnsscienced/internal/admin"
+	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
@@ -49,6 +51,21 @@ func (a *serverSrvAdapter) GetStats() services.SrvStats {
 		s.RecursiveMisses = raw.Recursive.Cache.Misses
 	}
 	return s
+}
+
+func (a *serverSrvAdapter) GetShardedCache() *cache.ShardedCache {
+	return a.s.GetCache()
+}
+
+func (a *serverSrvAdapter) GetAdminStats() admin.AdminSrvStats {
+	raw := a.s.GetStats()
+	return admin.AdminSrvStats{
+		Queries:    raw.Queries,
+		UDPQueries: raw.UDPQueries,
+		TCPQueries: raw.TCPQueries,
+		Errors:     raw.Errors,
+		NXDomain:   raw.NXDOMAIN,
+	}
 }
 
 var (

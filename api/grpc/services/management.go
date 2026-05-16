@@ -16,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	mgmt "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
+	"github.com/dnsscience/dnsscienced/internal/admin"
+	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 )
@@ -28,6 +30,8 @@ type SrvAdapter interface {
 	RemoveZone(origin string)
 	GetStats() SrvStats
 	GetFirewall() *firewalld.Firewall
+	GetShardedCache() *cache.ShardedCache
+	GetAdminStats() admin.AdminSrvStats
 }
 
 // SrvStats carries the statistics fields that ManagementService reads.

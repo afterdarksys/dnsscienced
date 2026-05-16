@@ -214,6 +214,9 @@ func (s *Service) PurgeCache(ctx context.Context, req *pb.AdminPurgeCacheRequest
 
 // RefreshZone forces a zone refresh
 func (s *Service) RefreshZone(ctx context.Context, req *pb.AdminRefreshZoneRequest) (*pb.AdminRefreshZoneResponse, error) {
+	if s.reloadMgr == nil {
+		return &pb.AdminRefreshZoneResponse{Refreshed: false, Message: "reload manager not configured"}, nil
+	}
 	// Trigger zone reload for specific zone
 	err := s.reloadMgr.Reload()
 	if err != nil {
@@ -241,6 +244,9 @@ func (s *Service) RefreshZone(ctx context.Context, req *pb.AdminRefreshZoneReque
 
 // ListZones lists all loaded zones
 func (s *Service) ListZones(ctx context.Context, req *emptypb.Empty) (*pb.AdminListZonesResponse, error) {
+	if s.reloadMgr == nil {
+		return &pb.AdminListZonesResponse{}, nil
+	}
 	zones := s.reloadMgr.GetAllZones()
 	zoneInfos := make([]*pb.AdminZoneInfo, 0, len(zones))
 
@@ -263,6 +269,9 @@ func (s *Service) ListZones(ctx context.Context, req *emptypb.Empty) (*pb.AdminL
 
 // ReloadZones reloads all zones from disk
 func (s *Service) ReloadZones(ctx context.Context, req *emptypb.Empty) (*pb.AdminReloadZonesResponse, error) {
+	if s.reloadMgr == nil {
+		return &pb.AdminReloadZonesResponse{Message: "reload manager not configured"}, nil
+	}
 	err := s.reloadMgr.Reload()
 
 	if err != nil {
@@ -329,28 +338,38 @@ func (s *Service) GetServerStatus(ctx context.Context, req *emptypb.Empty) (*pb.
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
+	healthy := true
+	if s.healthMgr != nil {
+		healthy = s.healthMgr.IsHealthy()
+	}
+
+	zoneCount := 0
+	if s.reloadMgr != nil {
+		zoneCount = s.reloadMgr.ZoneCount()
+	}
+
 	components := []*pb.AdminComponentStatus{
 		{
 			Name:    "cache",
-			Healthy: s.healthMgr.IsHealthy(),
+			Healthy: healthy,
 			Message: "OK",
 		},
 		{
 			Name:    "zones",
-			Healthy: s.reloadMgr.ZoneCount() > 0,
-			Message: fmt.Sprintf("%d zones loaded", s.reloadMgr.ZoneCount()),
+			Healthy: zoneCount > 0,
+			Message: fmt.Sprintf("%d zones loaded", zoneCount),
 		},
 	}
 
 	return &pb.AdminServerStatusResponse{
-		Version:      "1.0.0", // Would pull from build info
-		StartTime:    timestamppb.New(s.startTime),
+		Version:       "1.0.0", // Would pull from build info
+		StartTime:     timestamppb.New(s.startTime),
 		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
-		Goroutines:   int32(runtime.NumGoroutine()),
-		MemoryBytes:  int64(m.Alloc),
-		ZonesLoaded:  int32(s.reloadMgr.ZoneCount()),
-		Healthy:      s.healthMgr.IsHealthy(),
-		Components:   components,
+		Goroutines:    int32(runtime.NumGoroutine()),
+		MemoryBytes:   int64(m.Alloc),
+		ZonesLoaded:   int32(zoneCount),
+		Healthy:       healthy,
+		Components:    components,
 	}, nil
 }
 

@@ -379,6 +379,11 @@ func getTTL(msg *dns.Msg) uint32 {
 	return minTTL
 }
 
+// GetCache returns the resolver's shared DNS cache.
+func (r *Recursive) GetCache() *cache.ShardedCache {
+	return r.cache
+}
+
 // Close stops the resolver
 func (r *Recursive) Close() error {
 	r.cache.Close()

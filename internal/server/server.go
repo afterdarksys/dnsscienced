@@ -328,6 +328,14 @@ func (s *Server) GetFirewall() *firewalld.Firewall {
 	return s.firewall
 }
 
+// GetCache returns the recursive resolver's DNS cache, or nil if recursive is disabled.
+func (s *Server) GetCache() *cache.ShardedCache {
+	if s.recursive == nil {
+		return nil
+	}
+	return s.recursive.GetCache()
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)

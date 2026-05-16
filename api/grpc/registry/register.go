@@ -7,6 +7,7 @@ import (
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
+	"github.com/dnsscience/dnsscienced/internal/admin"
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
@@ -25,6 +26,8 @@ func (NoopSrvAdapter) AddZone(_ *zone.Zone) error                { return nil }
 func (NoopSrvAdapter) RemoveZone(_ string)                       {}
 func (NoopSrvAdapter) GetStats() services.SrvStats               { return services.SrvStats{} }
 func (NoopSrvAdapter) GetFirewall() *firewalld.Firewall          { return nil }
+func (NoopSrvAdapter) GetShardedCache() *cache.ShardedCache      { return nil }
+func (NoopSrvAdapter) GetAdminStats() admin.AdminSrvStats        { return admin.AdminSrvStats{} }
 
 // SrvIface is the interface that RegisterAll requires from the DNS server.
 // It matches services.SrvAdapter so the caller can pass a *server.Server directly.
@@ -58,4 +61,18 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 	if fw := srv.GetFirewall(); fw != nil {
 		pb.RegisterFirewallAdminServiceServer(s, services.NewFirewallService(fw))
 	}
+
+	// AdminService — always registered; provides cache, zone, metrics, logging, and rate-limit control.
+	adminSvc := admin.NewService(
+		srv.GetShardedCache(),
+		nil, // reloadMgr — legacy stubs nil-guarded in Plan 03
+		nil, // healthMgr — GetServerStatus nil-guarded in Plan 03
+		nil, // logger — wired in Phase 7; SetQueryLogging/GetQueryLoggingStatus nil-guard
+		nil, // shutdownFn — ShutdownServer nil-guards this already
+		srv, // AdminSrvAdapter — srv satisfies interface via GetAdminStats/GetZone/AddZone/RemoveZone
+		zonesDir,
+		compileBin,
+		nil, // rrlLimiter — wired in Phase 7
+	)
+	pb.RegisterAdminServiceServer(s, adminSvc)
 }
