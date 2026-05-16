@@ -28,6 +28,58 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
+## Phases (v1.2 — Fully Operational)
+
+<details open>
+<summary>🔄 v1.2 — Fully Operational (Phases 6–8) — IN PROGRESS</summary>
+
+**Goal:** Make dnsscienced production-complete: all admin RPCs functional, admin API authenticated with mandatory keys + mTLS, and RFC 9859 DSYNC/generalized notifications implemented.
+
+### Phase 6: Admin API — Stubs & Registration
+
+**Goal:** Fix the critical AdminService registration gap (all admin RPCs currently return Unimplemented), implement all 14 stub methods, and make zone/record CRUD fully functional.
+
+**Scope:**
+- Register `AdminService` in `api/grpc/registry/register.go` (critical — currently absent)
+- Implement `CreateZone`, `UpdateZone`, `DeleteZone`, `GetZone` (zone CRUD via zone file + reload)
+- Implement `CreateRecord`, `UpdateRecord`, `DeleteRecord`, `ListRecords` (zone record CRUD)
+- Implement `SetQueryLogging`, `GetQueryLoggingStatus` (hook into logging package)
+- Implement `SetRateLimit`, `GetRateLimitStatus` (hook into RRL system)
+- Complete `GetMetrics` (add UDP/TCP split counters, latency percentiles)
+- Implement `ListConnections`, `KillConnection` (connection tracking in transport layer)
+- Fix `ListZones` missing fields: SourceFile, Compiled (.dzc), Serial (from SOA)
+
+**Files:** `internal/admin/service.go`, `api/grpc/registry/register.go`, `internal/server/server.go`, `internal/zone/`, `internal/rrl/`, `internal/logging/`
+
+### Phase 7: Admin Auth Hardening
+
+**Goal:** Make the admin API fully secured — mandatory key enforcement (no auth bypass on empty list), mTLS, per-request audit logging, and complete connection management.
+
+**Scope:**
+- Mandatory API key enforcement: reject all requests when `api_keys` is empty (remove bypass)
+- mTLS: add `TLSClientCertFile` + `TLSClientCAs` config; enforce mutual TLS on admin connections
+- Per-request audit log: log caller identity (key ID or cert CN), method, timestamp, result
+- Connection tracking: wire connection registry into transport for `ListConnections`/`KillConnection`
+- Key rotation: `ReloadAPIKeys` RPC or SIGHUP-triggered key reload without restart
+
+**Files:** `api/grpc/server/server.go`, `api/grpc/middleware/middleware.go`, `internal/admin/service.go`, `cmd/dnsscienced/main.go`
+
+### Phase 8: RFC 9859 — Generalized DNS Notifications (DSYNC)
+
+**Goal:** Implement RFC 9859: DSYNC record type (type 66), inbound NOTIFY(CDS/CSYNC) handler, outbound notification sender, rate limiting, and zone-level DSYNC record serving.
+
+**Scope:**
+- DSYNC record type 66: parser, serializer, zone file support (miekg/dns unknown-type workaround)
+- Inbound NOTIFY handler: accept NOTIFY with qtype=CDS (type 60) and NOTIFY with qtype=CSYNC (type 62) on port 53; dispatch to delegation maintenance handler
+- Rate limiting on NOTIFY processing (MUST per RFC 9859 §4)
+- Outbound notification sender: when zone CDS/CSYNC records change, discover parent via `_dsync.<parent>` lookup and send NOTIFY
+- `_dsync` zone entry support: serve DSYNC records from zone files for zones that publish endpoints
+- DNSSEC signing of zones containing DSYNC records (RECOMMENDED)
+
+**Files:** `internal/zone/`, `internal/server/server.go`, `internal/notify/` (new package), `api/grpc/proto/dns.proto`, `api/grpc/proto/zones.proto`
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -37,6 +89,9 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 | 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
+| 6. Admin API — Stubs & Registration | v1.2 | 0/? | Planning | — |
+| 7. Admin Auth Hardening | v1.2 | 0/? | Planning | — |
+| 8. RFC 9859 DSYNC | v1.2 | 0/? | Planning | — |
 
 ---
-*Last updated: 2026-04-23 — v1.1 milestone archived*
+*Last updated: 2026-05-16 — v1.2 milestone added*
