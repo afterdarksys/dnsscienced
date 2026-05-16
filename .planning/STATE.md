@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T16:25:15.551Z"
+last_updated: "2026-05-16T16:31:00.267Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 17
-  completed_plans: 8
-  percent: 47
+  completed_plans: 9
+  percent: 53
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 07 (admin-auth-hardening) — EXECUTING
-Plan: 3 of 7
-Status: Ready to execute (07-01 complete)
-Last activity: 2026-05-16 -- 07-01 APIKey struct + atomicKeySet foundation
+Plan: 4 of 7
+Status: Ready to execute (07-02 complete)
+Last activity: 2026-05-16 -- 07-02 mTLS credentials + AND auth interceptors
 
 ## Project Reference
 
@@ -105,3 +105,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 7 Plan 01 complete: APIKey struct exported from config.go (ID+Secret yaml tags per D-04); AdminConfig.APIKeys []APIKey + TLS fields; grpcserver.Config.TLSClientCAs + APIKeys []config.APIKey; atomicKeySet with dual keyIndex (secretToID+idSet) per D-05; Lookup(secret)->(id,ok) + IDExists(id) + Len(); go build ./... passes; TestAtomicKeySet + TestAtomicKeyReload + TestConfig_HasTLSClientCAs all PASS
 - APIKey.Secret never returned by Lookup — only the id (T-07-01-02 mitigated); keyIndex unexported
 - cmd/dnsscience-grpc synthesizes IDs (key-N, cli-N) from legacy []string api-keys config for backwards compat
+- Phase 7 Plan 02 complete: buildCreds() replaces credentials.NewServerTLSFromFile; MinVersion:tls.VersionTLS13; mTLS via RequireAndVerifyClientCert+CA pool when TLSClientCAs set; New() fails closed if TLSClientCAs empty (D-02) OR APIKeys empty (D-01); interceptors use atomicKeySet.Lookup() — no bypass; middleware.CtxKeyID{} added; go build ./... passes; 6 new tests PASS
+- extractBearer() replaces fmt.Sscanf in authorize() — Sscanf would truncate tokens at spaces; authorize() removed
+- AND auth policy: Bearer token ALWAYS required even when mTLS active (D-01: cert proves machine, key proves operator intent)
