@@ -40,7 +40,7 @@ func TestBuildCreds_BadCAFile(t *testing.T) {
 
 // TestNew_NoAuthMechanism verifies New() returns an error when both TLSClientCAs and APIKeys are unset.
 func TestNew_NoAuthMechanism(t *testing.T) {
-	_, _, err := New(Config{ListenAddr: ":0"}, Deps{})
+	_, _, _, err := New(Config{ListenAddr: ":0"}, Deps{})
 	if err == nil {
 		t.Fatal("New: expected error with no auth configured, got nil")
 	}
@@ -48,7 +48,7 @@ func TestNew_NoAuthMechanism(t *testing.T) {
 
 // TestNew_NoTLS verifies New() returns an error when TLSClientCAs is empty (fail-closed D-02).
 func TestNew_NoTLS(t *testing.T) {
-	_, _, err := New(Config{
+	_, _, _, err := New(Config{
 		ListenAddr: ":0",
 		APIKeys:    []config.APIKey{{ID: "k1", Secret: "s1"}},
 		// TLSClientCAs intentionally empty
@@ -60,7 +60,7 @@ func TestNew_NoTLS(t *testing.T) {
 
 // TestNew_NoAPIKeys verifies New() returns an error when APIKeys is empty even if TLSClientCAs is set.
 func TestNew_NoAPIKeys(t *testing.T) {
-	_, _, err := New(Config{
+	_, _, _, err := New(Config{
 		ListenAddr:   ":0",
 		TLSClientCAs: "/some/ca.pem",
 		// APIKeys intentionally empty

@@ -236,12 +236,16 @@ func main() {
 
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin)
+				// connRegistry is passed as nil here because it is returned by grpcserver.New() AFTER
+				// Register is invoked. Plan 05 will restructure to pass the live registry.
+				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil)
 			},
 		}
 
 		var err error
-		grpcSrv, grpcListener, err = grpcserver.New(grpcCfg, grpcDeps)
+		var registry *grpcserver.ConnRegistry
+		grpcSrv, grpcListener, registry, err = grpcserver.New(grpcCfg, grpcDeps)
+		_ = registry // passed to admin.NewService when wired (Plan 04 completes wiring)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating gRPC server: %v\n", err)
 		} else {

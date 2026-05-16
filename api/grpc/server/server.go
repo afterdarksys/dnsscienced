@@ -119,15 +119,20 @@ type Deps struct {
 }
 
 // New creates a TLS gRPC server with fail-closed auth guards per D-01 and D-02.
-func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, error) {
+// Returns (*grpc.Server, net.Listener, *ConnRegistry, error).
+// Plan 05 will change this to 5-return (adding ConfigHolder).
+func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, error) {
 	// D-02: Fail closed - refuse to start without BOTH auth mechanisms.
 	// D-01: Both mTLS and API key auth are required simultaneously.
 	if cfg.TLSClientCAs == "" {
-		return nil, nil, fmt.Errorf("admin server requires tls_client_cas to be configured (D-02: fail closed)")
+		return nil, nil, nil, fmt.Errorf("admin server requires tls_client_cas to be configured (D-02: fail closed)")
 	}
 	if len(cfg.APIKeys) == 0 {
-		return nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
+		return nil, nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
 	}
+
+	// Create connection registry and wire as stats handler (Plan 04).
+	registry := NewConnRegistry()
 
 	var opts []grpc.ServerOption
 
@@ -135,10 +140,13 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, error) {
 	if cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" {
 		creds, err := buildCreds(cfg)
 		if err != nil {
-			return nil, nil, fmt.Errorf("tls: %w", err)
+			return nil, nil, nil, fmt.Errorf("tls: %w", err)
 		}
 		opts = append(opts, grpc.Creds(creds))
 	}
+
+	// Wire ConnRegistry as gRPC stats handler to track all admin connections.
+	opts = append(opts, grpc.StatsHandler(registry))
 
 	// Interceptors (chain) using atomicKeySet for AND auth per D-01
 	keySet := newAtomicKeySet(cfg.APIKeys)
@@ -156,9 +164,9 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, error) {
 
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return gs, ln, nil
+	return gs, ln, registry, nil
 }
 
 // apiKeyUnaryInterceptor enforces Bearer token auth on every request.

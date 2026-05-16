@@ -86,10 +86,10 @@ cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, 
 		h := health.NewServer()
 		healthpb.RegisterHealthServer(s, h)
 		reflection.Register(s)
-		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "")
+		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil)
 	}
 
-	gs, ln, err := server.New(cfg, deps)
+	gs, ln, _, err := server.New(cfg, deps)
 	if err != nil { log.Fatalf("server: %v", err) }
 	log.Printf("gRPC listening on %s", ln.Addr())
 	if err := gs.Serve(ln); err != nil { log.Fatalf("serve: %v", err) }

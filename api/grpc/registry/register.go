@@ -3,6 +3,7 @@ package registry
 import (
 	"google.golang.org/grpc"
 
+	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/api/grpc/mock"
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
@@ -40,7 +41,8 @@ type SrvIface = services.SrvAdapter
 // srv is the live DNS server (must satisfy SrvIface / services.SrvAdapter).
 // zonesDir is the directory where .dnszone / .dzc files live.
 // compileBin is the path to the dnsscienced-compile binary.
-func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string) {
+// connRegistry is the connection registry for ListConnections (may be nil — Plan 04 wires it).
+func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry) {
 	// Engine-backed managers.
 	resolver := engine.NewResolver("")
 	dnssec := &mock.DNSSECMgr{}
@@ -74,8 +76,9 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 		srv, // AdminSrvAdapter — srv satisfies interface via GetAdminStats/GetZone/AddZone/RemoveZone
 		zonesDir,
 		compileBin,
-		nil,                    // rrlLimiter — wired in Phase 7
-		srv.GetTsigKeyRing(),  // may be nil if no TSIG keys configured
+		nil,                   // rrlLimiter — wired in Phase 7
+		srv.GetTsigKeyRing(), // may be nil if no TSIG keys configured
+		connRegistry,          // may be nil; wired from grpcserver.New() 4-return in Plan 04
 	)
 	pb.RegisterAdminServiceServer(s, adminSvc)
 }

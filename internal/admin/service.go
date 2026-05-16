@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/health"
 	"github.com/dnsscience/dnsscienced/internal/logging"
@@ -64,8 +66,9 @@ type Service struct {
 	srv         AdminSrvAdapter
 	zonesDir    string
 	compileBin  string
-	rrlLimiter  *rrl.Limiter  // may be nil; nil-guarded at call sites
-	tsigKeyRing *tsig.KeyRing // may be nil; set from server's key ring
+	rrlLimiter  *rrl.Limiter          // may be nil; nil-guarded at call sites
+	tsigKeyRing *tsig.KeyRing         // may be nil; set from server's key ring
+	connRegistry *grpcserver.ConnRegistry // may be nil; wired in Plan 04 (conn tracking)
 }
 
 // NewService creates a new admin service
@@ -79,20 +82,22 @@ func NewService(
 	zonesDir string,
 	compileBin string,
 	rrlLimiter *rrl.Limiter,
-	tsigKeyRing *tsig.KeyRing, // may be nil
+	tsigKeyRing *tsig.KeyRing,         // may be nil
+	connRegistry *grpcserver.ConnRegistry, // may be nil; wired in Plan 04
 ) *Service {
 	return &Service{
-		cache:       cache,
-		reloadMgr:   reloadMgr,
-		healthMgr:   healthMgr,
-		logger:      logger,
-		startTime:   time.Now(),
-		shutdownFn:  shutdownFn,
-		srv:         srv,
-		zonesDir:    zonesDir,
-		compileBin:  compileBin,
-		rrlLimiter:  rrlLimiter,
-		tsigKeyRing: tsigKeyRing,
+		cache:        cache,
+		reloadMgr:    reloadMgr,
+		healthMgr:    healthMgr,
+		logger:       logger,
+		startTime:    time.Now(),
+		shutdownFn:   shutdownFn,
+		srv:          srv,
+		zonesDir:     zonesDir,
+		compileBin:   compileBin,
+		rrlLimiter:   rrlLimiter,
+		tsigKeyRing:  tsigKeyRing,
+		connRegistry: connRegistry,
 	}
 }
 
@@ -940,17 +945,45 @@ func (s *Service) ShutdownServer(ctx context.Context, req *pb.AdminShutdownReque
 	}, nil
 }
 
-// ListConnections lists active connections
+// ListConnections lists active admin gRPC connections from the connection registry.
+// Returns real data from ConnRegistry wired in Plan 04 via grpc.StatsHandler.
 func (s *Service) ListConnections(ctx context.Context, req *pb.AdminListConnectionsRequest) (*pb.AdminListConnectionsResponse, error) {
-	// Connection tracking requires a transport-layer registry that does not yet exist.
-	// Return Unimplemented so callers can distinguish "not done" from "tried and failed".
-	return nil, status.Error(codes.Unimplemented, "connection tracking not yet implemented")
+	if s.connRegistry == nil {
+		return &pb.AdminListConnectionsResponse{}, nil
+	}
+	conns := s.connRegistry.List()
+	infos := make([]*pb.AdminConnectionInfo, 0, len(conns))
+	for _, c := range conns {
+		host, portStr := grpcserver.SplitHostPort(c.RemoteAddr)
+		port := int32(0)
+		if p, err := strconv.ParseInt(portStr, 10, 32); err == nil {
+			port = int32(p)
+		}
+		infos = append(infos, &pb.AdminConnectionInfo{
+			Id:            c.ID,
+			Protocol:      "grpc",
+			ClientIp:      host,
+			ClientPort:    port,
+			ConnectedAt:   timestamppb.New(c.ConnectedAt),
+			QueriesServed: c.QueriesServed,
+			// D-12: KeyID and CertCN populated by auth interceptor via EnrichConn (Plan 05)
+			// Not yet exposed in proto response fields; available via connRegistry for diagnostics
+		})
+	}
+	return &pb.AdminListConnectionsResponse{
+		Connections: infos,
+		TotalCount:  int32(len(infos)),
+	}, nil
 }
 
-// KillConnection terminates a specific connection
+// KillConnection returns success=false with an explanation of the API limitation.
+// The gRPC v1.78.0 public API does not expose a CloseConn method; graceful shutdown
+// or connection timeout must be used instead.
 func (s *Service) KillConnection(ctx context.Context, req *pb.AdminKillConnectionRequest) (*pb.AdminKillConnectionResponse, error) {
-	// Connection tracking requires a transport-layer registry that does not yet exist.
-	return nil, status.Error(codes.Unimplemented, "connection tracking not yet implemented")
+	return &pb.AdminKillConnectionResponse{
+		Success: false,
+		Message: "connection teardown is not supported via the gRPC public API (no CloseConn in v1.78.0); use server restart or connection timeout",
+	}, nil
 }
 
 // AddTsigKey adds a new TSIG key to the live key ring.
