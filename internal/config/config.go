@@ -157,6 +157,18 @@ type ZoneDSYNCConfig struct {
 	// PropagationDelay: wait this long after serial increment before sending
 	// outbound NOTIFY. Default: 60s (RFC 9859 recommendation).
 	PropagationDelay time.Duration `yaml:"propagation_delay"`
+
+	// WebhookURL: POST endpoint called on accepted inbound NOTIFY (per D-02).
+	WebhookURL string `yaml:"webhook_url,omitempty"`
+
+	// WebhookBodyFormat: "json" (default) or "base64" wire format (per D-03).
+	WebhookBodyFormat string `yaml:"webhook_body_format,omitempty"`
+
+	// AllowedSources: CIDRs/IPs allowed to send NOTIFY for this zone (per D-05).
+	AllowedSources []string `yaml:"allowed_sources,omitempty"`
+
+	// RateLimitPerMin: max NOTIFY per source IP per minute (per D-13). 0 = use default (5/min).
+	RateLimitPerMin int `yaml:"rate_limit_per_min,omitempty"`
 }
 
 // DHCPConfig holds DHCP server configuration

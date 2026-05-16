@@ -3,6 +3,7 @@ package dsync
 import (
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
@@ -28,6 +29,13 @@ type Handler struct {
 	limiter *NotifyLimiter
 	acl     Allower
 	log     zerolog.Logger
+	webhook *WebhookClient // nil = no webhook; set via SetWebhook after construction
+}
+
+// SetWebhook configures the webhook client for this handler.
+// Called after NewHandler by server wiring code. Does not change constructor signature.
+func (h *Handler) SetWebhook(wc *WebhookClient) {
+	h.webhook = wc
 }
 
 // NewHandler creates an inbound NOTIFY handler.
@@ -81,6 +89,21 @@ func (h *Handler) HandleInbound(w dns.ResponseWriter, r *dns.Msg, clientIP net.I
 	zone := r.Question[0].Name
 	if qtype != dns.TypeCDS && qtype != dns.TypeCSYNC {
 		return
+	}
+
+	// D-01: Fire webhook POST (fire-and-forget in goroutine, per D-04)
+	if h.webhook != nil {
+		go func() {
+			payload := WebhookPayload{
+				Zone:      zone,
+				Qtype:     dns.TypeToString[qtype],
+				SourceIP:  clientIP.String(),
+				Timestamp: time.Now(),
+			}
+			if err := h.webhook.Fire(payload); err != nil {
+				h.log.Error().Err(err).Str("zone", zone).Msg("webhook delivery failed")
+			}
+		}()
 	}
 
 	// Async delegation check (stub: log only in this phase)
