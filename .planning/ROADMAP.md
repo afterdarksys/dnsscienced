@@ -51,6 +51,14 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 **Files:** `internal/admin/service.go`, `api/grpc/registry/register.go`, `internal/server/server.go`, `internal/zone/`, `internal/rrl/`, `internal/logging/`
 
+**Plans:** 4 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
+- [ ] 06-02-PLAN.md — AdminService registration + SrvAdapter wiring + SrvStats UDP/TCP (Wave 2)
+- [ ] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
+- [ ] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
+
 ### Phase 7: Admin Auth Hardening
 
 **Goal:** Make the admin API fully secured — mandatory key enforcement (no auth bypass on empty list), mTLS, per-request audit logging, and complete connection management.
@@ -107,9 +115,9 @@ Plans:
 | 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
-| 6. Admin API — Stubs & Registration | v1.2 | 0/? | Planning | — |
+| 6. Admin API — Stubs & Registration | v1.2 | 0/4 | Planning | — |
 | 7. Admin Auth Hardening | v1.2 | 0/6 | Planned | — |
 | 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 
 ---
-*Last updated: 2026-05-16 — Phase 7 planned (6 plans, 5 waves)*
+*Last updated: 2026-05-16 — Phase 6 planned (4 plans, 3 waves)*
