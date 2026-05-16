@@ -37,10 +37,12 @@ func (a *serverSrvAdapter) GetFirewall() *firewalld.Firewall         { return a.
 func (a *serverSrvAdapter) GetStats() services.SrvStats {
 	raw := a.s.GetStats()
 	s := services.SrvStats{
-		Queries:  raw.Queries,
-		Answers:  raw.Answers,
-		Errors:   raw.Errors,
-		NXDomain: raw.NXDOMAIN,
+		Queries:    raw.Queries,
+		Answers:    raw.Answers,
+		Errors:     raw.Errors,
+		NXDomain:   raw.NXDOMAIN,
+		UDPQueries: raw.UDPQueries,
+		TCPQueries: raw.TCPQueries,
 	}
 	if raw.Recursive != nil {
 		s.RecursiveHits = raw.Recursive.Cache.Hits

@@ -37,6 +37,8 @@ type SrvStats struct {
 	Answers         uint64
 	Errors          uint64
 	NXDomain        uint64
+	UDPQueries      uint64 // queries received via UDP
+	TCPQueries      uint64 // queries received via TCP
 	RecursiveHits   uint64
 	RecursiveMisses uint64
 }
