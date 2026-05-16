@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T14:14:54.430Z"
+last_updated: "2026-05-16T14:19:52.164Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 16
-  completed_plans: 4
-  percent: 25
+  completed_plans: 5
+  percent: 31
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 06 (admin-api-stubs-registration) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
-Last activity: 2026-05-16 -- 06-04-PLAN.md complete
+Last activity: 2026-05-16
 
 ## Project Reference
 
@@ -90,3 +90,9 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 6 Plan 04 complete: GetMetrics wired to live s.srv.GetAdminStats() (Queries/UDPQueries/TCPQueries/Errors) with nil guard; separate nil guard for s.cache.GetStats() (CacheHits/CacheMisses); ListConnections/KillConnection changed from silent stubs to codes.Unimplemented; 44 firewalld tests pass; go build ./... + go test -race Phase 6 packages exit 0
 - GetMetrics nil-guard pattern: if s.srv != nil { srvStats = s.srv.GetAdminStats() }; if s.cache != nil { cacheStats = s.cache.GetStats() } — independent guards satisfy T-06-14
 - codes.Unimplemented is the correct gRPC convention for unbuilt features; connection tracking requires transport-layer registry not yet present in miekg/dns or internal/server
+- Phase 6 Plan 05 complete: internal/tsig package created (KeyRing, Verify, Sign, ValidateAlgorithm); TsigKeyConfig in config.go; server.Config.TsigKeys + Server.tsigKeyRing; TsigSecret wired on all dns.Server instances; 9 TSIG unit tests pass; go build ./... passes
+- tsig.KeyConfig in server.Config uses yaml:"-" — populated by main.go after config load to allow config.TsigKeyConfig→tsig.KeyConfig conversion without import cycle
+- GetTsigKeyRing() accessor on Server exposed for Phase 8 AXFR/IXFR signing
+- ValidateAlgorithm rejects hmac-md5/sha1; only sha256/384/512 accepted (T-06-17 mitigated)
+- TSIG secret never logged; KeyRing has no String/Log method (T-06-16 mitigated)
+- miekg/dns auto-verifies TSIG on incoming messages when dns.Server.TsigSecret is populated (T-06-15/T-06-18 mitigated)
