@@ -2,24 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-16T14:19:52.164Z"
+status: verifying
+last_updated: "2026-05-16T14:27:08.335Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 16
-  completed_plans: 5
-  percent: 31
+  completed_plans: 6
+  percent: 38
 ---
 
 # State
 
 ## Current Position
 
-Phase: 06 (admin-api-stubs-registration) — EXECUTING
-Plan: 6 of 6
-Status: Ready to execute
+Phase: 06 (admin-api-stubs-registration) — COMPLETE
+Plan: 6 of 6 (all complete)
+Status: Phase 06 complete — 6/6 plans done; ready for Phase 07
 Last activity: 2026-05-16
 
 ## Project Reference
@@ -96,3 +96,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - ValidateAlgorithm rejects hmac-md5/sha1; only sha256/384/512 accepted (T-06-17 mitigated)
 - TSIG secret never logged; KeyRing has no String/Log method (T-06-16 mitigated)
 - miekg/dns auto-verifies TSIG on incoming messages when dns.Server.TsigSecret is populated (T-06-15/T-06-18 mitigated)
+- Phase 6 Plan 06 complete: KeyRing.Add/Remove added with sync.RWMutex; TsigSecretMap() returns shared internal map (dns.Server.TsigSecret sees mutations without restart); AddTsigKey/RemoveTsigKey/ListTsigKeys RPCs in admin.proto + admin.Service; GetTsigKeyRing() added to AdminSrvAdapter + services.SrvAdapter + serverSrvAdapter + NoopSrvAdapter; go build ./... + go test -race ./internal/tsig/... exit 0
+- Shared map pattern: KeyRing.secrets is assigned to dns.Server.TsigSecret at server creation; Add/Remove mutate this same map under write lock — miekg/dns reads TsigSecret on each TSIG message so changes are immediately visible
+- ListTsigKeys returns name+algorithm only; secret intentionally omitted from TsigKeyInfo (T-06-20 mitigated)

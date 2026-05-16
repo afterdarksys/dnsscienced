@@ -62,7 +62,7 @@ Plans:
 - [x] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
 - [x] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
 - [x] 06-05-PLAN.md — TSIG package: KeyRing + Verify + Sign + config + server wiring (Wave 4)
-- [ ] 06-06-PLAN.md — TSIG admin RPCs: AddTsigKey + RemoveTsigKey + ListTsigKeys + proto regen (Wave 5)
+- [x] 06-06-PLAN.md — TSIG admin RPCs: AddTsigKey + RemoveTsigKey + ListTsigKeys + proto regen (Wave 5)
 
 ### Phase 7: Admin Auth Hardening
 
