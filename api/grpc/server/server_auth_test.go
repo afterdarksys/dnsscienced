@@ -172,9 +172,7 @@ func TestConfigHolder_ReloadValidation(t *testing.T) {
 	t.Skip("stub -- implemented in Plan 06")
 }
 
-func TestConnRegistry_RemoveOnEnd(t *testing.T) {
-	t.Skip("stub -- implemented in Plan 06")
-}
+// TestConnRegistry_RemoveOnEnd moved to conn_registry_test.go (Plan 04)
 
 // TestConfig_HasTLSClientCAs verifies that grpcserver.Config has TLSClientCAs field.
 func TestConfig_HasTLSClientCAs(t *testing.T) {
