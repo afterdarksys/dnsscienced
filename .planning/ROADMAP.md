@@ -64,6 +64,16 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 **Files:** `api/grpc/server/server.go`, `api/grpc/middleware/middleware.go`, `internal/admin/service.go`, `cmd/dnsscienced/main.go`
 
+**Plans:** 6 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Config struct extensions (TLSClientCAs) + atomicKeySet type (Wave 1)
+- [ ] 07-02-PLAN.md — Fix auth bypass, buildCreds() mTLS, update interceptors to atomicKeySet (Wave 2)
+- [ ] 07-03-PLAN.md — AuditUnaryInterceptor + AuditStreamInterceptor in middleware (Wave 2, parallel)
+- [ ] 07-04-PLAN.md — ConnRegistry StatsHandler + wire ListConnections + key-ID context injection (Wave 3)
+- [ ] 07-05-PLAN.md — main.go wiring: TLS fields, audit interceptors, ConnRegistry, SIGHUP reload (Wave 4)
+- [ ] 07-06-PLAN.md — Test suite: AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01 (Wave 5, TDD)
+
 ### Phase 8: RFC 9859 — Generalized DNS Notifications (DSYNC)
 
 **Goal:** Implement RFC 9859: DSYNC record type (type 66), inbound NOTIFY(CDS/CSYNC) handler, outbound notification sender, rate limiting, and zone-level DSYNC record serving.
@@ -98,8 +108,8 @@ Plans:
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
 | 6. Admin API — Stubs & Registration | v1.2 | 0/? | Planning | — |
-| 7. Admin Auth Hardening | v1.2 | 0/? | Planning | — |
+| 7. Admin Auth Hardening | v1.2 | 0/6 | Planned | — |
 | 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 
 ---
-*Last updated: 2026-05-16 — Phase 8 planned (4 plans, 4 waves)*
+*Last updated: 2026-05-16 — Phase 7 planned (6 plans, 5 waves)*
