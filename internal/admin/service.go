@@ -3,10 +3,20 @@ package admin
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/miekg/dns"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/health"
@@ -14,8 +24,6 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/reload"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/zone"
-	"google.golang.org/protobuf/types/known/emptypb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 )
@@ -81,6 +89,191 @@ func NewService(
 		compileBin: compileBin,
 		rrlLimiter: rrlLimiter,
 	}
+}
+
+// validateZoneName rejects names containing path traversal sequences.
+func validateZoneName(name string) error {
+	if name == "" {
+		return status.Error(codes.InvalidArgument, "zone_name is required")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return status.Error(codes.InvalidArgument, "zone_name must not contain '/' or '..'")
+	}
+	return nil
+}
+
+// compileZone runs the external compiler binary.
+func (s *Service) compileZone(ctx context.Context, inputPath, outputPath string) error {
+	if s.compileBin == "" {
+		return fmt.Errorf("compileBin not configured")
+	}
+	cmd := exec.CommandContext(ctx, s.compileBin, "-input", inputPath, "-output", outputPath, "-verify")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("compiler failed: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CreateZone creates a new zone from zone_content, compiles it, and loads it into the server.
+func (s *Service) CreateZone(ctx context.Context, req *pb.AdminCreateZoneRequest) (*pb.AdminCreateZoneResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.zonesDir == "" {
+		return nil, status.Error(codes.Internal, "zonesDir not configured")
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	// Conflict check
+	if existing := s.srv.GetZone(origin); existing != nil {
+		return nil, status.Errorf(codes.AlreadyExists, "zone %s already exists", origin)
+	}
+
+	dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+	dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+
+	// Write zone content
+	if err := os.WriteFile(dnszonePath, []byte(req.ZoneContent), 0644); err != nil {
+		return nil, status.Errorf(codes.Internal, "write zone file: %v", err)
+	}
+
+	// Always compile — dzc required for LoadCompiledZone
+	if err := s.compileZone(ctx, dnszonePath, dzcPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "compile zone: %v", err)
+	}
+
+	z, err := zone.LoadCompiledZone(dzcPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "load compiled zone: %v", err)
+	}
+	if err := s.srv.AddZone(z); err != nil {
+		return nil, status.Errorf(codes.Internal, "add zone: %v", err)
+	}
+
+	stats := z.GetStats()
+	return &pb.AdminCreateZoneResponse{
+		Success:      true,
+		Message:      fmt.Sprintf("Zone %s created with %d records", origin, stats.Records),
+		RecordCount:  int32(stats.Records),
+		ZoneFilePath: dnszonePath,
+	}, nil
+}
+
+// UpdateZone overwrites the zone file and optionally hot-reloads.
+func (s *Service) UpdateZone(ctx context.Context, req *pb.AdminUpdateZoneRequest) (*pb.AdminUpdateZoneResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.zonesDir == "" || s.srv == nil {
+		return nil, status.Error(codes.Internal, "server not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+	dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+
+	if err := os.WriteFile(dnszonePath, []byte(req.ZoneContent), 0644); err != nil {
+		return nil, status.Errorf(codes.Internal, "write zone file: %v", err)
+	}
+
+	if req.Compile || req.Reload {
+		if err := s.compileZone(ctx, dnszonePath, dzcPath); err != nil {
+			return nil, status.Errorf(codes.Internal, "compile zone: %v", err)
+		}
+		if req.Reload {
+			z, err := zone.LoadCompiledZone(dzcPath)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "load compiled zone: %v", err)
+			}
+			if err := s.srv.AddZone(z); err != nil {
+				return nil, status.Errorf(codes.Internal, "reload zone: %v", err)
+			}
+			stats := z.GetStats()
+			return &pb.AdminUpdateZoneResponse{
+				Success:     true,
+				Message:     fmt.Sprintf("Zone %s updated and reloaded (%d records)", dns.Fqdn(domain), stats.Records),
+				RecordCount: int32(stats.Records),
+			}, nil
+		}
+	}
+
+	return &pb.AdminUpdateZoneResponse{
+		Success: true,
+		Message: fmt.Sprintf("Zone %s file updated (not reloaded)", dns.Fqdn(domain)),
+	}, nil
+}
+
+// DeleteZone removes a zone from the server and optionally deletes its files.
+func (s *Service) DeleteZone(ctx context.Context, req *pb.AdminDeleteZoneRequest) (*pb.AdminDeleteZoneResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	s.srv.RemoveZone(origin)
+
+	if req.DeleteFiles && s.zonesDir != "" {
+		_ = os.Remove(filepath.Join(s.zonesDir, domain+".dnszone"))
+		_ = os.Remove(filepath.Join(s.zonesDir, domain+".dzc"))
+	}
+
+	return &pb.AdminDeleteZoneResponse{
+		Success: true,
+		Message: fmt.Sprintf("Zone %s removed", origin),
+	}, nil
+}
+
+// GetZone returns AdminZoneInfo plus zone_content read from the .dnszone file.
+func (s *Service) GetZone(ctx context.Context, req *pb.AdminGetZoneRequest) (*pb.AdminGetZoneResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	z := s.srv.GetZone(origin)
+	if z == nil {
+		return nil, status.Errorf(codes.NotFound, "zone %s not found", origin)
+	}
+
+	stats := z.GetStats()
+	serial := uint32(0)
+	if z.SOA != nil {
+		serial = z.SOA.Serial
+	}
+
+	dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+	dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+	_, compiledErr := os.Stat(dzcPath)
+
+	content, _ := os.ReadFile(dnszonePath) // best-effort; empty if file missing
+
+	return &pb.AdminGetZoneResponse{
+		Zone: &pb.AdminZoneInfo{
+			Name:        origin,
+			RecordCount: int32(stats.Records),
+			LastLoaded:  timestamppb.Now(),
+			SourceFile:  dnszonePath,
+			Compiled:    compiledErr == nil,
+			Serial:      serial,
+		},
+		ZoneContent: string(content),
+	}, nil
 }
 
 // FlushCache flushes cache entries based on criteria
@@ -242,29 +435,38 @@ func (s *Service) RefreshZone(ctx context.Context, req *pb.AdminRefreshZoneReque
 	}, nil
 }
 
-// ListZones lists all loaded zones
+// ListZones lists all loaded zones with SourceFile, Compiled, and Serial fields.
 func (s *Service) ListZones(ctx context.Context, req *emptypb.Empty) (*pb.AdminListZonesResponse, error) {
 	if s.reloadMgr == nil {
 		return &pb.AdminListZonesResponse{}, nil
 	}
+
 	zones := s.reloadMgr.GetAllZones()
 	zoneInfos := make([]*pb.AdminZoneInfo, 0, len(zones))
 
-	for name, zone := range zones {
-		stats := zone.GetStats()
+	for name, z := range zones {
+		domain := strings.TrimSuffix(name, ".")
+		dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+		dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+		_, compiledErr := os.Stat(dzcPath)
+
+		serial := uint32(0)
+		if z.SOA != nil {
+			serial = z.SOA.Serial
+		}
+
+		stats := z.GetStats()
 		zoneInfos = append(zoneInfos, &pb.AdminZoneInfo{
 			Name:        name,
 			RecordCount: int32(stats.Records),
 			LastLoaded:  timestamppb.New(s.reloadMgr.GetLastReload()),
-			SourceFile:  "", // Would need to track this
-			Compiled:    false,
-			Serial:      0, // Would need to extract from SOA
+			SourceFile:  dnszonePath,
+			Compiled:    compiledErr == nil,
+			Serial:      serial,
 		})
 	}
 
-	return &pb.AdminListZonesResponse{
-		Zones: zoneInfos,
-	}, nil
+	return &pb.AdminListZonesResponse{Zones: zoneInfos}, nil
 }
 
 // ReloadZones reloads all zones from disk
@@ -289,47 +491,360 @@ func (s *Service) ReloadZones(ctx context.Context, req *emptypb.Empty) (*pb.Admi
 	}, nil
 }
 
-// SetQueryLogging enables/disables query logging
+// adminBuildRR constructs a dns.RR from the admin proto fields.
+// Handles A, AAAA, CNAME, MX, TXT, NS; falls back to generic for others.
+func adminBuildRR(owner, rtype, content string, ttl uint32, priority int32, origin string) (dns.RR, error) {
+	if rtype == "" {
+		return nil, fmt.Errorf("record_type is required")
+	}
+
+	// Normalize owner to FQDN
+	if owner == "" || owner == "@" {
+		owner = origin
+	} else if owner[len(owner)-1] != '.' {
+		owner = strings.ToLower(owner) + "." + origin
+	}
+	owner = strings.ToLower(owner)
+
+	dnsType, ok := dns.StringToType[strings.ToUpper(rtype)]
+	if !ok {
+		return nil, fmt.Errorf("unknown record type: %s", rtype)
+	}
+
+	ttlVal := ttl
+	if ttlVal == 0 {
+		ttlVal = 3600
+	}
+
+	hdr := dns.RR_Header{Name: owner, Rrtype: dnsType, Class: dns.ClassINET, Ttl: ttlVal}
+
+	switch dnsType {
+	case dns.TypeA:
+		ip := net.ParseIP(content)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP for A record: %s", content)
+		}
+		return &dns.A{Hdr: hdr, A: ip.To4()}, nil
+	case dns.TypeAAAA:
+		ip := net.ParseIP(content)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP for AAAA record: %s", content)
+		}
+		return &dns.AAAA{Hdr: hdr, AAAA: ip.To16()}, nil
+	case dns.TypeCNAME:
+		return &dns.CNAME{Hdr: hdr, Target: dns.Fqdn(content)}, nil
+	case dns.TypeMX:
+		pref := uint16(priority)
+		return &dns.MX{Hdr: hdr, Preference: pref, Mx: dns.Fqdn(content)}, nil
+	case dns.TypeTXT:
+		return &dns.TXT{Hdr: hdr, Txt: []string{content}}, nil
+	case dns.TypeNS:
+		return &dns.NS{Hdr: hdr, Ns: dns.Fqdn(content)}, nil
+	default:
+		// Generic fallback using dns.NewRR
+		rr, err := dns.NewRR(fmt.Sprintf("%s %d IN %s %s", owner, ttlVal, rtype, content))
+		if err != nil {
+			return nil, fmt.Errorf("cannot build RR for type %s: %v", rtype, err)
+		}
+		return rr, nil
+	}
+}
+
+// adminMakeRecordID returns "owner:type:content" — matches ManagementService format.
+func adminMakeRecordID(owner, rtype, content string) string {
+	return fmt.Sprintf("%s:%s:%s", owner, strings.ToUpper(rtype), content)
+}
+
+// adminParseRecordID splits "owner:type:content" — at most 3 parts.
+func adminParseRecordID(id string) (owner, rtype, content string, err error) {
+	parts := strings.SplitN(id, ":", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid record_id %q: expected owner:type:content", id)
+	}
+	return parts[0], parts[1], parts[2], nil
+}
+
+// adminRemoveRecord removes a record matching id (owner:type:content) from the zone's in-memory map.
+// Zone has no RemoveRecord method — we implement it inline here using GetAllRecords + AddRecord.
+func adminRemoveRecord(z *zone.Zone, id string) {
+	owner, rtype, content, err := adminParseRecordID(id)
+	if err != nil {
+		return
+	}
+	dnsType, ok := dns.StringToType[strings.ToUpper(rtype)]
+	if !ok {
+		return
+	}
+	ownerKey := strings.ToLower(owner)
+	typeMap, exists := z.Records[ownerKey]
+	if !exists {
+		return
+	}
+	existing := typeMap[dnsType]
+	var kept []dns.RR
+	for _, rr := range existing {
+		// Build content string the same way ListRecords does
+		hdr := rr.Header()
+		rrContent := strings.TrimSpace(strings.TrimPrefix(rr.String(), hdr.String()))
+		if rrContent != content {
+			kept = append(kept, rr)
+		}
+	}
+	if len(kept) == 0 {
+		delete(typeMap, dnsType)
+		if len(typeMap) == 0 {
+			delete(z.Records, ownerKey)
+		}
+	} else {
+		typeMap[dnsType] = kept
+	}
+}
+
+// CreateRecord adds a new record to a zone.
+func (s *Service) CreateRecord(ctx context.Context, req *pb.AdminCreateRecordRequest) (*pb.AdminCreateRecordResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	z := s.srv.GetZone(origin)
+	if z == nil {
+		return nil, status.Errorf(codes.NotFound, "zone %s not found", origin)
+	}
+
+	rr, err := adminBuildRR(req.Owner, req.RecordType, req.Content, uint32(req.Ttl), req.Priority, origin)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "build record: %v", err)
+	}
+
+	if err := z.AddRecord(rr); err != nil {
+		return nil, status.Errorf(codes.Internal, "add record: %v", err)
+	}
+
+	// Persist and hot-reload (best-effort; skip if zone serialization unavailable)
+	if s.zonesDir != "" && s.compileBin != "" {
+		dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+		dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+		if data, serErr := zone.SerializeDNSZone(z); serErr == nil {
+			_ = os.WriteFile(dnszonePath, data, 0644)
+			if compErr := s.compileZone(ctx, dnszonePath, dzcPath); compErr == nil {
+				if updated, loadErr := zone.LoadCompiledZone(dzcPath); loadErr == nil {
+					_ = s.srv.AddZone(updated)
+				}
+			}
+		}
+	}
+
+	recordID := adminMakeRecordID(rr.Header().Name, req.RecordType, req.Content)
+	return &pb.AdminCreateRecordResponse{
+		Success:  true,
+		Message:  fmt.Sprintf("Record %s added to zone %s", recordID, origin),
+		RecordId: recordID,
+	}, nil
+}
+
+// UpdateRecord replaces an existing record (delete old + add new).
+func (s *Service) UpdateRecord(ctx context.Context, req *pb.AdminUpdateRecordRequest) (*pb.AdminUpdateRecordResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	z := s.srv.GetZone(origin)
+	if z == nil {
+		return nil, status.Errorf(codes.NotFound, "zone %s not found", origin)
+	}
+
+	// Update = delete old + add new
+	owner, rtype, _, err := adminParseRecordID(req.RecordId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	adminRemoveRecord(z, req.RecordId)
+
+	newOwner := req.Owner
+	if newOwner == "" {
+		newOwner = owner
+	}
+	newType := req.RecordType
+	if newType == "" {
+		newType = rtype
+	}
+
+	rr, err := adminBuildRR(newOwner, newType, req.Content, uint32(req.Ttl), req.Priority, origin)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "build record: %v", err)
+	}
+	if err := z.AddRecord(rr); err != nil {
+		return nil, status.Errorf(codes.Internal, "add record: %v", err)
+	}
+
+	return &pb.AdminUpdateRecordResponse{
+		Success: true,
+		Message: fmt.Sprintf("Record %s updated in zone %s", req.RecordId, origin),
+	}, nil
+}
+
+// DeleteRecord removes a record from a zone.
+func (s *Service) DeleteRecord(ctx context.Context, req *pb.AdminDeleteRecordRequest) (*pb.AdminDeleteRecordResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	z := s.srv.GetZone(origin)
+	if z == nil {
+		return nil, status.Errorf(codes.NotFound, "zone %s not found", origin)
+	}
+
+	adminRemoveRecord(z, req.RecordId)
+	return &pb.AdminDeleteRecordResponse{
+		Success: true,
+		Message: fmt.Sprintf("Record %s removed from zone %s", req.RecordId, origin),
+	}, nil
+}
+
+// ListRecords lists all records in a zone with optional type/owner filters.
+func (s *Service) ListRecords(ctx context.Context, req *pb.AdminListRecordsRequest) (*pb.AdminListRecordsResponse, error) {
+	if err := validateZoneName(req.ZoneName); err != nil {
+		return nil, err
+	}
+	if s.srv == nil {
+		return nil, status.Error(codes.Internal, "server adapter not configured")
+	}
+
+	domain := strings.TrimSuffix(req.ZoneName, ".")
+	origin := dns.Fqdn(domain)
+
+	z := s.srv.GetZone(origin)
+	if z == nil {
+		return nil, status.Errorf(codes.NotFound, "zone %s not found", origin)
+	}
+
+	filterType := strings.ToUpper(req.RecordType)
+	filterOwner := strings.ToLower(req.Owner)
+
+	var records []*pb.AdminRecordInfo
+	for _, rr := range z.GetAllRecords() {
+		hdr := rr.Header()
+		rrtype := dns.TypeToString[hdr.Rrtype]
+		owner := hdr.Name
+		content := strings.TrimSpace(strings.TrimPrefix(rr.String(), hdr.String()))
+
+		if filterType != "" && rrtype != filterType {
+			continue
+		}
+		if filterOwner != "" && !strings.HasPrefix(strings.ToLower(owner), filterOwner) {
+			continue
+		}
+
+		records = append(records, &pb.AdminRecordInfo{
+			RecordId:   adminMakeRecordID(owner, rrtype, content),
+			Owner:      owner,
+			RecordType: rrtype,
+			Content:    content,
+			Ttl:        int32(hdr.Ttl),
+		})
+	}
+
+	return &pb.AdminListRecordsResponse{
+		Records:    records,
+		TotalCount: int32(len(records)),
+	}, nil
+}
+
+// SetQueryLogging enables/disables query logging via the live logger.
 func (s *Service) SetQueryLogging(ctx context.Context, req *pb.AdminSetQueryLoggingRequest) (*pb.AdminSetQueryLoggingResponse, error) {
-	// This would require adding methods to the logging package to dynamically enable/disable
-	// For now, return not implemented
+	if s.logger == nil {
+		return nil, status.Error(codes.Unimplemented, "logger not wired (wire in Phase 7)")
+	}
+	if err := s.logger.SetQueryLogEnabled(req.Enabled); err != nil {
+		return &pb.AdminSetQueryLoggingResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to set query logging: %v", err),
+		}, nil
+	}
+	state := "disabled"
+	if req.Enabled {
+		state = "enabled"
+	}
 	return &pb.AdminSetQueryLoggingResponse{
-		Success: false,
-		Message: "Dynamic query logging control not yet implemented",
+		Success: true,
+		Message: fmt.Sprintf("Query logging %s", state),
 	}, nil
 }
 
-// GetQueryLoggingStatus returns query logging status
+// GetQueryLoggingStatus returns the live query logging state from the logger.
 func (s *Service) GetQueryLoggingStatus(ctx context.Context, req *emptypb.Empty) (*pb.AdminQueryLoggingStatusResponse, error) {
-	// Would need to query logging configuration
+	if s.logger == nil {
+		return &pb.AdminQueryLoggingStatusResponse{Enabled: false}, nil
+	}
+	path, format := s.logger.QueryLogConfig()
+	var sizeBytes int64
+	if info, err := os.Stat(path); err == nil {
+		sizeBytes = info.Size()
+	}
 	return &pb.AdminQueryLoggingStatusResponse{
-		Enabled:        false,
-		LogPath:        "",
-		Format:         "",
-		QueriesLogged:  0,
-		LogSizeBytes:   0,
+		Enabled:       s.logger.IsQueryLogEnabled(),
+		LogPath:       path,
+		Format:        format,
+		QueriesLogged: s.logger.QueriesLogged(),
+		LogSizeBytes:  sizeBytes,
 	}, nil
 }
 
-// SetRateLimit adjusts rate limiting configuration
+// SetRateLimit updates the rate limiter configuration.
 func (s *Service) SetRateLimit(ctx context.Context, req *pb.AdminSetRateLimitRequest) (*pb.AdminSetRateLimitResponse, error) {
-	// Would require adding methods to rate limiter for dynamic updates
+	if s.rrlLimiter == nil {
+		return nil, status.Error(codes.Unimplemented, "rate limiter not wired (wire in Phase 7)")
+	}
+	cfg := s.rrlLimiter.GetConfig()
+	cfg.Enabled = req.Enabled
+	if req.ResponsesPerSecond > 0 {
+		cfg.ResponsesPerSecond = int(req.ResponsesPerSecond)
+	}
+	if req.ErrorsPerSecond > 0 {
+		cfg.ErrorsPerSecond = int(req.ErrorsPerSecond)
+	}
+	if req.NxdomainsPerSecond > 0 {
+		cfg.NXDOMAINsPerSecond = int(req.NxdomainsPerSecond)
+	}
+	s.rrlLimiter.UpdateConfig(cfg)
 	return &pb.AdminSetRateLimitResponse{
-		Success: false,
-		Message: "Dynamic rate limit control not yet implemented",
+		Success: true,
+		Message: fmt.Sprintf("Rate limit updated (enabled=%v, rps=%d)", cfg.Enabled, cfg.ResponsesPerSecond),
 	}, nil
 }
 
-// GetRateLimitStatus returns rate limiting status
+// GetRateLimitStatus returns the live rate limiter configuration and stats.
 func (s *Service) GetRateLimitStatus(ctx context.Context, req *emptypb.Empty) (*pb.AdminRateLimitStatusResponse, error) {
-	// Would need to query rate limiter
+	if s.rrlLimiter == nil {
+		return &pb.AdminRateLimitStatusResponse{Enabled: false}, nil
+	}
+	cfg := s.rrlLimiter.GetConfig()
+	stats := s.rrlLimiter.GetStats()
 	return &pb.AdminRateLimitStatusResponse{
-		Enabled:              false,
-		ResponsesPerSecond:   0,
-		ErrorsPerSecond:      0,
-		NxdomainsPerSecond:   0,
-		TotalDropped:         0,
-		TotalSlipped:         0,
+		Enabled:            cfg.Enabled,
+		ResponsesPerSecond: int32(cfg.ResponsesPerSecond),
+		ErrorsPerSecond:    int32(cfg.ErrorsPerSecond),
+		NxdomainsPerSecond: int32(cfg.NXDOMAINsPerSecond),
+		TotalDropped:       stats.Dropped,
+		TotalSlipped:       stats.Slipped,
 	}, nil
 }
 
@@ -378,14 +893,14 @@ func (s *Service) GetMetrics(ctx context.Context, req *emptypb.Empty) (*pb.Admin
 	stats := s.cache.GetStats()
 
 	return &pb.AdminMetricsResponse{
-		QueriesTotal:    stats.Hits + stats.Misses,
-		QueriesUdp:      0, // Would need to track
-		QueriesTcp:      0, // Would need to track
-		CacheHits:       stats.Hits,
-		CacheMisses:     stats.Misses,
+		QueriesTotal:     stats.Hits + stats.Misses,
+		QueriesUdp:       0, // Would need to track
+		QueriesTcp:       0, // Would need to track
+		CacheHits:        stats.Hits,
+		CacheMisses:      stats.Misses,
 		UpstreamFailures: 0, // Would need to track
-		AvgLatencyMs:    0.0,
-		P99LatencyMs:    0.0,
+		AvgLatencyMs:     0.0,
+		P99LatencyMs:     0.0,
 	}, nil
 }
 
