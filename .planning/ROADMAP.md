@@ -37,7 +37,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 ### Phase 6: Admin API — Stubs & Registration
 
-**Goal:** Fix the critical AdminService registration gap (all admin RPCs currently return Unimplemented), implement all 14 stub methods, and make zone/record CRUD fully functional.
+**Goal:** Fix the critical AdminService registration gap (all admin RPCs currently return Unimplemented), implement all 14 stub methods, make zone/record CRUD fully functional, and add TSIG (RFC 2845) key management and verification.
 
 **Scope:**
 - Register `AdminService` in `api/grpc/registry/register.go` (critical — currently absent)
@@ -48,16 +48,21 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 - Complete `GetMetrics` (add UDP/TCP split counters, latency percentiles)
 - Implement `ListConnections`, `KillConnection` (connection tracking in transport layer)
 - Fix `ListZones` missing fields: SourceFile, Compiled (.dzc), Serial (from SOA)
+- TSIG key management: internal/tsig package with KeyRing, Verify, Sign
+- TSIG server wiring: dns.Server.TsigSecret populated from config
+- TSIG admin RPCs: AddTsigKey, RemoveTsigKey, ListTsigKeys
 
-**Files:** `internal/admin/service.go`, `api/grpc/registry/register.go`, `internal/server/server.go`, `internal/zone/`, `internal/rrl/`, `internal/logging/`
+**Files:** `internal/admin/service.go`, `api/grpc/registry/register.go`, `internal/server/server.go`, `internal/zone/`, `internal/rrl/`, `internal/logging/`, `internal/tsig/`, `internal/config/config.go`, `api/grpc/proto/admin.proto`
 
-**Plans:** 4 plans
+**Plans:** 6 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
+- [ ] 06-01-PLAN.md ��� Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
 - [ ] 06-02-PLAN.md — AdminService registration + SrvAdapter wiring + SrvStats UDP/TCP (Wave 2)
 - [ ] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
 - [ ] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
+- [ ] 06-05-PLAN.md — TSIG package: KeyRing + Verify + Sign + config + server wiring (Wave 4)
+- [ ] 06-06-PLAN.md — TSIG admin RPCs: AddTsigKey + RemoveTsigKey + ListTsigKeys + proto regen (Wave 5)
 
 ### Phase 7: Admin Auth Hardening
 
@@ -115,9 +120,9 @@ Plans:
 | 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
-| 6. Admin API — Stubs & Registration | v1.2 | 0/4 | Planning | — |
+| 6. Admin API — Stubs & Registration | v1.2 | 0/6 | Planning | — |
 | 7. Admin Auth Hardening | v1.2 | 0/6 | Planned | — |
 | 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 
 ---
-*Last updated: 2026-05-16 — Phase 6 planned (4 plans, 3 waves)*
+*Last updated: 2026-05-16 — Phase 6 gap plans added (6 plans, 5 waves — TSIG support added)*
