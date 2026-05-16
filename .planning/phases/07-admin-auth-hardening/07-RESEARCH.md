@@ -300,8 +300,8 @@ The fix depends on what mechanisms are configured:
 | APIKeys configured | mTLS configured | Policy |
 |-------------------|-----------------|--------|
 | yes | yes | Require valid key AND valid cert |
-| yes | no | Require valid key; cert optional |
-| no | yes | Require valid cert; no key needed |
+| yes | no | **[SUPERSEDED by D-01 — AND policy applies; TLSClientCAs is mandatory per D-02]** |
+| no | yes | **[SUPERSEDED by D-01 — AND policy applies; both mTLS AND API key always required]** |
 | no | no | **REJECT at startup** — refuse to start with no auth |
 
 The interceptor should be restructured to: check if auth is configured at all (fail fast if
