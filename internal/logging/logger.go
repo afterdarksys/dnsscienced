@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -60,6 +61,9 @@ type Logger struct {
 
 	// Query log file handle
 	queryFile *os.File
+
+	// queriesLogged counts queries logged since startup (atomic, no lock needed)
+	queriesLogged atomic.Int64
 }
 
 // NewLogger creates a new Logger instance
@@ -217,11 +221,14 @@ type QueryLogEntry struct {
 	ThreatDetails string    `json:"threat_details,omitempty"`
 }
 
-// LogQuery logs a DNS query
+// LogQuery logs a DNS query. Thread-safe: holds l.mu for the full body.
 func (l *Logger) LogQuery(entry QueryLogEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if !l.config.EnableQueryLog {
 		return
 	}
+	l.queriesLogged.Add(1)
 
 	l.queryLog.Info().
 		Time("timestamp", entry.Timestamp).
@@ -250,6 +257,44 @@ func (l *Logger) Close() error {
 		return l.queryFile.Close()
 	}
 	return nil
+}
+
+// SetQueryLogEnabled dynamically enables or disables query logging.
+// Thread-safe; holds l.mu during file open/close.
+func (l *Logger) SetQueryLogEnabled(enabled bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if enabled && !l.config.EnableQueryLog {
+		l.config.EnableQueryLog = true
+		return l.setupQueryLog()
+	}
+	if !enabled && l.config.EnableQueryLog {
+		l.config.EnableQueryLog = false
+		if l.queryFile != nil {
+			_ = l.queryFile.Close()
+			l.queryFile = nil
+		}
+	}
+	return nil
+}
+
+// IsQueryLogEnabled returns whether query logging is currently active.
+func (l *Logger) IsQueryLogEnabled() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.config.EnableQueryLog
+}
+
+// QueryLogConfig returns the current query log path and format.
+func (l *Logger) QueryLogConfig() (path, format string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.config.QueryLogPath, l.config.QueryLogFormat
+}
+
+// QueriesLogged returns the number of queries logged since startup.
+func (l *Logger) QueriesLogged() int64 {
+	return l.queriesLogged.Load()
 }
 
 // Global logger instance (will be initialized by main)
