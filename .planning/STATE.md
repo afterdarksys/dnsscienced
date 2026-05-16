@@ -3,31 +3,31 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T16:11:22.556Z"
-last_activity: 2026-05-16 -- Phase 07 planning complete
+last_updated: "2026-05-16T16:18:43.340Z"
+last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 17
-  completed_plans: 6
-  percent: 35
+  completed_plans: 7
+  percent: 41
 ---
 
 # State
 
 ## Current Position
 
-Phase: 07
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-16 -- Phase 07 planning complete
+Phase: 07 (admin-auth-hardening) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute (07-00 complete)
+Last activity: 2026-05-16 -- 07-00 test stubs created (12 stub functions, 3 files)
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 06 — admin-api-stubs-registration
+**Current focus:** Phase 07 — admin-auth-hardening
 
 ## Accumulated Context
 
@@ -99,3 +99,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 6 Plan 06 complete: KeyRing.Add/Remove added with sync.RWMutex; TsigSecretMap() returns shared internal map (dns.Server.TsigSecret sees mutations without restart); AddTsigKey/RemoveTsigKey/ListTsigKeys RPCs in admin.proto + admin.Service; GetTsigKeyRing() added to AdminSrvAdapter + services.SrvAdapter + serverSrvAdapter + NoopSrvAdapter; go build ./... + go test -race ./internal/tsig/... exit 0
 - Shared map pattern: KeyRing.secrets is assigned to dns.Server.TsigSecret at server creation; Add/Remove mutate this same map under write lock — miekg/dns reads TsigSecret on each TSIG message so changes are immediately visible
 - ListTsigKeys returns name+algorithm only; secret intentionally omitted from TsigKeyInfo (T-06-20 mitigated)
+- Phase 7 Plan 00 complete: 12 stub test functions created across 3 test files (server_auth_test.go, audit_test.go, service_conn_test.go); all compile and skip; go test ./api/grpc/... ./internal/admin/... exits 0
+- server_auth_test.go placed in package server (white-box) for Plan 06 unexported access; service_conn_test.go in package admin_test to avoid import cycle
+- Stub-first TDD: t.Skip() stubs registered so Plans 01-06 can use go test -run TestFunctionName in verify blocks before implementation exists
