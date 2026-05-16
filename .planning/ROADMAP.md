@@ -105,7 +105,7 @@ Plans:
 
 Plans:
 - [x] 08-01-PLAN.md — DSYNC type 66 codec + per-IP rate limiter (TDD, Wave 1)
-- [ ] 08-02-PLAN.md — Inbound NOTIFY handler + _dsync discovery + outbound sender (Wave 2)
+- [x] 08-02-PLAN.md — Inbound NOTIFY handler + _dsync discovery + outbound sender (Wave 2)
 - [ ] 08-03-PLAN.md — Config structs + server opcode dispatch wiring (Wave 3)
 - [ ] 08-04-PLAN.md — Zone file TYPE66 test + full build/test gate (Wave 4)
 - [ ] 08-05-PLAN.md — Webhook delivery + source IP allowlist (Wave 3)

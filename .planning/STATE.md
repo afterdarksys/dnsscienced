@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T21:55:21.985Z"
+last_updated: "2026-05-16T22:15:11.008Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 19
-  completed_plans: 14
-  percent: 74
+  completed_plans: 15
+  percent: 79
 ---
 
 # State
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 08 (rfc9859-dsync) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-05-16
 
@@ -124,3 +124,8 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - DSYNCRecord plain struct codec (not dns.RR interface); EncodeDSYNC returns hex string for dns.RFC3597.Rdata; DecodeDSYNC minimum 6-byte length check before any field access (T-08-01 mitigated)
 - NotifyLimiter.Close() uses sync.Once — safe for defer + explicit call patterns without double-close panic (T-08-02: sweepStale evicts visitors lastSeen > 10min)
 - Test helpers exported on NotifyLimiter: ForceLastSeen, SweepStaleForTest, VisitorCount for white-box eviction testing
+- Phase 8 Plan 02 complete: Handler(Allower, NotifyLimiter, zerolog.Logger) with ACL-first/rate-limit-second REFUSED guards; AllowAllACL() stub satisfies Allower interface (Plan 05 replaces); scheduleDelegationCheck stub (log only); DiscoverDSYNC traverses _dsync.<zone> parent labels (RFC 9859 s3), bounded loop, malformed skipped; DSYNCNotifier buffered channel(64) non-blocking Notify(); sendNotify SetNotify+Qtype override SOA->CDS/CSYNC; 26 tests pass; go build/test ./internal/dsync/... exits 0
+- Allower interface Check(net.IP) bool: NewHandler signature is FINAL — Plan 05 provides SourceACL satisfying this; Plan 03 uses AllowAllACL() as default
+- HandleInbound order: empty question -> FormatError; ACL -> REFUSED; rate limit -> REFUSED; then NOERROR + async goroutine (CDS/CSYNC only)
+- DiscoverDSYNC loop: len(labels)-1 bound (T-08-05); returns all records from first candidate with results
+- sendNotify: m.SetNotify(zone) then m.Question[0].Qtype = qtype (override SOA); strings.TrimSuffix(target, ".") before JoinHostPort
