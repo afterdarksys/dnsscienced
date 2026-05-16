@@ -57,7 +57,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 **Plans:** 6 plans
 
 Plans:
-- [ ] 06-01-PLAN.md ��� Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
+- [x] 06-01-PLAN.md ��� Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
 - [ ] 06-02-PLAN.md — AdminService registration + SrvAdapter wiring + SrvStats UDP/TCP (Wave 2)
 - [ ] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
 - [ ] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
@@ -120,7 +120,7 @@ Plans:
 | 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
-| 6. Admin API — Stubs & Registration | v1.2 | 0/6 | Planning | — |
+| 6. Admin API — Stubs & Registration | v1.2 | 1/6 | In Progress|  |
 | 7. Admin Auth Hardening | v1.2 | 0/6 | Planned | — |
 | 8. RFC 9859 DSYNC | v1.2 | 0/4 | Planned | — |
 

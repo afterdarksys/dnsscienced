@@ -3,31 +3,31 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T13:48:44.221Z"
-last_activity: 2026-05-16 -- Phase 06 planning complete
+last_updated: "2026-05-16T13:58:00.681Z"
+last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 16
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 6
 ---
 
 # State
 
 ## Current Position
 
-Phase: 5 — Redirect Load Balancing
-Plan: 05-02 (COMPLETE)
+Phase: 06 (admin-api-stubs-registration) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-05-16 -- Phase 06 planning complete
+Last activity: 2026-05-16 -- 06-01-PLAN.md complete
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Planning next milestone
+**Current focus:** Phase 06 — admin-api-stubs-registration
 
 ## Accumulated Context
 
@@ -77,3 +77,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Integration test pattern: always set ThreatIntel.BlockThreshold: 100 when testing Starlark — default threshold 0 blocks all queries before stage 4
 - Duplicate test symbol: TestUpstreamPool_RoundRobin and TestUpstreamPool_SingleUpstream live in forwarder_test.go (Plan 01); not re-declared in firewalld_test.go
 - REDIR-01 through REDIR-04 all delivered; Phase 5 (Redirect Load Balancing) complete
+- Phase 6 Plan 01 complete: Logger.SetQueryLogEnabled/IsQueryLogEnabled/QueryLogConfig/QueriesLogged added; LogQuery race fixed (holds mu); rrl.Limiter cfgMu + GetConfig/UpdateConfig added; server.Server udpQueries/tcpQueries atomics + Stats.UDPQueries/TCPQueries; go build ./... + go test -race ./internal/logging/... ./internal/rrl/... ./internal/server/... exit 0
+- cfg snapshot pattern: Check() takes RLock, copies l.cfg to local var, RUnlocks — avoids holding lock during hot query path; helpers refactored to pkg-level fns accepting Config snapshot
+- Pre-existing vet error: internal/protective/engine.go line 410 "return copies lock value" — pre-dates Phase 6, deferred
