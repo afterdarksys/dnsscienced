@@ -62,6 +62,9 @@ type Config struct {
 	// Conversion from config.TsigKeyConfig to tsig.KeyConfig happens at config load time.
 	TsigKeys []tsig.KeyConfig `yaml:"-"`
 
+	// DSYNC configures inbound RFC 9859 NOTIFY(CDS/CSYNC) handling.
+	DSYNC DSYNCConfig `yaml:"dsync"`
+
 	// Performance tuning
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
@@ -70,6 +73,19 @@ type Config struct {
 	// UDP buffer sizes
 	UDPReadBuffer  int `yaml:"udp_read_buffer"`
 	UDPWriteBuffer int `yaml:"udp_write_buffer"`
+}
+
+// DSYNCConfig configures inbound RFC 9859 NOTIFY handling.
+type DSYNCConfig struct {
+	// Enabled: accept and process inbound NOTIFY(CDS/CSYNC) messages.
+	Enabled bool `yaml:"enabled"`
+
+	// RateLimitPerMin: max NOTIFY messages processed per source IP per minute.
+	// Default: 5 (per D-13: 5 NOTIFY/min per source IP).
+	RateLimitPerMin int `yaml:"rate_limit_per_min"`
+
+	// Burst: token bucket burst size. Default: 10.
+	Burst int `yaml:"burst"`
 }
 
 // DefaultConfig returns default server configuration

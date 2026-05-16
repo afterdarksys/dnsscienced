@@ -128,6 +128,9 @@ type ZoneConfig struct {
 	// A zone whose digest does not match its ZONEMD RR will be refused.
 	// (NSD 4.3.0+ automatic ZONEMD verification)
 	VerifyZONEMD bool `yaml:"verify_zonemd,omitempty"`
+
+	// DSYNC controls RFC 9859 DSYNC outbound notification for this zone.
+	DSYNC *ZoneDSYNCConfig `yaml:"dsync,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
@@ -143,6 +146,17 @@ type ZoneDNSSECConfig struct {
 	NSEC3             bool          `yaml:"nsec3"`               // Use NSEC3 instead of NSEC
 	NSEC3Iterations   uint16        `yaml:"nsec3_iterations"`    // NSEC3 iterations
 	NSEC3SaltLength   uint8         `yaml:"nsec3_salt_length"`   // NSEC3 salt length in bytes
+}
+
+// ZoneDSYNCConfig controls RFC 9859 generalized notifications for a zone.
+type ZoneDSYNCConfig struct {
+	// NotifyParent enables outbound NOTIFY to discovered _dsync parent endpoints
+	// when this zone's CDS/CSYNC records change.
+	NotifyParent bool `yaml:"notify_parent"`
+
+	// PropagationDelay: wait this long after serial increment before sending
+	// outbound NOTIFY. Default: 60s (RFC 9859 recommendation).
+	PropagationDelay time.Duration `yaml:"propagation_delay"`
 }
 
 // DHCPConfig holds DHCP server configuration
