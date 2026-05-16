@@ -12,6 +12,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// CtxKeyID is the context key for the authenticated API key ID (D-08: audit logging).
+// Set by apiKeyUnaryInterceptor after successful Bearer token validation.
+// Handlers retrieve it via ctx.Value(middleware.CtxKeyID{}) for audit log annotations.
+type CtxKeyID struct{}
+
 var (
 	RPCRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "dnsscienced_grpc_requests_total", Help: "Total gRPC requests"},

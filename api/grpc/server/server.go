@@ -2,16 +2,20 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"sync/atomic"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/codes"
 
+	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
 	"github.com/dnsscience/dnsscienced/internal/config"
 )
 
@@ -21,6 +25,36 @@ type Config struct {
 	TLSKeyFile   string
 	TLSClientCAs string           // path to PEM CA bundle for mTLS; enables client cert verification
 	APIKeys      []config.APIKey  // named API keys per D-04; empty + no TLSClientCAs -> startup error
+}
+
+// buildCreds constructs gRPC transport credentials from cfg.
+// When TLSClientCAs is set, mTLS is enabled: clients must present a cert
+// signed by one of the CAs in that bundle (D-01 transport layer).
+func buildCreds(cfg Config) (credentials.TransportCredentials, error) {
+	if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
+		return nil, fmt.Errorf("TLSCertFile and TLSKeyFile are required")
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("tls key pair: %w", err)
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	}
+	if cfg.TLSClientCAs != "" {
+		caPEM, err := os.ReadFile(cfg.TLSClientCAs)
+		if err != nil {
+			return nil, fmt.Errorf("client CA file %q: %w", cfg.TLSClientCAs, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("no valid CA certs parsed from %q", cfg.TLSClientCAs)
+		}
+		tlsCfg.ClientCAs = pool
+		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return credentials.NewTLS(tlsCfg), nil
 }
 
 // keyIndex holds both lookup maps for the API key set.
@@ -84,22 +118,32 @@ type Deps struct {
 	Stream   []grpc.StreamServerInterceptor
 }
 
-// New creates a TLS gRPC server with basic auth interceptors.
+// New creates a TLS gRPC server with fail-closed auth guards per D-01 and D-02.
 func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, error) {
+	// D-02: Fail closed - refuse to start without BOTH auth mechanisms.
+	// D-01: Both mTLS and API key auth are required simultaneously.
+	if cfg.TLSClientCAs == "" {
+		return nil, nil, fmt.Errorf("admin server requires tls_client_cas to be configured (D-02: fail closed)")
+	}
+	if len(cfg.APIKeys) == 0 {
+		return nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
+	}
+
 	var opts []grpc.ServerOption
 
-	// TLS config
-	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
-		creds, err := credentials.NewServerTLSFromFile(cfg.TLSCertFile, cfg.TLSKeyFile)
+	// TLS config via buildCreds (mTLS-capable; supports RequireAndVerifyClientCert when TLSClientCAs is set)
+	if cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" {
+		creds, err := buildCreds(cfg)
 		if err != nil {
 			return nil, nil, fmt.Errorf("tls: %w", err)
 		}
 		opts = append(opts, grpc.Creds(creds))
 	}
 
-	// Interceptors (chain)
-	unaries := append([]grpc.UnaryServerInterceptor{apiKeyUnaryInterceptor(cfg.APIKeys)}, deps.Unary...)
-	streams := append([]grpc.StreamServerInterceptor{apiKeyStreamInterceptor(cfg.APIKeys)}, deps.Stream...)
+	// Interceptors (chain) using atomicKeySet for AND auth per D-01
+	keySet := newAtomicKeySet(cfg.APIKeys)
+	unaries := append([]grpc.UnaryServerInterceptor{apiKeyUnaryInterceptor(keySet)}, deps.Unary...)
+	streams := append([]grpc.StreamServerInterceptor{apiKeyStreamInterceptor(keySet)}, deps.Stream...)
 	opts = append(opts,
 		grpc.ChainUnaryInterceptor(unaries...),
 		grpc.ChainStreamInterceptor(streams...),
@@ -117,49 +161,51 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, error) {
 	return gs, ln, nil
 }
 
-func apiKeyUnaryInterceptor(validKeys []config.APIKey) grpc.UnaryServerInterceptor {
-	set := make(map[string]struct{}, len(validKeys))
-	for _, k := range validKeys {
-		set[k.Secret] = struct{}{}
-	}
+// apiKeyUnaryInterceptor enforces Bearer token auth on every request.
+// Per D-01: API key auth is ALWAYS required (AND with mTLS, not OR).
+// On success, stores the key's named ID in context for audit logging (D-08).
+func apiKeyUnaryInterceptor(keySet *atomicKeySet) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if len(set) > 0 {
-			md, _ := metadata.FromIncomingContext(ctx)
-			if !authorize(md, set) {
-				return nil, status.Error(codes.Unauthenticated, "unauthenticated")
-			}
+		md, _ := metadata.FromIncomingContext(ctx)
+		token := extractBearer(md)
+		if token == "" {
+			return nil, status.Error(codes.Unauthenticated, "missing bearer token")
 		}
+		id, ok := keySet.Lookup(token)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+		}
+		// Store the named key ID in context for audit interceptor (D-08: log id, not secret)
+		ctx = context.WithValue(ctx, middleware.CtxKeyID{}, id)
 		return handler(ctx, req)
 	}
 }
 
-func apiKeyStreamInterceptor(validKeys []config.APIKey) grpc.StreamServerInterceptor {
-	set := make(map[string]struct{}, len(validKeys))
-	for _, k := range validKeys {
-		set[k.Secret] = struct{}{}
-	}
+// apiKeyStreamInterceptor enforces Bearer token auth on every stream.
+// Per D-01: API key auth is ALWAYS required (AND with mTLS, not OR).
+func apiKeyStreamInterceptor(keySet *atomicKeySet) grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if len(set) > 0 {
-			md, _ := metadata.FromIncomingContext(ss.Context())
-			if !authorize(md, set) {
-				return status.Error(codes.Unauthenticated, "unauthenticated")
-			}
+		md, _ := metadata.FromIncomingContext(ss.Context())
+		token := extractBearer(md)
+		if token == "" {
+			return status.Error(codes.Unauthenticated, "missing bearer token")
+		}
+		_, ok := keySet.Lookup(token)
+		if !ok {
+			return status.Error(codes.Unauthenticated, "invalid bearer token")
 		}
 		return handler(srv, ss)
 	}
 }
 
-func authorize(md metadata.MD, set map[string]struct{}) bool {
-	if md == nil {
-		return false
-	}
+// extractBearer returns the Bearer token from gRPC metadata authorization header.
+func extractBearer(md metadata.MD) string {
 	vals := md.Get("authorization")
 	for _, v := range vals {
-		var token string
-		fmt.Sscanf(v, "Bearer %s", &token)
-		if _, ok := set[token]; ok {
-			return true
+		const prefix = "Bearer "
+		if len(v) > len(prefix) && v[:len(prefix)] == prefix {
+			return v[len(prefix):]
 		}
 	}
-	return false
+	return ""
 }
