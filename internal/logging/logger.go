@@ -66,6 +66,14 @@ type Logger struct {
 	queriesLogged atomic.Int64
 }
 
+// NewWithWriter creates a Logger that writes structured JSON to w.
+// Intended for tests that need to capture log output via bytes.Buffer.
+func NewWithWriter(w io.Writer) *Logger {
+	l := &Logger{}
+	l.systemLog = zerolog.New(w).With().Timestamp().Logger()
+	return l
+}
+
 // NewLogger creates a new Logger instance
 func NewLogger(cfg Config) (*Logger, error) {
 	l := &Logger{
