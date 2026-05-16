@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T22:52:44.209Z"
+last_updated: "2026-05-16T23:21:45.081Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 19
-  completed_plans: 16
-  percent: 84
+  completed_plans: 17
+  percent: 89
 ---
 
 # State
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 08 (rfc9859-dsync) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-05-16
 
@@ -133,3 +133,6 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - NOTIFY opcode dispatch: inserted at top of handleDNS, BEFORE pool.GetMessage and defensive.CheckBlackhole — NOTIFY must short-circuit before all query processing
 - pool.PutMessage resets Rcode: testResponseWriter must capture Rcode int in WriteMsg (not hold *dns.Msg pointer) to survive defer reset
 - dsyncHandler logger: zerolog.Nop() — Server has no logger field; avoids scope creep without disrupting Phase 8 scope
+- Phase 8 Plan 04 complete: internal/zone/parser_dsync_test.go created; TestDSYNCZoneFile_BIND (single TYPE66 record via miekg/dns RFC3597 fallback) and TestDSYNCZoneFile_MultipleRecords (two TYPE66 records) both PASS; all 5 build/test gate commands confirmed by human verification (go build./..., dsync codec, NOTIFY dispatch, zone file loading); two pre-existing failures in internal/engine and internal/resolver are documented non-regressions
+- miekg/dns ParseBIND automatically uses dns.RFC3597 for TYPE66 (unknown-type RFC3597 fallback); no production code changes needed in zone package — DSYNC zone file support was already functional
+- Zone file test vector: 003b0100350161016200 = CDS(59), NOTIFY(1), port 53(0x0035), target a.b. (wire: 016101 6200); use simplified target to keep hex short
