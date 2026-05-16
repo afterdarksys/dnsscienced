@@ -40,7 +40,7 @@ func TestBuildCreds_BadCAFile(t *testing.T) {
 
 // TestNew_NoAuthMechanism verifies New() returns an error when both TLSClientCAs and APIKeys are unset.
 func TestNew_NoAuthMechanism(t *testing.T) {
-	_, _, _, err := New(Config{ListenAddr: ":0"}, Deps{})
+	_, _, _, _, err := New(Config{ListenAddr: ":0"}, Deps{})
 	if err == nil {
 		t.Fatal("New: expected error with no auth configured, got nil")
 	}
@@ -48,7 +48,7 @@ func TestNew_NoAuthMechanism(t *testing.T) {
 
 // TestNew_NoTLS verifies New() returns an error when TLSClientCAs is empty (fail-closed D-02).
 func TestNew_NoTLS(t *testing.T) {
-	_, _, _, err := New(Config{
+	_, _, _, _, err := New(Config{
 		ListenAddr: ":0",
 		APIKeys:    []config.APIKey{{ID: "k1", Secret: "s1"}},
 		// TLSClientCAs intentionally empty
@@ -60,7 +60,7 @@ func TestNew_NoTLS(t *testing.T) {
 
 // TestNew_NoAPIKeys verifies New() returns an error when APIKeys is empty even if TLSClientCAs is set.
 func TestNew_NoAPIKeys(t *testing.T) {
-	_, _, _, err := New(Config{
+	_, _, _, _, err := New(Config{
 		ListenAddr:   ":0",
 		TLSClientCAs: "/some/ca.pem",
 		// APIKeys intentionally empty
@@ -168,8 +168,87 @@ func TestAtomicKeyReload(t *testing.T) {
 	}
 }
 
+// TestConfigHolder_ReloadValidation verifies that ConfigHolder.Reload() validates
+// D-01/D-02 requirements before swapping config (bad config leaves current intact).
 func TestConfigHolder_ReloadValidation(t *testing.T) {
-	t.Skip("stub -- implemented in Plan 06")
+	keys := []config.APIKey{{ID: "k1", Secret: "s1"}}
+	ks := newAtomicKeySet(keys)
+	holder := NewConfigHolder(Config{
+		TLSCertFile:  "/path/cert.pem",
+		TLSKeyFile:   "/path/key.pem",
+		TLSClientCAs: "/path/ca.pem",
+		APIKeys:      keys,
+	}, ks, nil)
+
+	// Reload without TLSClientCAs must fail (D-02)
+	err := holder.Reload(Config{
+		APIKeys: []config.APIKey{{ID: "k2", Secret: "s2"}},
+	})
+	if err == nil {
+		t.Fatal("Reload: expected error when TLSClientCAs is empty, got nil")
+	}
+
+	// Reload without APIKeys must fail (D-01)
+	err = holder.Reload(Config{
+		TLSClientCAs: "/path/ca.pem",
+	})
+	if err == nil {
+		t.Fatal("Reload: expected error when APIKeys is empty, got nil")
+	}
+
+	// Current config retained after failed reload - key s1 still valid
+	id, ok := ks.Lookup("s1")
+	if !ok || id != "k1" {
+		t.Fatalf("Reload: current config must be retained after failed reload; Lookup(s1)=(%q,%v)", id, ok)
+	}
+}
+
+// TestConfigHolder_ReloadKeysOnly verifies that ConfigHolder.Reload() hot-swaps API keys
+// when TLS paths are unchanged (no TLS rebuild needed).
+func TestConfigHolder_ReloadKeysOnly(t *testing.T) {
+	keys := []config.APIKey{{ID: "k1", Secret: "s1"}}
+	ks := newAtomicKeySet(keys)
+	holder := NewConfigHolder(Config{
+		TLSClientCAs: "/path/ca.pem",
+		APIKeys:      keys,
+	}, ks, nil)
+
+	// Reload with same TLS paths but different API keys
+	newKeys := []config.APIKey{{ID: "k2", Secret: "s2"}}
+	err := holder.Reload(Config{
+		TLSClientCAs: "/path/ca.pem",
+		APIKeys:      newKeys,
+	})
+	if err != nil {
+		t.Fatalf("Reload: unexpected error: %v", err)
+	}
+
+	// Old key must be gone
+	if _, ok := ks.Lookup("s1"); ok {
+		t.Fatal("Reload: old key s1 must not be valid after reload")
+	}
+	// New key must be valid
+	id, ok := ks.Lookup("s2")
+	if !ok || id != "k2" {
+		t.Fatalf("Reload: new key not valid after reload; Lookup(s2)=(%q,%v)", id, ok)
+	}
+
+	// CurrentConfig must reflect new config
+	got := holder.CurrentConfig()
+	if len(got.APIKeys) != 1 || got.APIKeys[0].ID != "k2" {
+		t.Fatalf("CurrentConfig: expected k2 after reload, got %+v", got.APIKeys)
+	}
+}
+
+// TestNew_ReturnsConfigHolder verifies New() returns 5 values including *ConfigHolder.
+func TestNew_ReturnsConfigHolder(t *testing.T) {
+	// New() should fail with missing TLS files (D-02), but the important thing
+	// is the signature is 5 returns: (*grpc.Server, net.Listener, *ConnRegistry, *ConfigHolder, error)
+	_, _, _, _, err := New(Config{ListenAddr: ":0"}, Deps{})
+	// error expected (no auth configured), but 5-return signature must compile
+	if err == nil {
+		t.Fatal("New: expected error with no auth configured, got nil")
+	}
 }
 
 // TestConnRegistry_RemoveOnEnd moved to conn_registry_test.go (Plan 04)
