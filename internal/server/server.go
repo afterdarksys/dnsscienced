@@ -128,6 +128,10 @@ type Server struct {
 	errors   atomic.Uint64
 	nxdomain atomic.Uint64
 
+	// Transport-level counters
+	udpQueries atomic.Uint64
+	tcpQueries atomic.Uint64
+
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -327,6 +331,13 @@ func (s *Server) GetFirewall() *firewalld.Firewall {
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
+
+	// Transport split counter
+	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+		s.udpQueries.Add(1)
+	} else {
+		s.tcpQueries.Add(1)
+	}
 
 	// Get client IP
 	var clientIP net.IP
@@ -678,6 +689,10 @@ type Stats struct {
 	Errors   uint64
 	NXDOMAIN uint64
 
+	// Transport-level counters
+	UDPQueries uint64
+	TCPQueries uint64
+
 	Recursive *resolver.Stats
 	RRL       *rrl.Stats
 }
@@ -685,10 +700,12 @@ type Stats struct {
 // GetStats returns current statistics
 func (s *Server) GetStats() Stats {
 	stats := Stats{
-		Queries:  s.queries.Load(),
-		Answers:  s.answers.Load(),
-		Errors:   s.errors.Load(),
-		NXDOMAIN: s.nxdomain.Load(),
+		Queries:    s.queries.Load(),
+		Answers:    s.answers.Load(),
+		Errors:     s.errors.Load(),
+		NXDOMAIN:   s.nxdomain.Load(),
+		UDPQueries: s.udpQueries.Load(),
+		TCPQueries: s.tcpQueries.Load(),
 	}
 
 	if s.recursive != nil {
