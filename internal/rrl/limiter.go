@@ -109,7 +109,8 @@ type bucket struct {
 
 // Limiter implements Response Rate Limiting
 type Limiter struct {
-	cfg Config
+	cfg   Config
+	cfgMu sync.RWMutex // protects cfg
 
 	// Buckets: map[hash]*bucket
 	// Hash = fnv(client-prefix || qname || qtype || category)
@@ -148,31 +149,36 @@ func NewLimiter(cfg Config) *Limiter {
 
 // Check checks if a response should be rate limited
 func (l *Limiter) Check(clientIP net.IP, qname string, qtype uint16, category int) Action {
-	if !l.cfg.Enabled {
+	// Snapshot cfg under RLock so concurrent UpdateConfig calls don't race
+	l.cfgMu.RLock()
+	cfg := l.cfg // value copy
+	l.cfgMu.RUnlock()
+
+	if !cfg.Enabled {
 		l.allowed.Add(1)
 		return ActionAllow
 	}
 
 	// Check if client is exempt
-	if l.isExempt(clientIP) {
+	if isExempt(cfg, clientIP) {
 		l.allowed.Add(1)
 		return ActionAllow
 	}
 
 	// Get rate limit for this category
-	limit := l.getLimitForCategory(category)
+	limit := getLimitForCategory(cfg, category)
 	if limit == 0 {
 		l.allowed.Add(1)
 		return ActionAllow // No limit for this category
 	}
 
 	// Calculate bucket hash
-	hash := l.bucketHash(clientIP, qname, qtype, category)
+	hash := bucketHash(cfg, clientIP, qname, qtype, category)
 
 	// Get or create bucket
 	now := time.Now().Unix()
 	bucketInterface, _ := l.buckets.LoadOrStore(hash, &bucket{
-		tokens:    int32(limit * l.cfg.Window),
+		tokens:    int32(limit * cfg.Window),
 		lastCheck: now,
 	})
 	b := bucketInterface.(*bucket)
@@ -184,7 +190,7 @@ func (l *Limiter) Check(clientIP net.IP, qname string, qtype uint16, category in
 	if elapsed > 0 {
 		// Refill tokens: (elapsed seconds) * (tokens per second)
 		refill := int32(elapsed * int64(limit))
-		maxTokens := int32(limit * l.cfg.Window)
+		maxTokens := int32(limit * cfg.Window)
 
 		// Add tokens, capped at max
 		currentTokens := atomic.LoadInt32(&b.tokens)
@@ -211,7 +217,7 @@ func (l *Limiter) Check(clientIP net.IP, qname string, qtype uint16, category in
 	atomic.AddInt32(&b.tokens, 1)
 
 	// Apply slip: 1 in N get TC bit, rest are dropped
-	if l.cfg.Slip > 0 && (hash%uint64(l.cfg.Slip)) == 0 {
+	if cfg.Slip > 0 && (hash%uint64(cfg.Slip)) == 0 {
 		l.slipped.Add(1)
 		return ActionSlip
 	}
@@ -220,9 +226,9 @@ func (l *Limiter) Check(clientIP net.IP, qname string, qtype uint16, category in
 	return ActionDrop
 }
 
-// isExempt checks if client IP is in exempt list
-func (l *Limiter) isExempt(ip net.IP) bool {
-	for _, prefix := range l.cfg.ExemptPrefixes {
+// isExempt checks if client IP is in exempt list (uses Config snapshot from caller)
+func isExempt(cfg Config, ip net.IP) bool {
+	for _, prefix := range cfg.ExemptPrefixes {
 		if prefix.Contains(ip) {
 			return true
 		}
@@ -230,33 +236,33 @@ func (l *Limiter) isExempt(ip net.IP) bool {
 	return false
 }
 
-// getLimitForCategory returns rate limit for a category
-func (l *Limiter) getLimitForCategory(category int) int {
+// getLimitForCategory returns rate limit for a category (uses Config snapshot from caller)
+func getLimitForCategory(cfg Config, category int) int {
 	switch category {
 	case CategoryResponse:
-		return l.cfg.ResponsesPerSecond
+		return cfg.ResponsesPerSecond
 	case CategoryError:
-		return l.cfg.ErrorsPerSecond
+		return cfg.ErrorsPerSecond
 	case CategoryNXDOMAIN:
-		return l.cfg.NXDOMAINsPerSecond
+		return cfg.NXDOMAINsPerSecond
 	case CategoryReferral:
-		return l.cfg.ReferralsPerSecond
+		return cfg.ReferralsPerSecond
 	case CategoryNodata:
-		return l.cfg.NodataPerSecond
+		return cfg.NodataPerSecond
 	case CategoryAll:
-		return l.cfg.AllPerSecond
+		return cfg.AllPerSecond
 	default:
-		return l.cfg.AllPerSecond
+		return cfg.AllPerSecond
 	}
 }
 
 // bucketHash creates a hash for bucket identification
 // Hash includes: client prefix + qname + qtype + category
-func (l *Limiter) bucketHash(ip net.IP, qname string, qtype uint16, category int) uint64 {
+func bucketHash(cfg Config, ip net.IP, qname string, qtype uint16, category int) uint64 {
 	h := fnv.New64a()
 
 	// Write client prefix (not full IP for privacy/efficiency)
-	prefix := l.getPrefix(ip)
+	prefix := getPrefix(cfg, ip)
 	h.Write(prefix)
 
 	// Write query name
@@ -273,12 +279,12 @@ func (l *Limiter) bucketHash(ip net.IP, qname string, qtype uint16, category int
 	return h.Sum64()
 }
 
-// getPrefix returns the prefix of an IP for bucketing
-func (l *Limiter) getPrefix(ip net.IP) []byte {
+// getPrefix returns the prefix of an IP for bucketing (uses Config snapshot from caller)
+func getPrefix(cfg Config, ip net.IP) []byte {
 	ip = ip.To4()
 	if ip != nil {
 		// IPv4: use /24 prefix (default)
-		prefixLen := l.cfg.IPv4PrefixLen
+		prefixLen := cfg.IPv4PrefixLen
 		if prefixLen == 0 {
 			prefixLen = 24
 		}
@@ -288,7 +294,7 @@ func (l *Limiter) getPrefix(ip net.IP) []byte {
 
 	// IPv6: use /56 prefix (default)
 	ip = ip.To16()
-	prefixLen := l.cfg.IPv6PrefixLen
+	prefixLen := cfg.IPv6PrefixLen
 	if prefixLen == 0 {
 		prefixLen = 56
 	}
@@ -315,8 +321,12 @@ func (l *Limiter) cleanup() {
 
 // performCleanup removes old buckets
 func (l *Limiter) performCleanup() {
+	l.cfgMu.RLock()
+	window := l.cfg.Window
+	l.cfgMu.RUnlock()
+
 	now := time.Now().Unix()
-	cutoff := now - int64(l.cfg.Window*2) // Keep buckets for 2x window
+	cutoff := now - int64(window*2) // Keep buckets for 2x window
 
 	l.buckets.Range(func(key, value interface{}) bool {
 		b := value.(*bucket)
@@ -364,6 +374,21 @@ func (l *Limiter) GetStats() Stats {
 		Total:    total,
 		DropRate: dropRate,
 	}
+}
+
+// GetConfig returns a copy of the current rate-limit configuration.
+func (l *Limiter) GetConfig() Config {
+	l.cfgMu.RLock()
+	defer l.cfgMu.RUnlock()
+	return l.cfg
+}
+
+// UpdateConfig atomically replaces the rate-limit configuration.
+// In-flight bucket tokens are not reset; new limits apply to subsequent checks.
+func (l *Limiter) UpdateConfig(cfg Config) {
+	l.cfgMu.Lock()
+	defer l.cfgMu.Unlock()
+	l.cfg = cfg
 }
 
 // CategorizeResponse determines the RRL category for a response
