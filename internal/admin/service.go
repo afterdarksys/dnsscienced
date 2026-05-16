@@ -12,22 +12,49 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/health"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/reload"
+	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/zone"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 )
 
+// AdminSrvStats mirrors services.SrvStats — defined here to avoid import cycle.
+type AdminSrvStats struct {
+	Queries    uint64
+	UDPQueries uint64
+	TCPQueries uint64
+	Errors     uint64
+	NXDomain   uint64
+}
+
+// AdminSrvAdapter is the minimal interface admin.Service needs from the live DNS server.
+// The concrete implementation (serverSrvAdapter in cmd/dnsscienced/main.go) satisfies both
+// this interface and services.SrvAdapter via structural typing.
+type AdminSrvAdapter interface {
+	GetZone(origin string) *zone.Zone
+	AddZone(z *zone.Zone) error
+	RemoveZone(origin string)
+	GetAdminStats() AdminSrvStats
+}
+
 // Service implements the AdminService gRPC interface
 type Service struct {
 	pb.UnimplementedAdminServiceServer
 
-	cache       *cache.ShardedCache
-	reloadMgr   *reload.Manager
-	healthMgr   *health.Health
-	logger      *logging.Logger
-	startTime   time.Time
-	shutdownFn  func() error
+	cache      *cache.ShardedCache
+	reloadMgr  *reload.Manager
+	healthMgr  *health.Health
+	logger     *logging.Logger
+	startTime  time.Time
+	shutdownFn func() error
+
+	// New fields for zone/record CRUD, metrics, rate limiting
+	srv        AdminSrvAdapter
+	zonesDir   string
+	compileBin string
+	rrlLimiter *rrl.Limiter // may be nil; nil-guarded at call sites
 }
 
 // NewService creates a new admin service
@@ -37,6 +64,10 @@ func NewService(
 	healthMgr *health.Health,
 	logger *logging.Logger,
 	shutdownFn func() error,
+	srv AdminSrvAdapter,
+	zonesDir string,
+	compileBin string,
+	rrlLimiter *rrl.Limiter,
 ) *Service {
 	return &Service{
 		cache:      cache,
@@ -45,6 +76,10 @@ func NewService(
 		logger:     logger,
 		startTime:  time.Now(),
 		shutdownFn: shutdownFn,
+		srv:        srv,
+		zonesDir:   zonesDir,
+		compileBin: compileBin,
+		rrlLimiter: rrlLimiter,
 	}
 }
 
