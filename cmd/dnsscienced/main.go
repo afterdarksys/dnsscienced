@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
 	"github.com/dnsscience/dnsscienced/api/grpc/registry"
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
@@ -20,6 +21,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -223,6 +225,7 @@ func main() {
 	// Start admin gRPC server if enabled
 	var grpcSrv *grpc.Server
 	var grpcListener net.Listener
+	var configHolder *grpcserver.ConfigHolder
 	if loadedCfg != nil && loadedCfg.Admin.Enabled {
 		fmt.Printf("Starting admin gRPC API on %s\n", loadedCfg.Admin.Listen)
 
@@ -230,33 +233,47 @@ func main() {
 		compileBin := filepath.Join(filepath.Dir(os.Args[0]), "dnsscienced-compile")
 
 		grpcCfg := grpcserver.Config{
-			ListenAddr: loadedCfg.Admin.Listen,
-			APIKeys:    loadedCfg.Admin.APIKeys,
+			ListenAddr:   loadedCfg.Admin.Listen,
+			APIKeys:      loadedCfg.Admin.APIKeys,
+			TLSCertFile:  loadedCfg.Admin.TLSCertFile,
+			TLSKeyFile:   loadedCfg.Admin.TLSKeyFile,
+			TLSClientCAs: loadedCfg.Admin.TLSClientCAs,
 		}
 
+		// Build a logger for admin middleware audit entries.
+		adminLogger, err := logging.NewLogger(logging.Config{Level: "info"})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating admin logger: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Register closure is called inside New() before the registry is returned,
+		// so we pass nil here and fix it up post-construction via RegisterConnRegistry.
+		// Plan 05 restructures this to wire the live registry after New() returns.
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				// connRegistry is passed as nil here because it is returned by grpcserver.New() AFTER
-				// Register is invoked. Plan 05 will restructure to pass the live registry.
 				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil)
 			},
+			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
+			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
 		}
 
-		var err error
-		var registry *grpcserver.ConnRegistry
-		grpcSrv, grpcListener, registry, err = grpcserver.New(grpcCfg, grpcDeps)
-		_ = registry // passed to admin.NewService when wired (Plan 04 completes wiring)
+		var connReg *grpcserver.ConnRegistry
+		grpcSrv, grpcListener, connReg, configHolder, err = grpcserver.New(grpcCfg, grpcDeps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating gRPC server: %v\n", err)
-		} else {
-			// Start gRPC server in background
-			go func() {
-				fmt.Printf("Admin gRPC API listening on %s\n", loadedCfg.Admin.Listen)
-				if err := grpcSrv.Serve(grpcListener); err != nil {
-					fmt.Fprintf(os.Stderr, "gRPC server error: %v\n", err)
-				}
-			}()
+			os.Exit(1)
 		}
+		_ = connReg // connReg is wired via nil in RegisterAll closure above (chicken-and-egg);
+		            // Plan 05 completes the live-registry wiring post-construction.
+
+		// Start gRPC server in background
+		go func() {
+			fmt.Printf("Admin gRPC API listening on %s\n", loadedCfg.Admin.Listen)
+			if err := grpcSrv.Serve(grpcListener); err != nil {
+				fmt.Fprintf(os.Stderr, "gRPC server error: %v\n", err)
+			}
+		}()
 		fmt.Println()
 	}
 
@@ -265,12 +282,41 @@ func main() {
 		go printStats(srv)
 	}
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal. SIGHUP triggers a full config reload per D-09.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	<-sigCh
-	fmt.Println()
+sigloop:
+	for sig := range sigCh {
+		switch sig {
+		case syscall.SIGHUP:
+			// D-09: Full config reload (not just API keys). D-11: atomic swap via ConfigHolder.
+			if configHolder == nil || *configFile == "" {
+				fmt.Println("SIGHUP received but no config file or config holder available; ignoring")
+				continue
+			}
+			reloaded, err := config.Load(*configFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "SIGHUP: failed to parse config: %v; keeping current config\n", err)
+				continue
+			}
+			newGrpcCfg := grpcserver.Config{
+				ListenAddr:   reloaded.Admin.Listen,
+				APIKeys:      reloaded.Admin.APIKeys,
+				TLSCertFile:  reloaded.Admin.TLSCertFile,
+				TLSKeyFile:   reloaded.Admin.TLSKeyFile,
+				TLSClientCAs: reloaded.Admin.TLSClientCAs,
+			}
+			if err := configHolder.Reload(newGrpcCfg); err != nil {
+				fmt.Fprintf(os.Stderr, "SIGHUP: config reload failed: %v; keeping current config\n", err)
+				continue
+			}
+			fmt.Printf("SIGHUP: admin config reloaded (%d keys)\n", len(reloaded.Admin.APIKeys))
+		case syscall.SIGINT, syscall.SIGTERM:
+			fmt.Println()
+			break sigloop
+		}
+	}
 
 	// Graceful shutdown
 	fmt.Println("Shutting down...")

@@ -89,7 +89,7 @@ cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, 
 		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil)
 	}
 
-	gs, ln, _, err := server.New(cfg, deps)
+	gs, ln, _, _, err := server.New(cfg, deps)
 	if err != nil { log.Fatalf("server: %v", err) }
 	log.Printf("gRPC listening on %s", ln.Addr())
 	if err := gs.Serve(ln); err != nil { log.Fatalf("serve: %v", err) }
