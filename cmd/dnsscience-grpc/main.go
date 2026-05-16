@@ -2,12 +2,15 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
 	"github.com/dnsscience/dnsscienced/api/grpc/registry"
 	"github.com/dnsscience/dnsscienced/api/grpc/server"
+	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -35,19 +38,29 @@ if *cfgPath != "" {
 // Resolve effective settings (flags override config, then defaults)
 eListen := ":8443"
 eMetrics := ":9090"
-eAPIKeys := []string{}
+eAPIKeys := []config.APIKey{}
 eCert := ""
 eKey := ""
 if fileCfg != nil {
 	if fileCfg.Listen != "" { eListen = fileCfg.Listen }
 	if fileCfg.MetricsListen != "" { eMetrics = fileCfg.MetricsListen }
-	if len(fileCfg.APIKeys) > 0 { eAPIKeys = append(eAPIKeys, fileCfg.APIKeys...) }
+	// ConfigFile.APIKeys are plain secrets; synthesize IDs as "key-N" for backwards compat
+	for i, secret := range fileCfg.APIKeys {
+		eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("key-%d", i+1), Secret: secret})
+	}
 	if fileCfg.TLSCert != "" { eCert = fileCfg.TLSCert }
 	if fileCfg.TLSKey != "" { eKey = fileCfg.TLSKey }
 }
 if *listen != "" { eListen = *listen }
 if *metricsListen != "" { eMetrics = *metricsListen }
-if *apiKeys != "" { eAPIKeys = append(eAPIKeys, *apiKeys) }
+// Command-line api-keys flag: plain comma-separated secrets; synthesize IDs
+if *apiKeys != "" {
+	for i, secret := range strings.Split(*apiKeys, ",") {
+		if secret = strings.TrimSpace(secret); secret != "" {
+			eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("cli-%d", i+1), Secret: secret})
+		}
+	}
+}
 if *cert != "" { eCert = *cert }
 if *key != "" { eKey = *key }
 

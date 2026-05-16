@@ -54,11 +54,21 @@ type TsigKeyConfig struct {
 	Secret string `yaml:"secret"`
 }
 
+// APIKey represents a named API key for admin authentication.
+// The ID is used in audit logs (per D-08); the Secret is the bearer token value.
+type APIKey struct {
+	ID     string `yaml:"id"`
+	Secret string `yaml:"secret"`
+}
+
 // AdminConfig holds admin API configuration
 type AdminConfig struct {
-	Enabled bool     `yaml:"enabled"`
-	Listen  string   `yaml:"listen"`
-	APIKeys []string `yaml:"api_keys"`
+	Enabled      bool     `yaml:"enabled"`
+	Listen       string   `yaml:"listen"`
+	APIKeys      []APIKey `yaml:"api_keys"`    // named key structs per D-04
+	TLSCertFile  string   `yaml:"tls_cert_file"`
+	TLSKeyFile   string   `yaml:"tls_key_file"`
+	TLSClientCAs string   `yaml:"tls_client_cas"` // path to PEM CA bundle for mTLS client verification
 }
 
 // ZoneConfig holds per-zone configuration (BIND-style)
