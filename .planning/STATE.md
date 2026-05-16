@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T22:15:11.008Z"
+last_updated: "2026-05-16T22:52:44.209Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 19
-  completed_plans: 15
-  percent: 79
+  completed_plans: 16
+  percent: 84
 ---
 
 # State
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 08 (rfc9859-dsync) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-05-16
 
@@ -129,3 +129,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - HandleInbound order: empty question -> FormatError; ACL -> REFUSED; rate limit -> REFUSED; then NOERROR + async goroutine (CDS/CSYNC only)
 - DiscoverDSYNC loop: len(labels)-1 bound (T-08-05); returns all records from first candidate with results
 - sendNotify: m.SetNotify(zone) then m.Question[0].Qtype = qtype (override SOA); strings.TrimSuffix(target, ".") before JoinHostPort
+- Phase 8 Plan 03 complete: ZoneDSYNCConfig + DSYNCConfig structs YAML-parseable; DSYNC field on server.Config + ZoneConfig; dsyncHandler *dsync.Handler field on Server; New() initializes with rpm/burst defaults (D-13/T-08-10); handleDNS opcode dispatch before pool/defensive (T-08-09); 3 integration tests pass; go build ./... passes
+- NOTIFY opcode dispatch: inserted at top of handleDNS, BEFORE pool.GetMessage and defensive.CheckBlackhole — NOTIFY must short-circuit before all query processing
+- pool.PutMessage resets Rcode: testResponseWriter must capture Rcode int in WriteMsg (not hold *dns.Msg pointer) to survive defer reset
+- dsyncHandler logger: zerolog.Nop() — Server has no logger field; avoids scope creep without disrupting Phase 8 scope
