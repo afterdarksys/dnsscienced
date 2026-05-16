@@ -8,11 +8,13 @@ dnsscienced is a production Go-based authoritative and caching DNS server. The d
 
 Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
 
-## Current State: v1.1 Shipped
+## Current State: v1.1 Shipped + Phase 06 Complete
 
 **Shipped:** 2026-04-23
 **Test suite:** 44 firewalld tests, all passing under `-race`
 **Binary:** `dnsscienced-linux` (Go-only, no CGO)
+
+**Phase 06 complete (2026-05-16):** Admin API fully wired — all AdminService RPCs registered and callable via gRPC; zone/record CRUD persisted to disk; metrics/logging/rate-limit controls wired to live subsystems; TSIG (RFC 2845) key management implemented end-to-end with runtime Add/Remove RPCs.
 
 ## Requirements
 
@@ -98,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-23 after v1.1 milestone*
+*Last updated: 2026-05-16 after Phase 06 completion*
