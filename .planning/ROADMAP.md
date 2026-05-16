@@ -82,7 +82,7 @@ Plans:
 Plans:
 - [x] 07-01-PLAN.md — Config struct extensions (TLSClientCAs) + atomicKeySet type (Wave 1)
 - [x] 07-02-PLAN.md — Fix auth bypass, buildCreds() mTLS, update interceptors to atomicKeySet (Wave 2)
-- [ ] 07-03-PLAN.md — AuditUnaryInterceptor + AuditStreamInterceptor in middleware (Wave 2, parallel)
+- [x] 07-03-PLAN.md — AuditUnaryInterceptor + AuditStreamInterceptor in middleware (Wave 2, parallel)
 - [ ] 07-04-PLAN.md — ConnRegistry StatsHandler + wire ListConnections + key-ID context injection (Wave 3)
 - [ ] 07-05-PLAN.md — main.go wiring: TLS fields, audit interceptors, ConnRegistry, SIGHUP reload (Wave 4)
 - [ ] 07-06-PLAN.md — Test suite: AUTH-01 through AUTH-04, AUDIT-01, CONN-01, RELOAD-01 (Wave 5, TDD)
