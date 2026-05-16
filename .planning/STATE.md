@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T16:35:51.592Z"
+last_updated: "2026-05-16T16:46:35.070Z"
 last_activity: 2026-05-16
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 17
-  completed_plans: 10
-  percent: 59
+  completed_plans: 11
+  percent: 65
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 07 (admin-auth-hardening) — EXECUTING
-Plan: 5 of 7
-Status: Ready to execute (07-03 complete)
-Last activity: 2026-05-16 -- 07-03 audit interceptors with D-07 fields
+Plan: 6 of 7
+Status: Ready to execute (07-04 complete)
+Last activity: 2026-05-16 -- 07-04 ConnRegistry StatsHandler + ListConnections wired
 
 ## Project Reference
 
@@ -110,3 +110,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - AND auth policy: Bearer token ALWAYS required even when mTLS active (D-01: cert proves machine, key proves operator intent)
 - Phase 7 Plan 03 complete: callerIdentity(ctx) reads named key id from CtxKeyID context (D-08); falls back to cert CN then "unknown"; remoteAddr(ctx) extracts peer.Addr.String() with nil guard (T-07-03-03); AuditUnaryInterceptor and AuditStreamInterceptor emit all D-07 fields: caller, method, code, latency_ms, remote_addr, timestamp (RFC3339); 9 tests pass; go build ./... passes
 - callerIdentity returns "key:"+id (named id per D-08, not hash); never logs raw secret; CtxKeyID was pre-existing from Plan 02 deviation
+- Phase 7 Plan 04 complete: ConnRegistry implements grpc stats.Handler; TagConn assigns UUID stored in ctx + registry; HandleConn removes on ConnEnd; EnrichConn updates KeyID+CertCN (D-12) called by auth interceptor (Plan 05); New() returns 4 values (*grpc.Server, net.Listener, *ConnRegistry, error); ListConnections wired to connRegistry.List() with grpcserver.SplitHostPort; KillConnection returns success=false + API limitation message; go build ./... passes; all tests pass
+- grpcserver.New() 4-return signature: srv, lis, registry, err := grpcserver.New(cfg, deps); Plan 05 will extend to 5-return with ConfigHolder
+- ConnIDFromContext exported for auth interceptor to call registry.EnrichConn(connID, keyID, certCN) in Plan 05
+- Chicken-and-egg: connRegistry passed as nil to RegisterAll (Register runs inside New() before registry returned); Plan 05 restructures to pass live registry post-construction
