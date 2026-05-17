@@ -389,10 +389,10 @@ func (s *Server) Stop() error {
 		s.firewall.Shutdown()
 	}
 
-	// DSYNCNotifier has no Stop() method; its worker goroutine exits when the
-	// events channel is garbage-collected after the process shuts down. The
-	// channel is not closed explicitly because no sentinel is needed — the
-	// background goroutine simply terminates with the process.
+	// Stop the DSYNC notifier worker goroutine.
+	if s.dsyncNotifier != nil {
+		s.dsyncNotifier.Close()
+	}
 
 	fmt.Println("DNS server stopped")
 	return nil

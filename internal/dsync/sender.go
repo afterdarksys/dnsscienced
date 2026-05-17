@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,12 +17,16 @@ import (
 // Events are enqueued on a buffered channel; a worker goroutine drains the channel
 // and applies a propagation delay before discovery and sending (T-08-07: buffered
 // channel of 64 drops events when full rather than blocking the caller).
+// Call Close() to stop the worker goroutine and release resources.
 type DSYNCNotifier struct {
 	resolver         string
 	propagationDelay time.Duration
 	events           chan notifyEvent
 	log              zerolog.Logger
 	metrics          *DSYNCMetrics // nil = no metrics; set via SetMetrics after construction
+	stopCh           chan struct{}
+	doneCh           chan struct{}
+	closeOnce        sync.Once
 }
 
 type notifyEvent struct {
@@ -43,9 +48,20 @@ func NewDSYNCNotifier(resolver string, propagationDelay time.Duration, log zerol
 		propagationDelay: propagationDelay,
 		events:           make(chan notifyEvent, 64),
 		log:              log.With().Str("component", "dsync-notifier").Logger(),
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
 	}
 	go n.worker()
 	return n
+}
+
+// Close stops the worker goroutine and waits for it to exit.
+// Safe to call multiple times; subsequent calls are no-ops.
+func (n *DSYNCNotifier) Close() {
+	n.closeOnce.Do(func() {
+		close(n.stopCh)
+		<-n.doneCh
+	})
 }
 
 // SetMetrics configures Prometheus metrics for the notifier.
@@ -66,44 +82,70 @@ func (n *DSYNCNotifier) Notify(zone string, qtype uint16) {
 }
 
 // worker drains the event queue, applies propagation delay, discovers _dsync
-// endpoints, and sends outbound NOTIFYs.
+// endpoints, and sends outbound NOTIFYs. Exits when stopCh is closed.
 func (n *DSYNCNotifier) worker() {
+	defer close(n.doneCh)
 	client := &dns.Client{Net: "udp", Timeout: 5 * time.Second}
-	for ev := range n.events {
-		if n.propagationDelay > 0 {
-			time.Sleep(n.propagationDelay)
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case ev, ok := <-n.events:
+			if !ok {
+				return
+			}
+			n.processEvent(ev, client)
 		}
+	}
+}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		records, err := DiscoverDSYNC(ctx, ev.zone, client, n.resolver)
-		cancel()
+// processEvent handles a single notify event: applies propagation delay,
+// discovers _dsync endpoints, and sends outbound NOTIFYs.
+func (n *DSYNCNotifier) processEvent(ev notifyEvent, client *dns.Client) {
+	if n.propagationDelay > 0 {
+		// Use a timer so Close() can interrupt the delay via stopCh.
+		timer := time.NewTimer(n.propagationDelay)
+		select {
+		case <-n.stopCh:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 
-		if err != nil || len(records) == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	records, err := DiscoverDSYNC(ctx, ev.zone, client, n.resolver)
+	cancel()
+
+	if err != nil || len(records) == 0 {
+		return
+	}
+
+	for _, rec := range records {
+		// Filter: only send to endpoints that match the event's qtype
+		// and use the NOTIFY scheme.
+		if rec.RRtype != ev.qtype || rec.Scheme != DSYNCSchemeNOTIFY {
 			continue
 		}
+		n.sendToEndpoint(ev, rec)
+	}
+}
 
-		for _, rec := range records {
-			// Filter: only send to endpoints that match the event's qtype
-			// and use the NOTIFY scheme.
-			if rec.RRtype != ev.qtype || rec.Scheme != DSYNCSchemeNOTIFY {
-				continue
-			}
-			ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := sendNotify(ctx2, ev.zone, ev.qtype, rec.Target, rec.Port); err != nil {
-				n.log.Error().Err(err).
-					Str("zone", ev.zone).
-					Str("target", rec.Target).
-					Msg("sendNotify failed")
-				if n.metrics != nil {
-					n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "failed").Inc()
-				}
-			} else {
-				if n.metrics != nil {
-					n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "sent").Inc()
-				}
-			}
-			cancel2()
+// sendToEndpoint sends a single NOTIFY to one discovered DSYNC endpoint.
+// Uses defer cancel() so the context is always released even if sendNotify panics.
+func (n *DSYNCNotifier) sendToEndpoint(ev notifyEvent, rec DSYNCRecord) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sendNotify(ctx, ev.zone, ev.qtype, rec.Target, rec.Port); err != nil {
+		n.log.Error().Err(err).
+			Str("zone", ev.zone).
+			Str("target", rec.Target).
+			Msg("sendNotify failed")
+		if n.metrics != nil {
+			n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "failed").Inc()
 		}
+	} else if n.metrics != nil {
+		n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "sent").Inc()
 	}
 }
 

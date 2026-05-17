@@ -25,6 +25,7 @@ func newTestNotifier() *dsync.DSYNCNotifier {
 // enqueues via DSYNCNotifier.Notify and returns success=true.
 func TestSendDSYNCNotify_Valid(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	resp, err := svc.SendDSYNCNotify(context.Background(), &pb.SendDSYNCNotifyRequest{
@@ -42,6 +43,7 @@ func TestSendDSYNCNotify_Valid(t *testing.T) {
 // TestSendDSYNCNotify_ValidCSYNC verifies that qtype=CSYNC is also accepted.
 func TestSendDSYNCNotify_ValidCSYNC(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	resp, err := svc.SendDSYNCNotify(context.Background(), &pb.SendDSYNCNotifyRequest{
@@ -57,6 +59,7 @@ func TestSendDSYNCNotify_ValidCSYNC(t *testing.T) {
 // TestSendDSYNCNotify_EmptyZone verifies that zone_name="" returns codes.InvalidArgument.
 func TestSendDSYNCNotify_EmptyZone(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	_, err := svc.SendDSYNCNotify(context.Background(), &pb.SendDSYNCNotifyRequest{
@@ -73,6 +76,7 @@ func TestSendDSYNCNotify_EmptyZone(t *testing.T) {
 // TestSendDSYNCNotify_InvalidQtype verifies that qtype="MX" returns codes.InvalidArgument.
 func TestSendDSYNCNotify_InvalidQtype(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	_, err := svc.SendDSYNCNotify(context.Background(), &pb.SendDSYNCNotifyRequest{
@@ -89,6 +93,7 @@ func TestSendDSYNCNotify_InvalidQtype(t *testing.T) {
 // TestSendDSYNCNotify_QtypeCaseInsensitive verifies lowercase qtype is rejected (strict match).
 func TestSendDSYNCNotify_QtypeCaseSensitive(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	_, err := svc.SendDSYNCNotify(context.Background(), &pb.SendDSYNCNotifyRequest{
@@ -107,6 +112,7 @@ func TestSendDSYNCNotify_QtypeCaseSensitive(t *testing.T) {
 // This test is structural — it confirms the service delegates to Notify only.
 func TestDSYNCService_DoesNotIncrementOutboundAtEnqueue(t *testing.T) {
 	notifier := newTestNotifier()
+	t.Cleanup(notifier.Close)
 	svc := NewDSYNCService(notifier)
 
 	// Call SendDSYNCNotify — fire and forget.
