@@ -75,26 +75,20 @@ func (ti *ThreatIntel) compileIPScores() {
 func (ti *ThreatIntel) Score(qctx *QueryContext) int {
 	score := 0
 
-	// IP reputation.
+	// Static scores (each uses ti.mu internally, not dynMu).
 	score += ti.ipScore(qctx.ClientIP)
+	score += ti.zoneScore(qctx.Name)
 
-	// Dynamic IP score (from live feed).
+	// Dynamic scores — single RLock covers both dynIPs and dynDomains,
+	// avoiding two separate lock round-trips per query (PERF-001).
 	ti.dynMu.RLock()
 	if s, ok := ti.dynIPs[qctx.ClientIP.String()]; ok {
 		score += s
 	}
-	ti.dynMu.RUnlock()
-
-	// Zone / domain score: walk labels looking for a configured zone match.
-	score += ti.zoneScore(qctx.Name)
-
-	// Dynamic domain score.
-	ti.dynMu.RLock()
-	bare := strings.TrimSuffix(qctx.Name, ".")
-	labels := dns.SplitDomainName(bare)
-	for i := range labels {
-		suffix := strings.ToLower(strings.Join(labels[i:], "."))
-		if s, ok := ti.dynDomains[suffix]; ok {
+	// Lowercase once before the loop; avoids one allocation per label (PERF-002).
+	bare := strings.ToLower(strings.TrimSuffix(qctx.Name, "."))
+	for i, labels := 0, dns.SplitDomainName(bare); i < len(labels); i++ {
+		if s, ok := ti.dynDomains[strings.Join(labels[i:], ".")]; ok {
 			score += s
 			break
 		}
