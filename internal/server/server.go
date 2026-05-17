@@ -88,6 +88,11 @@ type DSYNCConfig struct {
 
 	// Burst: token bucket burst size. Default: 10.
 	Burst int `yaml:"burst"`
+
+	// Resolver is the DNS resolver address used for outbound _dsync discovery queries
+	// (e.g., "8.8.8.8:53"). Must NOT be the server's own listen address.
+	// Default: "8.8.8.8:53".
+	Resolver string `yaml:"resolver"`
 }
 
 // DefaultConfig returns default server configuration
@@ -260,9 +265,13 @@ func New(cfg Config) (*Server, error) {
 		s.dsyncHandler.SetMetrics(dsyncMetrics)
 
 		// Create outbound DSYNC notifier (RFC 9859 sender).
-		// Uses the server's own UDP address as resolver for _dsync discovery.
 		// PropagationDelay defaults to 60s per RFC 9859 recommendation.
-		s.dsyncNotifier = dsync.NewDSYNCNotifier(cfg.UDPAddr, 60*time.Second, zerolog.Nop())
+		// Resolver defaults to 8.8.8.8:53 if not configured.
+		dsyncResolver := cfg.DSYNC.Resolver
+		if dsyncResolver == "" {
+			dsyncResolver = "8.8.8.8:53"
+		}
+		s.dsyncNotifier = dsync.NewDSYNCNotifier(dsyncResolver, 60*time.Second, zerolog.Nop())
 		s.dsyncNotifier.SetMetrics(dsyncMetrics)
 
 		// Webhook: per-zone config (ZoneDSYNCConfig.WebhookURL) — not available at
