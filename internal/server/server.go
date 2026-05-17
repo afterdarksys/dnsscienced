@@ -451,6 +451,15 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// RFC 9859: dispatch NOTIFY opcode before query processing.
 	// This must be FIRST — before pool.GetMessage, before defensive checks.
 	if r.Opcode == dns.OpcodeNotify {
+		// Guard against unknown transport types that leave clientIP nil.
+		// An unknown address type cannot be rate-limited or ACL-checked safely.
+		if clientIP == nil {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
 		if s.dsyncHandler != nil {
 			s.dsyncHandler.HandleInbound(w, r, clientIP)
 		} else {
