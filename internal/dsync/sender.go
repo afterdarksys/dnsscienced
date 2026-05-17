@@ -23,7 +23,7 @@ type DSYNCNotifier struct {
 	propagationDelay time.Duration
 	events           chan notifyEvent
 	log              zerolog.Logger
-	metrics          *DSYNCMetrics // nil = no metrics; set via SetMetrics after construction
+	metrics          *DSYNCMetrics // nil = no metrics; prefer passing via NewDSYNCNotifier constructor
 	stopCh           chan struct{}
 	doneCh           chan struct{}
 	closeOnce        sync.Once
@@ -40,14 +40,18 @@ type notifyEvent struct {
 //     _dsync discovery queries.
 //   - propagationDelay is the wait before sending outbound NOTIFY (RFC 9859
 //     recommends waiting for zone propagation; 60s is a reasonable default).
+//   - metrics: optional Prometheus metrics (nil = no metrics). Passed at
+//     construction to eliminate the data race window between worker start
+//     and SetMetrics call.
 //
 // A background worker goroutine is started immediately.
-func NewDSYNCNotifier(resolver string, propagationDelay time.Duration, log zerolog.Logger) *DSYNCNotifier {
+func NewDSYNCNotifier(resolver string, propagationDelay time.Duration, log zerolog.Logger, metrics *DSYNCMetrics) *DSYNCNotifier {
 	n := &DSYNCNotifier{
 		resolver:         resolver,
 		propagationDelay: propagationDelay,
 		events:           make(chan notifyEvent, 64),
 		log:              log.With().Str("component", "dsync-notifier").Logger(),
+		metrics:          metrics,
 		stopCh:           make(chan struct{}),
 		doneCh:           make(chan struct{}),
 	}
@@ -64,8 +68,8 @@ func (n *DSYNCNotifier) Close() {
 	})
 }
 
-// SetMetrics configures Prometheus metrics for the notifier.
-// Called after NewDSYNCNotifier by server wiring code. Does not change constructor signature.
+// SetMetrics configures Prometheus metrics for the notifier after construction.
+// Prefer passing metrics directly to NewDSYNCNotifier to avoid data races.
 func (n *DSYNCNotifier) SetMetrics(m *DSYNCMetrics) {
 	n.metrics = m
 }

@@ -30,7 +30,7 @@ func (rejectAll) Check(_ net.IP) bool { return false }
 // newTestHandler creates a Handler suitable for unit tests.
 // It uses a zerolog.Nop() logger to suppress output.
 func newTestHandler(limiter *NotifyLimiter, acl Allower) *Handler {
-	return NewHandler(limiter, acl, zerolog.Nop())
+	return NewHandler(limiter, acl, zerolog.Nop(), nil)
 }
 
 // makeNotifyMsg creates a NOTIFY DNS message with the given qtype.

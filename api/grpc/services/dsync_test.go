@@ -18,7 +18,7 @@ import (
 
 // newTestNotifier creates a DSYNCNotifier with zero propagation delay for fast tests.
 func newTestNotifier() *dsync.DSYNCNotifier {
-	return dsync.NewDSYNCNotifier("127.0.0.1:53", 0*time.Second, zerolog.Nop())
+	return dsync.NewDSYNCNotifier("127.0.0.1:53", 0*time.Second, zerolog.Nop(), nil)
 }
 
 // TestSendDSYNCNotify_Valid verifies that a valid request with zone_name and CDS qtype

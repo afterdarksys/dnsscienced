@@ -30,7 +30,7 @@ type Handler struct {
 	acl     Allower
 	log     zerolog.Logger
 	webhook *WebhookClient // nil = no webhook; set via SetWebhook after construction
-	metrics *DSYNCMetrics  // nil = no metrics; set via SetMetrics after construction
+	metrics *DSYNCMetrics  // nil = no metrics; prefer passing via NewHandler constructor
 }
 
 // SetWebhook configures the webhook client for this handler.
@@ -39,8 +39,8 @@ func (h *Handler) SetWebhook(wc *WebhookClient) {
 	h.webhook = wc
 }
 
-// SetMetrics configures Prometheus metrics for the handler.
-// Called after NewHandler by server wiring code. Does not change constructor signature.
+// SetMetrics configures Prometheus metrics for the handler after construction.
+// Prefer passing metrics directly to NewHandler to avoid data races.
 func (h *Handler) SetMetrics(m *DSYNCMetrics) {
 	h.metrics = m
 }
@@ -48,11 +48,13 @@ func (h *Handler) SetMetrics(m *DSYNCMetrics) {
 // NewHandler creates an inbound NOTIFY handler.
 // acl: source IP checker (use AllowAllACL() as default stub).
 // limiter: per-source-IP rate limiter from Plan 01.
-func NewHandler(limiter *NotifyLimiter, acl Allower, log zerolog.Logger) *Handler {
+// metrics: optional Prometheus metrics (nil = no metrics).
+func NewHandler(limiter *NotifyLimiter, acl Allower, log zerolog.Logger, metrics *DSYNCMetrics) *Handler {
 	return &Handler{
 		limiter: limiter,
 		acl:     acl,
 		log:     log.With().Str("component", "dsync").Logger(),
+		metrics: metrics,
 	}
 }
 

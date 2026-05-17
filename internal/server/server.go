@@ -256,13 +256,12 @@ func New(cfg Config) (*Server, error) {
 			burst = 10
 		}
 		rps := float64(rpm) / 60.0
-		limiter := dsync.NewNotifyLimiter(rps, burst)
-		s.dsyncHandler = dsync.NewHandler(limiter, dsync.AllowAllACL(), zerolog.Nop())
-
-		// Create and wire DSYNC Prometheus metrics (D-01 observability requirement).
-		// Both handler and notifier share the same *DSYNCMetrics instance.
+		// Create DSYNC Prometheus metrics first so they can be passed to constructors,
+		// eliminating the data race window between worker goroutine start and SetMetrics.
 		dsyncMetrics := dsync.NewDSYNCMetrics()
-		s.dsyncHandler.SetMetrics(dsyncMetrics)
+
+		limiter := dsync.NewNotifyLimiter(rps, burst)
+		s.dsyncHandler = dsync.NewHandler(limiter, dsync.AllowAllACL(), zerolog.Nop(), dsyncMetrics)
 
 		// Create outbound DSYNC notifier (RFC 9859 sender).
 		// PropagationDelay defaults to 60s per RFC 9859 recommendation.
@@ -271,8 +270,7 @@ func New(cfg Config) (*Server, error) {
 		if dsyncResolver == "" {
 			dsyncResolver = "8.8.8.8:53"
 		}
-		s.dsyncNotifier = dsync.NewDSYNCNotifier(dsyncResolver, 60*time.Second, zerolog.Nop())
-		s.dsyncNotifier.SetMetrics(dsyncMetrics)
+		s.dsyncNotifier = dsync.NewDSYNCNotifier(dsyncResolver, 60*time.Second, zerolog.Nop(), dsyncMetrics)
 
 		// Webhook: per-zone config (ZoneDSYNCConfig.WebhookURL) — not available at
 		// server-level DSYNCConfig. Per-zone webhook wiring requires zone iteration

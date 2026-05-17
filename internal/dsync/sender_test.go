@@ -122,7 +122,7 @@ func TestDSYNCNotifier_Enqueue(t *testing.T) {
 	log := zerolog.Nop()
 	// Use a very long propagation delay so the worker never actually attempts
 	// network I/O during this test.
-	n := NewDSYNCNotifier("127.0.0.1:0", 24*time.Hour, log)
+	n := NewDSYNCNotifier("127.0.0.1:0", 24*time.Hour, log, nil)
 
 	done := make(chan struct{})
 	go func() {
