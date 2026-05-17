@@ -252,7 +252,7 @@ func main() {
 		// Plan 05 restructures this to wire the live registry after New() returns.
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil)
+				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier())
 			},
 			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
 			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
