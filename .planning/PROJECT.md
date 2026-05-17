@@ -8,7 +8,7 @@ dnsscienced is a production Go-based authoritative and caching DNS server. The d
 
 Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
 
-## Current State: v1.1 Shipped + Phase 07 Complete
+## Current State: v1.1 Shipped + Phase 08 Complete
 
 **Shipped:** 2026-04-23
 **Test suite:** 44 firewalld tests, all passing under `-race`
@@ -17,6 +17,8 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 **Phase 06 complete (2026-05-16):** Admin API fully wired — all AdminService RPCs registered and callable via gRPC; zone/record CRUD persisted to disk; metrics/logging/rate-limit controls wired to live subsystems; TSIG (RFC 2845) key management implemented end-to-end with runtime Add/Remove RPCs.
 
 **Phase 07 complete (2026-05-16):** Admin gRPC API hardened — mTLS client certificate enforcement (RequireAndVerifyClientCert), AND-auth policy requiring both valid cert AND named API key bearer token, structured audit logging with all D-07 fields (caller, method, code, latency_ms, remote_addr, timestamp), connection registry StatsHandler per D-12, atomic config reload via SIGHUP (D-09/D-11). Auth bypass removed; secrets stored only as named IDs in audit logs. Note: ConnRegistry production wiring (ListConnections) pending manual verification (07-HUMAN-UAT.md).
+
+**Phase 08 complete (2026-05-17):** RFC 9859 DSYNC implemented — DSYNC record type 66 codec, inbound NOTIFY(CDS/CSYNC) handler with per-source-IP rate limiting, outbound notification sender, `_dsync` parent discovery, source IP allowlist ACL, webhook delivery, Prometheus metrics, `SendDSYNCNotify` Admin RPC, and DSYNCNotifier wired into production binary. 25/25 must-haves verified.
 
 ## Requirements
 
@@ -102,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-16 after Phase 06 completion*
+*Last updated: 2026-05-17 after Phase 08 completion*
