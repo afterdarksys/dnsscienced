@@ -426,3 +426,20 @@ message FirewallInjectScoreRequest {
 }
 
 message FirewallInjectScoreResponse {}
+
+// DSYNCAdminService exposes RFC 9859 DSYNC operations over gRPC.
+service DSYNCAdminService {
+  // SendDSYNCNotify triggers outbound NOTIFY(CDS/CSYNC) to the parent zone.
+  // Resolves _dsync.<parent> via live DNS lookup (per D-09). Fire-and-forget (per D-10).
+  rpc SendDSYNCNotify(SendDSYNCNotifyRequest) returns (SendDSYNCNotifyResponse);
+}
+
+message SendDSYNCNotifyRequest {
+  string zone_name = 1;
+  string qtype = 2;
+}
+
+message SendDSYNCNotifyResponse {
+  bool success = 1;
+  string message = 2;
+}

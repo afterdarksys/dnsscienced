@@ -1314,3 +1314,113 @@ var FirewallAdminService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "admin.proto",
 }
+
+const (
+	DSYNCAdminService_SendDSYNCNotify_FullMethodName = "/dnsscience.v1.DSYNCAdminService/SendDSYNCNotify"
+)
+
+// DSYNCAdminServiceClient is the client API for DSYNCAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// DSYNCAdminService exposes RFC 9859 DSYNC operations over gRPC.
+type DSYNCAdminServiceClient interface {
+	// SendDSYNCNotify triggers outbound NOTIFY(CDS/CSYNC) to the parent zone.
+	// Resolves _dsync.<parent> via live DNS lookup (per D-09). Fire-and-forget (per D-10).
+	SendDSYNCNotify(ctx context.Context, in *SendDSYNCNotifyRequest, opts ...grpc.CallOption) (*SendDSYNCNotifyResponse, error)
+}
+
+type dSYNCAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewDSYNCAdminServiceClient(cc grpc.ClientConnInterface) DSYNCAdminServiceClient {
+	return &dSYNCAdminServiceClient{cc}
+}
+
+func (c *dSYNCAdminServiceClient) SendDSYNCNotify(ctx context.Context, in *SendDSYNCNotifyRequest, opts ...grpc.CallOption) (*SendDSYNCNotifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendDSYNCNotifyResponse)
+	err := c.cc.Invoke(ctx, DSYNCAdminService_SendDSYNCNotify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DSYNCAdminServiceServer is the server API for DSYNCAdminService service.
+// All implementations must embed UnimplementedDSYNCAdminServiceServer
+// for forward compatibility.
+//
+// DSYNCAdminService exposes RFC 9859 DSYNC operations over gRPC.
+type DSYNCAdminServiceServer interface {
+	// SendDSYNCNotify triggers outbound NOTIFY(CDS/CSYNC) to the parent zone.
+	// Resolves _dsync.<parent> via live DNS lookup (per D-09). Fire-and-forget (per D-10).
+	SendDSYNCNotify(context.Context, *SendDSYNCNotifyRequest) (*SendDSYNCNotifyResponse, error)
+	mustEmbedUnimplementedDSYNCAdminServiceServer()
+}
+
+// UnimplementedDSYNCAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedDSYNCAdminServiceServer struct{}
+
+func (UnimplementedDSYNCAdminServiceServer) SendDSYNCNotify(context.Context, *SendDSYNCNotifyRequest) (*SendDSYNCNotifyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendDSYNCNotify not implemented")
+}
+func (UnimplementedDSYNCAdminServiceServer) mustEmbedUnimplementedDSYNCAdminServiceServer() {}
+func (UnimplementedDSYNCAdminServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeDSYNCAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DSYNCAdminServiceServer will
+// result in compilation errors.
+type UnsafeDSYNCAdminServiceServer interface {
+	mustEmbedUnimplementedDSYNCAdminServiceServer()
+}
+
+func RegisterDSYNCAdminServiceServer(s grpc.ServiceRegistrar, srv DSYNCAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedDSYNCAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&DSYNCAdminService_ServiceDesc, srv)
+}
+
+func _DSYNCAdminService_SendDSYNCNotify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendDSYNCNotifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DSYNCAdminServiceServer).SendDSYNCNotify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DSYNCAdminService_SendDSYNCNotify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DSYNCAdminServiceServer).SendDSYNCNotify(ctx, req.(*SendDSYNCNotifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// DSYNCAdminService_ServiceDesc is the grpc.ServiceDesc for DSYNCAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var DSYNCAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "dnsscience.v1.DSYNCAdminService",
+	HandlerType: (*DSYNCAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SendDSYNCNotify",
+			Handler:    _DSYNCAdminService_SendDSYNCNotify_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "admin.proto",
+}

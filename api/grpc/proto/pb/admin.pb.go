@@ -3491,6 +3491,110 @@ func (*FirewallInjectScoreResponse) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{56}
 }
 
+type SendDSYNCNotifyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ZoneName      string                 `protobuf:"bytes,1,opt,name=zone_name,json=zoneName,proto3" json:"zone_name,omitempty"`
+	Qtype         string                 `protobuf:"bytes,2,opt,name=qtype,proto3" json:"qtype,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendDSYNCNotifyRequest) Reset() {
+	*x = SendDSYNCNotifyRequest{}
+	mi := &file_admin_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendDSYNCNotifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendDSYNCNotifyRequest) ProtoMessage() {}
+
+func (x *SendDSYNCNotifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendDSYNCNotifyRequest.ProtoReflect.Descriptor instead.
+func (*SendDSYNCNotifyRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *SendDSYNCNotifyRequest) GetZoneName() string {
+	if x != nil {
+		return x.ZoneName
+	}
+	return ""
+}
+
+func (x *SendDSYNCNotifyRequest) GetQtype() string {
+	if x != nil {
+		return x.Qtype
+	}
+	return ""
+}
+
+type SendDSYNCNotifyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendDSYNCNotifyResponse) Reset() {
+	*x = SendDSYNCNotifyResponse{}
+	mi := &file_admin_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendDSYNCNotifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendDSYNCNotifyResponse) ProtoMessage() {}
+
+func (x *SendDSYNCNotifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendDSYNCNotifyResponse.ProtoReflect.Descriptor instead.
+func (*SendDSYNCNotifyResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *SendDSYNCNotifyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *SendDSYNCNotifyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
@@ -3745,7 +3849,13 @@ const file_admin_proto_rawDesc = "" +
 	"\x02ip\x18\x02 \x01(\tH\x00R\x02ip\x12\x14\n" +
 	"\x05score\x18\x03 \x01(\x05R\x05scoreB\b\n" +
 	"\x06target\"\x1d\n" +
-	"\x1bFirewallInjectScoreResponse2\xfb\x12\n" +
+	"\x1bFirewallInjectScoreResponse\"K\n" +
+	"\x16SendDSYNCNotifyRequest\x12\x1b\n" +
+	"\tzone_name\x18\x01 \x01(\tR\bzoneName\x12\x14\n" +
+	"\x05qtype\x18\x02 \x01(\tR\x05qtype\"M\n" +
+	"\x17SendDSYNCNotifyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xfb\x12\n" +
 	"\fAdminService\x12[\n" +
 	"\n" +
 	"FlushCache\x12%.dnsscience.v1.AdminFlushCacheRequest\x1a&.dnsscience.v1.AdminFlushCacheResponse\x12O\n" +
@@ -3785,7 +3895,9 @@ const file_admin_proto_rawDesc = "" +
 	"\n" +
 	"LoadScript\x12(.dnsscience.v1.FirewallLoadScriptRequest\x1a).dnsscience.v1.FirewallLoadScriptResponse\x12g\n" +
 	"\fRemoveScript\x12*.dnsscience.v1.FirewallRemoveScriptRequest\x1a+.dnsscience.v1.FirewallRemoveScriptResponse\x12d\n" +
-	"\vInjectScore\x12).dnsscience.v1.FirewallInjectScoreRequest\x1a*.dnsscience.v1.FirewallInjectScoreResponseB5Z3github.com/dnsscience/dnsscienced/api/grpc/proto/pbb\x06proto3"
+	"\vInjectScore\x12).dnsscience.v1.FirewallInjectScoreRequest\x1a*.dnsscience.v1.FirewallInjectScoreResponse2u\n" +
+	"\x11DSYNCAdminService\x12`\n" +
+	"\x0fSendDSYNCNotify\x12%.dnsscience.v1.SendDSYNCNotifyRequest\x1a&.dnsscience.v1.SendDSYNCNotifyResponseB5Z3github.com/dnsscience/dnsscienced/api/grpc/proto/pbb\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once
@@ -3800,7 +3912,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_admin_proto_goTypes = []any{
 	(AdminFlushCacheRequest_FlushType)(0),   // 0: dnsscience.v1.AdminFlushCacheRequest.FlushType
 	(*AdminFlushCacheRequest)(nil),          // 1: dnsscience.v1.AdminFlushCacheRequest
@@ -3860,26 +3972,28 @@ var file_admin_proto_goTypes = []any{
 	(*FirewallRemoveScriptResponse)(nil),    // 55: dnsscience.v1.FirewallRemoveScriptResponse
 	(*FirewallInjectScoreRequest)(nil),      // 56: dnsscience.v1.FirewallInjectScoreRequest
 	(*FirewallInjectScoreResponse)(nil),     // 57: dnsscience.v1.FirewallInjectScoreResponse
-	(*timestamppb.Timestamp)(nil),           // 58: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                   // 59: google.protobuf.Empty
+	(*SendDSYNCNotifyRequest)(nil),          // 58: dnsscience.v1.SendDSYNCNotifyRequest
+	(*SendDSYNCNotifyResponse)(nil),         // 59: dnsscience.v1.SendDSYNCNotifyResponse
+	(*timestamppb.Timestamp)(nil),           // 60: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                   // 61: google.protobuf.Empty
 }
 var file_admin_proto_depIdxs = []int32{
 	0,  // 0: dnsscience.v1.AdminFlushCacheRequest.type:type_name -> dnsscience.v1.AdminFlushCacheRequest.FlushType
 	9,  // 1: dnsscience.v1.AdminListZonesResponse.zones:type_name -> dnsscience.v1.AdminZoneInfo
-	58, // 2: dnsscience.v1.AdminZoneInfo.last_loaded:type_name -> google.protobuf.Timestamp
-	58, // 3: dnsscience.v1.AdminServerStatusResponse.start_time:type_name -> google.protobuf.Timestamp
+	60, // 2: dnsscience.v1.AdminZoneInfo.last_loaded:type_name -> google.protobuf.Timestamp
+	60, // 3: dnsscience.v1.AdminServerStatusResponse.start_time:type_name -> google.protobuf.Timestamp
 	18, // 4: dnsscience.v1.AdminServerStatusResponse.components:type_name -> dnsscience.v1.AdminComponentStatus
 	24, // 5: dnsscience.v1.AdminListConnectionsResponse.connections:type_name -> dnsscience.v1.AdminConnectionInfo
-	58, // 6: dnsscience.v1.AdminConnectionInfo.connected_at:type_name -> google.protobuf.Timestamp
+	60, // 6: dnsscience.v1.AdminConnectionInfo.connected_at:type_name -> google.protobuf.Timestamp
 	9,  // 7: dnsscience.v1.AdminGetZoneResponse.zone:type_name -> dnsscience.v1.AdminZoneInfo
 	43, // 8: dnsscience.v1.AdminListRecordsResponse.records:type_name -> dnsscience.v1.AdminRecordInfo
 	49, // 9: dnsscience.v1.AdminListTsigKeysResponse.keys:type_name -> dnsscience.v1.TsigKeyInfo
 	1,  // 10: dnsscience.v1.AdminService.FlushCache:input_type -> dnsscience.v1.AdminFlushCacheRequest
-	59, // 11: dnsscience.v1.AdminService.GetCacheStats:input_type -> google.protobuf.Empty
+	61, // 11: dnsscience.v1.AdminService.GetCacheStats:input_type -> google.protobuf.Empty
 	4,  // 12: dnsscience.v1.AdminService.PurgeCache:input_type -> dnsscience.v1.AdminPurgeCacheRequest
 	6,  // 13: dnsscience.v1.AdminService.RefreshZone:input_type -> dnsscience.v1.AdminRefreshZoneRequest
-	59, // 14: dnsscience.v1.AdminService.ListZones:input_type -> google.protobuf.Empty
-	59, // 15: dnsscience.v1.AdminService.ReloadZones:input_type -> google.protobuf.Empty
+	61, // 14: dnsscience.v1.AdminService.ListZones:input_type -> google.protobuf.Empty
+	61, // 15: dnsscience.v1.AdminService.ReloadZones:input_type -> google.protobuf.Empty
 	27, // 16: dnsscience.v1.AdminService.CreateZone:input_type -> dnsscience.v1.AdminCreateZoneRequest
 	29, // 17: dnsscience.v1.AdminService.UpdateZone:input_type -> dnsscience.v1.AdminUpdateZoneRequest
 	31, // 18: dnsscience.v1.AdminService.DeleteZone:input_type -> dnsscience.v1.AdminDeleteZoneRequest
@@ -3889,53 +4003,55 @@ var file_admin_proto_depIdxs = []int32{
 	39, // 22: dnsscience.v1.AdminService.DeleteRecord:input_type -> dnsscience.v1.AdminDeleteRecordRequest
 	41, // 23: dnsscience.v1.AdminService.ListRecords:input_type -> dnsscience.v1.AdminListRecordsRequest
 	11, // 24: dnsscience.v1.AdminService.SetQueryLogging:input_type -> dnsscience.v1.AdminSetQueryLoggingRequest
-	59, // 25: dnsscience.v1.AdminService.GetQueryLoggingStatus:input_type -> google.protobuf.Empty
+	61, // 25: dnsscience.v1.AdminService.GetQueryLoggingStatus:input_type -> google.protobuf.Empty
 	14, // 26: dnsscience.v1.AdminService.SetRateLimit:input_type -> dnsscience.v1.AdminSetRateLimitRequest
-	59, // 27: dnsscience.v1.AdminService.GetRateLimitStatus:input_type -> google.protobuf.Empty
-	59, // 28: dnsscience.v1.AdminService.GetServerStatus:input_type -> google.protobuf.Empty
-	59, // 29: dnsscience.v1.AdminService.GetMetrics:input_type -> google.protobuf.Empty
+	61, // 27: dnsscience.v1.AdminService.GetRateLimitStatus:input_type -> google.protobuf.Empty
+	61, // 28: dnsscience.v1.AdminService.GetServerStatus:input_type -> google.protobuf.Empty
+	61, // 29: dnsscience.v1.AdminService.GetMetrics:input_type -> google.protobuf.Empty
 	20, // 30: dnsscience.v1.AdminService.ShutdownServer:input_type -> dnsscience.v1.AdminShutdownRequest
 	22, // 31: dnsscience.v1.AdminService.ListConnections:input_type -> dnsscience.v1.AdminListConnectionsRequest
 	25, // 32: dnsscience.v1.AdminService.KillConnection:input_type -> dnsscience.v1.AdminKillConnectionRequest
 	44, // 33: dnsscience.v1.AdminService.AddTsigKey:input_type -> dnsscience.v1.AdminAddTsigKeyRequest
 	46, // 34: dnsscience.v1.AdminService.RemoveTsigKey:input_type -> dnsscience.v1.AdminRemoveTsigKeyRequest
-	59, // 35: dnsscience.v1.AdminService.ListTsigKeys:input_type -> google.protobuf.Empty
+	61, // 35: dnsscience.v1.AdminService.ListTsigKeys:input_type -> google.protobuf.Empty
 	50, // 36: dnsscience.v1.FirewallAdminService.FirewallStats:input_type -> dnsscience.v1.FirewallStatsRequest
 	52, // 37: dnsscience.v1.FirewallAdminService.LoadScript:input_type -> dnsscience.v1.FirewallLoadScriptRequest
 	54, // 38: dnsscience.v1.FirewallAdminService.RemoveScript:input_type -> dnsscience.v1.FirewallRemoveScriptRequest
 	56, // 39: dnsscience.v1.FirewallAdminService.InjectScore:input_type -> dnsscience.v1.FirewallInjectScoreRequest
-	2,  // 40: dnsscience.v1.AdminService.FlushCache:output_type -> dnsscience.v1.AdminFlushCacheResponse
-	3,  // 41: dnsscience.v1.AdminService.GetCacheStats:output_type -> dnsscience.v1.AdminCacheStatsResponse
-	5,  // 42: dnsscience.v1.AdminService.PurgeCache:output_type -> dnsscience.v1.AdminPurgeCacheResponse
-	7,  // 43: dnsscience.v1.AdminService.RefreshZone:output_type -> dnsscience.v1.AdminRefreshZoneResponse
-	8,  // 44: dnsscience.v1.AdminService.ListZones:output_type -> dnsscience.v1.AdminListZonesResponse
-	10, // 45: dnsscience.v1.AdminService.ReloadZones:output_type -> dnsscience.v1.AdminReloadZonesResponse
-	28, // 46: dnsscience.v1.AdminService.CreateZone:output_type -> dnsscience.v1.AdminCreateZoneResponse
-	30, // 47: dnsscience.v1.AdminService.UpdateZone:output_type -> dnsscience.v1.AdminUpdateZoneResponse
-	32, // 48: dnsscience.v1.AdminService.DeleteZone:output_type -> dnsscience.v1.AdminDeleteZoneResponse
-	34, // 49: dnsscience.v1.AdminService.GetZone:output_type -> dnsscience.v1.AdminGetZoneResponse
-	36, // 50: dnsscience.v1.AdminService.CreateRecord:output_type -> dnsscience.v1.AdminCreateRecordResponse
-	38, // 51: dnsscience.v1.AdminService.UpdateRecord:output_type -> dnsscience.v1.AdminUpdateRecordResponse
-	40, // 52: dnsscience.v1.AdminService.DeleteRecord:output_type -> dnsscience.v1.AdminDeleteRecordResponse
-	42, // 53: dnsscience.v1.AdminService.ListRecords:output_type -> dnsscience.v1.AdminListRecordsResponse
-	12, // 54: dnsscience.v1.AdminService.SetQueryLogging:output_type -> dnsscience.v1.AdminSetQueryLoggingResponse
-	13, // 55: dnsscience.v1.AdminService.GetQueryLoggingStatus:output_type -> dnsscience.v1.AdminQueryLoggingStatusResponse
-	15, // 56: dnsscience.v1.AdminService.SetRateLimit:output_type -> dnsscience.v1.AdminSetRateLimitResponse
-	16, // 57: dnsscience.v1.AdminService.GetRateLimitStatus:output_type -> dnsscience.v1.AdminRateLimitStatusResponse
-	17, // 58: dnsscience.v1.AdminService.GetServerStatus:output_type -> dnsscience.v1.AdminServerStatusResponse
-	19, // 59: dnsscience.v1.AdminService.GetMetrics:output_type -> dnsscience.v1.AdminMetricsResponse
-	21, // 60: dnsscience.v1.AdminService.ShutdownServer:output_type -> dnsscience.v1.AdminShutdownResponse
-	23, // 61: dnsscience.v1.AdminService.ListConnections:output_type -> dnsscience.v1.AdminListConnectionsResponse
-	26, // 62: dnsscience.v1.AdminService.KillConnection:output_type -> dnsscience.v1.AdminKillConnectionResponse
-	45, // 63: dnsscience.v1.AdminService.AddTsigKey:output_type -> dnsscience.v1.AdminAddTsigKeyResponse
-	47, // 64: dnsscience.v1.AdminService.RemoveTsigKey:output_type -> dnsscience.v1.AdminRemoveTsigKeyResponse
-	48, // 65: dnsscience.v1.AdminService.ListTsigKeys:output_type -> dnsscience.v1.AdminListTsigKeysResponse
-	51, // 66: dnsscience.v1.FirewallAdminService.FirewallStats:output_type -> dnsscience.v1.FirewallStatsResponse
-	53, // 67: dnsscience.v1.FirewallAdminService.LoadScript:output_type -> dnsscience.v1.FirewallLoadScriptResponse
-	55, // 68: dnsscience.v1.FirewallAdminService.RemoveScript:output_type -> dnsscience.v1.FirewallRemoveScriptResponse
-	57, // 69: dnsscience.v1.FirewallAdminService.InjectScore:output_type -> dnsscience.v1.FirewallInjectScoreResponse
-	40, // [40:70] is the sub-list for method output_type
-	10, // [10:40] is the sub-list for method input_type
+	58, // 40: dnsscience.v1.DSYNCAdminService.SendDSYNCNotify:input_type -> dnsscience.v1.SendDSYNCNotifyRequest
+	2,  // 41: dnsscience.v1.AdminService.FlushCache:output_type -> dnsscience.v1.AdminFlushCacheResponse
+	3,  // 42: dnsscience.v1.AdminService.GetCacheStats:output_type -> dnsscience.v1.AdminCacheStatsResponse
+	5,  // 43: dnsscience.v1.AdminService.PurgeCache:output_type -> dnsscience.v1.AdminPurgeCacheResponse
+	7,  // 44: dnsscience.v1.AdminService.RefreshZone:output_type -> dnsscience.v1.AdminRefreshZoneResponse
+	8,  // 45: dnsscience.v1.AdminService.ListZones:output_type -> dnsscience.v1.AdminListZonesResponse
+	10, // 46: dnsscience.v1.AdminService.ReloadZones:output_type -> dnsscience.v1.AdminReloadZonesResponse
+	28, // 47: dnsscience.v1.AdminService.CreateZone:output_type -> dnsscience.v1.AdminCreateZoneResponse
+	30, // 48: dnsscience.v1.AdminService.UpdateZone:output_type -> dnsscience.v1.AdminUpdateZoneResponse
+	32, // 49: dnsscience.v1.AdminService.DeleteZone:output_type -> dnsscience.v1.AdminDeleteZoneResponse
+	34, // 50: dnsscience.v1.AdminService.GetZone:output_type -> dnsscience.v1.AdminGetZoneResponse
+	36, // 51: dnsscience.v1.AdminService.CreateRecord:output_type -> dnsscience.v1.AdminCreateRecordResponse
+	38, // 52: dnsscience.v1.AdminService.UpdateRecord:output_type -> dnsscience.v1.AdminUpdateRecordResponse
+	40, // 53: dnsscience.v1.AdminService.DeleteRecord:output_type -> dnsscience.v1.AdminDeleteRecordResponse
+	42, // 54: dnsscience.v1.AdminService.ListRecords:output_type -> dnsscience.v1.AdminListRecordsResponse
+	12, // 55: dnsscience.v1.AdminService.SetQueryLogging:output_type -> dnsscience.v1.AdminSetQueryLoggingResponse
+	13, // 56: dnsscience.v1.AdminService.GetQueryLoggingStatus:output_type -> dnsscience.v1.AdminQueryLoggingStatusResponse
+	15, // 57: dnsscience.v1.AdminService.SetRateLimit:output_type -> dnsscience.v1.AdminSetRateLimitResponse
+	16, // 58: dnsscience.v1.AdminService.GetRateLimitStatus:output_type -> dnsscience.v1.AdminRateLimitStatusResponse
+	17, // 59: dnsscience.v1.AdminService.GetServerStatus:output_type -> dnsscience.v1.AdminServerStatusResponse
+	19, // 60: dnsscience.v1.AdminService.GetMetrics:output_type -> dnsscience.v1.AdminMetricsResponse
+	21, // 61: dnsscience.v1.AdminService.ShutdownServer:output_type -> dnsscience.v1.AdminShutdownResponse
+	23, // 62: dnsscience.v1.AdminService.ListConnections:output_type -> dnsscience.v1.AdminListConnectionsResponse
+	26, // 63: dnsscience.v1.AdminService.KillConnection:output_type -> dnsscience.v1.AdminKillConnectionResponse
+	45, // 64: dnsscience.v1.AdminService.AddTsigKey:output_type -> dnsscience.v1.AdminAddTsigKeyResponse
+	47, // 65: dnsscience.v1.AdminService.RemoveTsigKey:output_type -> dnsscience.v1.AdminRemoveTsigKeyResponse
+	48, // 66: dnsscience.v1.AdminService.ListTsigKeys:output_type -> dnsscience.v1.AdminListTsigKeysResponse
+	51, // 67: dnsscience.v1.FirewallAdminService.FirewallStats:output_type -> dnsscience.v1.FirewallStatsResponse
+	53, // 68: dnsscience.v1.FirewallAdminService.LoadScript:output_type -> dnsscience.v1.FirewallLoadScriptResponse
+	55, // 69: dnsscience.v1.FirewallAdminService.RemoveScript:output_type -> dnsscience.v1.FirewallRemoveScriptResponse
+	57, // 70: dnsscience.v1.FirewallAdminService.InjectScore:output_type -> dnsscience.v1.FirewallInjectScoreResponse
+	59, // 71: dnsscience.v1.DSYNCAdminService.SendDSYNCNotify:output_type -> dnsscience.v1.SendDSYNCNotifyResponse
+	41, // [41:72] is the sub-list for method output_type
+	10, // [10:41] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -3956,9 +4072,9 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   57,
+			NumMessages:   59,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_admin_proto_goTypes,
 		DependencyIndexes: file_admin_proto_depIdxs,
