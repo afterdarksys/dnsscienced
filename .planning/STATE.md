@@ -2,25 +2,25 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-17T00:43:53.900Z"
+status: verifying
+last_updated: "2026-05-17T01:10:19.546Z"
 last_activity: 2026-05-17
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 19
-  completed_plans: 18
-  percent: 95
+  completed_plans: 19
+  percent: 100
 ---
 
 # State
 
 ## Current Position
 
-Phase: 08 (rfc9859-dsync) — EXECUTING
-Plan: 6 of 6
-Status: Ready to execute
-Last activity: 2026-05-17
+Phase: 08 (rfc9859-dsync) — COMPLETE
+Plan: 6 of 6 (all plans complete)
+Status: Phase complete — ready for verification
+Last activity: 2026-05-16
 
 ## Project Reference
 
@@ -140,3 +140,9 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - SetWebhook setter pattern: NewHandler signature is FINAL from Plan 02; webhook wired post-construction via SetWebhook (no constructor change)
 - Empty CIDR allowlist = accept all sources (D-05); invalid CIDRs silently skipped (T-08-16)
 - Webhook goroutine bounded by rate limiter throughput (T-08-15); Fire() no-op when URL empty (D-02)
+- Phase 8 Plan 06 complete: DSYNCMetrics (3x prometheus.CounterVec: inbound/outbound/webhook) created; Handler.SetMetrics/DSYNCNotifier.SetMetrics wired; OutboundSent counter incremented INSIDE worker after sendNotify (not at RPC enqueue site); DSYNCAdminService + SendDSYNCNotify RPC added to admin.proto + code generated; DSYNCService validates zone_name and qtype (CDS/CSYNC only); RegisterAll extended with variadic dsyncNotifier for conditional registration; go build ./... passes; all tests pass
+- SetMetrics setter pattern mirrors SetWebhook — constructor signatures remain stable, metrics injected post-construction
+- OutboundSent location is critical (D-10): counter must reflect actual send results, not enqueue events
+- RegisterAll variadic extension: backward-compatible; existing callers without dsyncNotifier arg skip DSYNC registration
+- Strict qtype validation: "CDS" and "CSYNC" only (case-sensitive); any other value returns InvalidArgument (T-08-20)
+- DSYNC-07 (Prometheus metrics) and DSYNC-08 (Admin RPC) requirements complete; Phase 8 rfc9859-dsync fully delivered
