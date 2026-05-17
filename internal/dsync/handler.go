@@ -30,12 +30,19 @@ type Handler struct {
 	acl     Allower
 	log     zerolog.Logger
 	webhook *WebhookClient // nil = no webhook; set via SetWebhook after construction
+	metrics *DSYNCMetrics  // nil = no metrics; set via SetMetrics after construction
 }
 
 // SetWebhook configures the webhook client for this handler.
 // Called after NewHandler by server wiring code. Does not change constructor signature.
 func (h *Handler) SetWebhook(wc *WebhookClient) {
 	h.webhook = wc
+}
+
+// SetMetrics configures Prometheus metrics for the handler.
+// Called after NewHandler by server wiring code. Does not change constructor signature.
+func (h *Handler) SetMetrics(m *DSYNCMetrics) {
+	h.metrics = m
 }
 
 // NewHandler creates an inbound NOTIFY handler.
@@ -68,6 +75,9 @@ func (h *Handler) HandleInbound(w dns.ResponseWriter, r *dns.Msg, clientIP net.I
 
 	// Step 1: Source ACL check (D-05/D-06)
 	if !h.acl.Check(clientIP) {
+		if h.metrics != nil {
+			h.metrics.NotifyInbound.WithLabelValues(r.Question[0].Name, "refused_acl").Inc()
+		}
 		reply.Rcode = dns.RcodeRefused
 		w.WriteMsg(reply) //nolint:errcheck
 		return
@@ -75,6 +85,9 @@ func (h *Handler) HandleInbound(w dns.ResponseWriter, r *dns.Msg, clientIP net.I
 
 	// Step 2: Rate limit check (D-07/D-14)
 	if !h.limiter.Allow(clientIP) {
+		if h.metrics != nil {
+			h.metrics.NotifyInbound.WithLabelValues(r.Question[0].Name, "refused_ratelimit").Inc()
+		}
 		reply.Rcode = dns.RcodeRefused
 		w.WriteMsg(reply) //nolint:errcheck
 		return
@@ -87,6 +100,12 @@ func (h *Handler) HandleInbound(w dns.ResponseWriter, r *dns.Msg, clientIP net.I
 	// Step 4: Only process CDS and CSYNC NOTIFY types per RFC 9859
 	qtype := r.Question[0].Qtype
 	zone := r.Question[0].Name
+
+	// Increment inbound accepted counter (after NOERROR, for any qtype that passes ACL/ratelimit)
+	if h.metrics != nil {
+		h.metrics.NotifyInbound.WithLabelValues(zone, "accepted").Inc()
+	}
+
 	if qtype != dns.TypeCDS && qtype != dns.TypeCSYNC {
 		return
 	}
@@ -102,6 +121,13 @@ func (h *Handler) HandleInbound(w dns.ResponseWriter, r *dns.Msg, clientIP net.I
 			}
 			if err := h.webhook.Fire(payload); err != nil {
 				h.log.Error().Err(err).Str("zone", zone).Msg("webhook delivery failed")
+				if h.metrics != nil {
+					h.metrics.Webhook.WithLabelValues(zone, "err").Inc()
+				}
+			} else {
+				if h.metrics != nil {
+					h.metrics.Webhook.WithLabelValues(zone, "ok").Inc()
+				}
 			}
 		}()
 	}

@@ -252,6 +252,11 @@ func New(cfg Config) (*Server, error) {
 		rps := float64(rpm) / 60.0
 		limiter := dsync.NewNotifyLimiter(rps, burst)
 		s.dsyncHandler = dsync.NewHandler(limiter, dsync.AllowAllACL(), zerolog.Nop())
+
+		// Create and wire DSYNC Prometheus metrics (D-01 observability requirement).
+		// Both handler and notifier share the same *DSYNCMetrics instance.
+		dsyncMetrics := dsync.NewDSYNCMetrics()
+		s.dsyncHandler.SetMetrics(dsyncMetrics)
 	}
 
 	// Set defensive manager if provided

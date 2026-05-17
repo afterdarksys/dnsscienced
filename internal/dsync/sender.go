@@ -21,6 +21,7 @@ type DSYNCNotifier struct {
 	propagationDelay time.Duration
 	events           chan notifyEvent
 	log              zerolog.Logger
+	metrics          *DSYNCMetrics // nil = no metrics; set via SetMetrics after construction
 }
 
 type notifyEvent struct {
@@ -45,6 +46,12 @@ func NewDSYNCNotifier(resolver string, propagationDelay time.Duration, log zerol
 	}
 	go n.worker()
 	return n
+}
+
+// SetMetrics configures Prometheus metrics for the notifier.
+// Called after NewDSYNCNotifier by server wiring code. Does not change constructor signature.
+func (n *DSYNCNotifier) SetMetrics(m *DSYNCMetrics) {
+	n.metrics = m
 }
 
 // Notify enqueues an outbound NOTIFY event for the given zone and qtype.
@@ -87,6 +94,13 @@ func (n *DSYNCNotifier) worker() {
 					Str("zone", ev.zone).
 					Str("target", rec.Target).
 					Msg("sendNotify failed")
+				if n.metrics != nil {
+					n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "failed").Inc()
+				}
+			} else {
+				if n.metrics != nil {
+					n.metrics.NotifyOutbound.WithLabelValues(ev.zone, "sent").Inc()
+				}
 			}
 			cancel2()
 		}
