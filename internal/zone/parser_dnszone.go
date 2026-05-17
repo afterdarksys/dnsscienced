@@ -299,13 +299,20 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 
 	// Process includes
 	if len(zf.Includes) > 0 {
-		baseDir := filepath.Dir(filename)
+		baseDir := filepath.Clean(filepath.Dir(filename))
 		for _, inc := range zf.Includes {
 			incPath := inc
 			if !filepath.IsAbs(inc) {
 				incPath = filepath.Join(baseDir, inc)
 			}
-			if err := parseIncludeFile(zone, incPath, defaultTTL); err != nil {
+			// Prevent directory traversal: the resolved include path must stay
+			// within baseDir. filepath.Join already cleans ".." sequences, so
+			// comparing the clean prefix is sufficient.
+			cleanInc := filepath.Clean(incPath)
+			if !strings.HasPrefix(cleanInc, baseDir+string(filepath.Separator)) {
+				return nil, fmt.Errorf("include %q: path escapes zone directory (directory traversal not allowed)", inc)
+			}
+			if err := parseIncludeFile(zone, cleanInc, defaultTTL); err != nil {
 				return nil, fmt.Errorf("include %q: %w", inc, err)
 			}
 		}
