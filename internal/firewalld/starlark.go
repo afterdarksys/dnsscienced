@@ -46,7 +46,7 @@ type compiledScript struct {
 
 func newStarlarkEngine(timeout time.Duration) (*StarlarkEngine, error) {
 	if timeout == 0 {
-		timeout = 2 * time.Millisecond
+		timeout = 2 * time.Second
 	}
 	return &StarlarkEngine{
 		scripts: make(map[string]*compiledScript),
