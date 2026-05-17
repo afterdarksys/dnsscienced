@@ -69,6 +69,9 @@ func (wc *WebhookClient) Fire(payload WebhookPayload) error {
 	if err != nil {
 		return fmt.Errorf("webhook POST %s: %w", wc.url, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook POST %s: unexpected status %d", wc.url, resp.StatusCode)
+	}
 	return nil
 }
