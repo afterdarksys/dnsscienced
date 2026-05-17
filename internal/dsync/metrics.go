@@ -46,9 +46,20 @@ func NewDSYNCMetrics() *DSYNCMetrics {
 		),
 	}
 
-	prometheus.MustRegister(m.NotifyInbound)
-	prometheus.MustRegister(m.NotifyOutbound)
-	prometheus.MustRegister(m.Webhook)
+	registerOrReuse(m.NotifyInbound)
+	registerOrReuse(m.NotifyOutbound)
+	registerOrReuse(m.Webhook)
 
 	return m
+}
+
+// registerOrReuse registers c with the default Prometheus registry.
+// If c is already registered (e.g., a second server.New() call in tests),
+// it reuses the existing collector rather than panicking.
+func registerOrReuse(c prometheus.Collector) {
+	if err := prometheus.Register(c); err != nil {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			panic(err)
+		}
+	}
 }
