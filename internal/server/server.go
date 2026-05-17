@@ -141,8 +141,9 @@ type Server struct {
 	defensive    *defensive.Manager
 	protective   *protective.Engine
 	firewall     *firewalld.Firewall
-	tsigKeyRing  *tsig.KeyRing
-	dsyncHandler *dsync.Handler
+	tsigKeyRing   *tsig.KeyRing
+	dsyncHandler  *dsync.Handler
+	dsyncNotifier *dsync.DSYNCNotifier
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -257,6 +258,17 @@ func New(cfg Config) (*Server, error) {
 		// Both handler and notifier share the same *DSYNCMetrics instance.
 		dsyncMetrics := dsync.NewDSYNCMetrics()
 		s.dsyncHandler.SetMetrics(dsyncMetrics)
+
+		// Create outbound DSYNC notifier (RFC 9859 sender).
+		// Uses the server's own UDP address as resolver for _dsync discovery.
+		// PropagationDelay defaults to 60s per RFC 9859 recommendation.
+		s.dsyncNotifier = dsync.NewDSYNCNotifier(cfg.UDPAddr, 60*time.Second, zerolog.Nop())
+		s.dsyncNotifier.SetMetrics(dsyncMetrics)
+
+		// Webhook: per-zone config (ZoneDSYNCConfig.WebhookURL) — not available at
+		// server-level DSYNCConfig. Per-zone webhook wiring requires zone iteration
+		// which is not implemented yet. For now, SetWebhook is called only if a
+		// future global webhook_url is added to DSYNCConfig.
 	}
 
 	// Set defensive manager if provided
@@ -377,6 +389,11 @@ func (s *Server) Stop() error {
 		s.firewall.Shutdown()
 	}
 
+	// DSYNCNotifier has no Stop() method; its worker goroutine exits when the
+	// events channel is garbage-collected after the process shuts down. The
+	// channel is not closed explicitly because no sentinel is needed — the
+	// background goroutine simply terminates with the process.
+
 	fmt.Println("DNS server stopped")
 	return nil
 }
@@ -405,6 +422,11 @@ func (s *Server) tsigSecretMap() map[string]string {
 // GetTsigKeyRing returns the server's TSIG key ring (may be nil if no keys configured).
 func (s *Server) GetTsigKeyRing() *tsig.KeyRing {
 	return s.tsigKeyRing
+}
+
+// GetDSYNCNotifier returns the DSYNC outbound notifier (may be nil if DSYNC is disabled).
+func (s *Server) GetDSYNCNotifier() *dsync.DSYNCNotifier {
+	return s.dsyncNotifier
 }
 
 // handleDNS is the main DNS query handler
