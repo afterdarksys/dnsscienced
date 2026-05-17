@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-16T23:21:45.081Z"
-last_activity: 2026-05-16
+last_updated: "2026-05-17T00:43:53.900Z"
+last_activity: 2026-05-17
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 19
-  completed_plans: 17
-  percent: 89
+  completed_plans: 18
+  percent: 95
 ---
 
 # State
@@ -18,9 +18,9 @@ progress:
 ## Current Position
 
 Phase: 08 (rfc9859-dsync) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
-Last activity: 2026-05-16
+Last activity: 2026-05-17
 
 ## Project Reference
 
@@ -136,3 +136,7 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - Phase 8 Plan 04 complete: internal/zone/parser_dsync_test.go created; TestDSYNCZoneFile_BIND (single TYPE66 record via miekg/dns RFC3597 fallback) and TestDSYNCZoneFile_MultipleRecords (two TYPE66 records) both PASS; all 5 build/test gate commands confirmed by human verification (go build./..., dsync codec, NOTIFY dispatch, zone file loading); two pre-existing failures in internal/engine and internal/resolver are documented non-regressions
 - miekg/dns ParseBIND automatically uses dns.RFC3597 for TYPE66 (unknown-type RFC3597 fallback); no production code changes needed in zone package — DSYNC zone file support was already functional
 - Zone file test vector: 003b0100350161016200 = CDS(59), NOTIFY(1), port 53(0x0035), target a.b. (wire: 016101 6200); use simplified target to keep hex short
+- Phase 8 Plan 05 complete: SourceACL{networks, allowAll} satisfies Allower (compile-time var _ Allower = (*SourceACL)(nil)); WebhookClient fire-and-forget POST (json/base64) with configurable timeout; Handler.webhook field + SetWebhook() setter (NewHandler unchanged); ZoneDSYNCConfig extended with WebhookURL/WebhookBodyFormat/AllowedSources/RateLimitPerMin; 10 new tests pass; go build ./internal/dsync/... ./internal/config/... ./internal/server/... passes
+- SetWebhook setter pattern: NewHandler signature is FINAL from Plan 02; webhook wired post-construction via SetWebhook (no constructor change)
+- Empty CIDR allowlist = accept all sources (D-05); invalid CIDRs silently skipped (T-08-16)
+- Webhook goroutine bounded by rate limiter throughput (T-08-15); Fire() no-op when URL empty (D-02)

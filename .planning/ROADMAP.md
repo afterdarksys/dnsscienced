@@ -108,7 +108,7 @@ Plans:
 - [x] 08-02-PLAN.md — Inbound NOTIFY handler + _dsync discovery + outbound sender (Wave 2)
 - [x] 08-03-PLAN.md — Config structs + server opcode dispatch wiring (Wave 3)
 - [x] 08-04-PLAN.md — Zone file TYPE66 test + full build/test gate (Wave 4)
-- [ ] 08-05-PLAN.md — Webhook delivery + source IP allowlist (Wave 3)
+- [x] 08-05-PLAN.md — Webhook delivery + source IP allowlist (Wave 3)
 - [ ] 08-06-PLAN.md — SendDSYNCNotify Admin RPC + Prometheus metrics (Wave 4)
 
 </details>
