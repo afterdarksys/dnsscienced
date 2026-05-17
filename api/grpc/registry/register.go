@@ -10,6 +10,7 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/admin"
 	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/dnsscience/dnsscienced/internal/dsync"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
@@ -42,7 +43,8 @@ type SrvIface = services.SrvAdapter
 // zonesDir is the directory where .dnszone / .dzc files live.
 // compileBin is the path to the dnsscienced-compile binary.
 // connRegistry is the connection registry for ListConnections (may be nil — Plan 04 wires it).
-func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry) {
+// dsyncNotifier is the DSYNC outbound notifier (may be nil when DSYNC is disabled in config).
+func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry, dsyncNotifier ...*dsync.DSYNCNotifier) {
 	// Engine-backed managers.
 	resolver := engine.NewResolver("")
 	dnssec := &mock.DNSSECMgr{}
@@ -81,4 +83,9 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 		connRegistry,          // may be nil; wired from grpcserver.New() 4-return in Plan 04
 	)
 	pb.RegisterAdminServiceServer(s, adminSvc)
+
+	// DSYNCAdminService — registered only when a DSYNCNotifier is provided (DSYNC enabled in config).
+	if len(dsyncNotifier) > 0 && dsyncNotifier[0] != nil {
+		pb.RegisterDSYNCAdminServiceServer(s, services.NewDSYNCService(dsyncNotifier[0]))
+	}
 }
