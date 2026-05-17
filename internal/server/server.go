@@ -93,6 +93,11 @@ type DSYNCConfig struct {
 	// (e.g., "8.8.8.8:53"). Must NOT be the server's own listen address.
 	// Default: "8.8.8.8:53".
 	Resolver string `yaml:"resolver"`
+
+	// AllowedSources is the list of CIDRs/IPs permitted to send inbound
+	// NOTIFY(CDS/CSYNC) messages. Empty = accept all sources (open).
+	// Strongly recommended to restrict to your parent zone operator's IPs.
+	AllowedSources []string `yaml:"allowed_sources,omitempty"`
 }
 
 // DefaultConfig returns default server configuration
@@ -261,7 +266,16 @@ func New(cfg Config) (*Server, error) {
 		dsyncMetrics := dsync.NewDSYNCMetrics()
 
 		limiter := dsync.NewNotifyLimiter(rps, burst)
-		s.dsyncHandler = dsync.NewHandler(limiter, dsync.AllowAllACL(), zerolog.Nop(), dsyncMetrics)
+		sourceACL, aclErr := dsync.NewSourceACL(cfg.DSYNC.AllowedSources)
+		if aclErr != nil {
+			return nil, fmt.Errorf("dsync allowed_sources: %w", aclErr)
+		}
+		if len(cfg.DSYNC.AllowedSources) == 0 {
+			// Warn operators that all sources are accepted when no ACL is configured.
+			// Set allowed_sources in the dsync config to restrict to known parent IPs.
+			zerolog.Ctx(context.Background()).Warn().Msg("DSYNC enabled with no allowed_sources — accepting NOTIFY from any source IP")
+		}
+		s.dsyncHandler = dsync.NewHandler(limiter, sourceACL, zerolog.Nop(), dsyncMetrics)
 
 		// Create outbound DSYNC notifier (RFC 9859 sender).
 		// PropagationDelay defaults to 60s per RFC 9859 recommendation.
