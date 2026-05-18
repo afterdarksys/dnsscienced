@@ -173,8 +173,8 @@ func (u *Updater) Update() error {
 	u.lastUpdate = time.Now()
 
 	fmt.Printf("[ROOTHINTS] Root hints updated successfully\n")
-	fmt.Printf("[ROOTHINTS] Old hash: %s\n", oldHash[:8])
-	fmt.Printf("[ROOTHINTS] New hash: %s\n", newHash[:8])
+	fmt.Printf("[ROOTHINTS] Old hash: %s\n", truncateHash(oldHash, 8))
+	fmt.Printf("[ROOTHINTS] New hash: %s\n", truncateHash(newHash, 8))
 
 	// Trigger callback
 	if u.onUpdate != nil {
@@ -333,4 +333,14 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// truncateHash returns the first n characters of a hash string, or the full
+// string if it is shorter than n. This prevents slice-bounds panics when the
+// hash is empty (e.g. on the very first update when no prior hints file exists).
+func truncateHash(h string, n int) string {
+	if len(h) <= n {
+		return h
+	}
+	return h[:n]
 }
