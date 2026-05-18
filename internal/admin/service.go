@@ -49,6 +49,7 @@ type AdminSrvAdapter interface {
 	RemoveZone(origin string)
 	GetAdminStats() AdminSrvStats
 	GetTsigKeyRing() *tsig.KeyRing
+	GetZoneNames() []string
 }
 
 // Service implements the AdminService gRPC interface
@@ -99,6 +100,12 @@ func NewService(
 		tsigKeyRing:  tsigKeyRing,
 		connRegistry: connRegistry,
 	}
+}
+
+// SetConnRegistry wires the connection registry post-construction.
+// Called from main.go after grpcserver.New() returns the ConnRegistry.
+func (s *Service) SetConnRegistry(reg *grpcserver.ConnRegistry) {
+	s.connRegistry = reg
 }
 
 // validateZoneName rejects names containing path traversal sequences.
@@ -447,36 +454,54 @@ func (s *Service) RefreshZone(ctx context.Context, req *pb.AdminRefreshZoneReque
 
 // ListZones lists all loaded zones with SourceFile, Compiled, and Serial fields.
 func (s *Service) ListZones(ctx context.Context, req *emptypb.Empty) (*pb.AdminListZonesResponse, error) {
-	if s.reloadMgr == nil {
-		return &pb.AdminListZonesResponse{}, nil
-	}
+	var zoneInfos []*pb.AdminZoneInfo
 
-	zones := s.reloadMgr.GetAllZones()
-	zoneInfos := make([]*pb.AdminZoneInfo, 0, len(zones))
-
-	for name, z := range zones {
-		domain := strings.TrimSuffix(name, ".")
-		dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
-		dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
-		_, compiledErr := os.Stat(dzcPath)
-
-		serial := uint32(0)
-		if z.SOA != nil {
-			serial = z.SOA.Serial
+	if s.reloadMgr != nil {
+		// Primary path: use reloadMgr when available.
+		zones := s.reloadMgr.GetAllZones()
+		zoneInfos = make([]*pb.AdminZoneInfo, 0, len(zones))
+		for name, z := range zones {
+			zoneInfos = append(zoneInfos, s.buildZoneInfo(name, z))
 		}
-
-		stats := z.GetStats()
-		zoneInfos = append(zoneInfos, &pb.AdminZoneInfo{
-			Name:        name,
-			RecordCount: int32(stats.Records),
-			LastLoaded:  timestamppb.New(s.reloadMgr.GetLastReload()),
-			SourceFile:  dnszonePath,
-			Compiled:    compiledErr == nil,
-			Serial:      serial,
-		})
+	} else if s.srv != nil {
+		// Fallback: enumerate zones from the live server (ADMIN-LISTZONES-01).
+		names := s.srv.GetZoneNames()
+		zoneInfos = make([]*pb.AdminZoneInfo, 0, len(names))
+		for _, name := range names {
+			z := s.srv.GetZone(name)
+			if z != nil {
+				zoneInfos = append(zoneInfos, s.buildZoneInfo(name, z))
+			}
+		}
 	}
 
 	return &pb.AdminListZonesResponse{Zones: zoneInfos}, nil
+}
+
+// buildZoneInfo constructs an AdminZoneInfo from a zone name and Zone object.
+func (s *Service) buildZoneInfo(name string, z *zone.Zone) *pb.AdminZoneInfo {
+	domain := strings.TrimSuffix(name, ".")
+	dnszonePath := filepath.Join(s.zonesDir, domain+".dnszone")
+	dzcPath := filepath.Join(s.zonesDir, domain+".dzc")
+	_, compiledErr := os.Stat(dzcPath)
+
+	serial := uint32(0)
+	if z.SOA != nil {
+		serial = z.SOA.Serial
+	}
+
+	stats := z.GetStats()
+	info := &pb.AdminZoneInfo{
+		Name:        name,
+		RecordCount: int32(stats.Records),
+		SourceFile:  dnszonePath,
+		Compiled:    compiledErr == nil,
+		Serial:      serial,
+	}
+	if s.reloadMgr != nil {
+		info.LastLoaded = timestamppb.New(s.reloadMgr.GetLastReload())
+	}
+	return info
 }
 
 // ReloadZones reloads all zones from disk

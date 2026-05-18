@@ -13,6 +13,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/dsync"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -45,9 +46,10 @@ type SrvIface = services.SrvAdapter
 // srv is the live DNS server (must satisfy SrvIface / services.SrvAdapter).
 // zonesDir is the directory where .dnszone / .dzc files live.
 // compileBin is the path to the dnsscienced-compile binary.
-// connRegistry is the connection registry for ListConnections (may be nil — Plan 04 wires it).
+// connRegistry is always nil here; use SetConnRegistry post-construction instead.
 // dsyncNotifier is the DSYNC outbound notifier (nil when DSYNC is disabled in config).
-func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry, dsyncNotifier *dsync.DSYNCNotifier) {
+// logger is the admin audit logger for SetQueryLogging RPC wiring.
+func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry, dsyncNotifier *dsync.DSYNCNotifier, logger *logging.Logger) *admin.Service {
 	// Engine-backed managers.
 	resolver := engine.NewResolver("")
 	dnssec := &mock.DNSSECMgr{}
@@ -74,16 +76,16 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 	// AdminService — always registered; provides cache, zone, metrics, logging, and rate-limit control.
 	adminSvc := admin.NewService(
 		srv.GetShardedCache(),
-		nil, // reloadMgr — legacy stubs nil-guarded in Plan 03
-		nil, // healthMgr — GetServerStatus nil-guarded in Plan 03
-		nil, // logger — wired in Phase 7; SetQueryLogging/GetQueryLoggingStatus nil-guard
-		nil, // shutdownFn — ShutdownServer nil-guards this already
-		srv, // AdminSrvAdapter — srv satisfies interface via GetAdminStats/GetZone/AddZone/RemoveZone
+		nil,                   // reloadMgr — legacy stubs nil-guarded in Plan 03
+		nil,                   // healthMgr — GetServerStatus nil-guarded in Plan 03
+		logger,                // wired from main.go (ADMIN-LOG-02)
+		nil,                   // shutdownFn — ShutdownServer nil-guards this already
+		srv,                   // AdminSrvAdapter — srv satisfies interface via GetAdminStats/GetZone/AddZone/RemoveZone
 		zonesDir,
 		compileBin,
-		nil,                   // rrlLimiter — wired in Phase 7
+		srv.GetRRL(),          // wired from live server (ADMIN-RRL-02)
 		srv.GetTsigKeyRing(), // may be nil if no TSIG keys configured
-		connRegistry,          // may be nil; wired from grpcserver.New() 4-return in Plan 04
+		connRegistry,          // always nil here; wired post-construction via SetConnRegistry (ADMIN-CONN-01)
 	)
 	pb.RegisterAdminServiceServer(s, adminSvc)
 
@@ -91,4 +93,6 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 	if dsyncNotifier != nil {
 		pb.RegisterDSYNCAdminServiceServer(s, services.NewDSYNCService(dsyncNotifier))
 	}
+
+	return adminSvc
 }
