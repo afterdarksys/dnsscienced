@@ -271,6 +271,7 @@ func apiKeyUnaryInterceptor(keySet *atomicKeySet) grpc.UnaryServerInterceptor {
 
 // apiKeyStreamInterceptor enforces Bearer token auth on every stream.
 // Per D-01: API key auth is ALWAYS required (AND with mTLS, not OR).
+// Stores key ID in context via CtxKeyID{} for audit logging (matches unary interceptor).
 func apiKeyStreamInterceptor(keySet *atomicKeySet) grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		md, _ := metadata.FromIncomingContext(ss.Context())
@@ -278,12 +279,28 @@ func apiKeyStreamInterceptor(keySet *atomicKeySet) grpc.StreamServerInterceptor 
 		if token == "" {
 			return status.Error(codes.Unauthenticated, "missing bearer token")
 		}
-		_, ok := keySet.Lookup(token)
+		id, ok := keySet.Lookup(token)
 		if !ok {
 			return status.Error(codes.Unauthenticated, "invalid bearer token")
 		}
-		return handler(srv, ss)
+		// Enrich stream context with key ID for audit logging.
+		wrapped := &keyIDStream{
+			ServerStream: ss,
+			ctx:          context.WithValue(ss.Context(), middleware.CtxKeyID{}, id),
+		}
+		return handler(srv, wrapped)
 	}
+}
+
+// keyIDStream wraps a grpc.ServerStream to override Context() with an enriched context
+// containing the authenticated API key ID.
+type keyIDStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *keyIDStream) Context() context.Context {
+	return s.ctx
 }
 
 // extractBearer returns the Bearer token from gRPC metadata authorization header.

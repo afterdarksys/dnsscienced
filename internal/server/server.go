@@ -295,13 +295,16 @@ func New(cfg Config) (*Server, error) {
 	// Set defensive manager if provided
 	s.defensive = cfg.DefensiveManager
 
-	// Initialize TSIG key ring if keys are configured
+	// Initialize TSIG key ring unconditionally — empty ring is valid.
+	// This allows AddTsigKey gRPC to bootstrap keys even when none are in startup config.
+	s.tsigKeyRing, _ = tsig.NewKeyRing(nil)
+
 	if len(cfg.TsigKeys) > 0 {
-		var err error
-		s.tsigKeyRing, err = tsig.NewKeyRing(cfg.TsigKeys)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("init TSIG key ring: %w", err)
+		for _, kc := range cfg.TsigKeys {
+			if err := s.tsigKeyRing.Add(kc); err != nil {
+				cancel()
+				return nil, fmt.Errorf("init TSIG key ring: add key %q: %w", kc.Name, err)
+			}
 		}
 	}
 
