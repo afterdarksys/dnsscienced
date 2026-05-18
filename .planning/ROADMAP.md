@@ -4,6 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phase 1 (shipped 2026-04-22)
 - ✅ **v1.1 dnsfirewalld Completion** — Phases 2–5 (shipped 2026-04-23)
+- ✅ **v1.2 Fully Operational** — Phases 6–8 (shipped 2026-05-17)
 
 ## Phases
 
@@ -31,7 +32,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 ## Phases (v1.2 — Fully Operational)
 
 <details open>
-<summary>🔄 v1.2 — Fully Operational (Phases 6–8) — IN PROGRESS</summary>
+<summary>✅ v1.2 — Fully Operational (Phases 6–8) — COMPLETE 2026-05-17</summary>
 
 **Goal:** Make dnsscienced production-complete: all admin RPCs functional, admin API authenticated with mandatory keys + mTLS, and RFC 9859 DSYNC/generalized notifications implemented.
 
@@ -122,9 +123,9 @@ Plans:
 | 3. Live Threat Feed | v1.1 | 3/3 | Complete | 2026-04-23 |
 | 4. EDNS0 CustomerID | v1.1 | 1/1 | Complete | 2026-04-23 |
 | 5. Redirect Load Balancing | v1.1 | 2/2 | Complete | 2026-04-23 |
-| 6. Admin API — Stubs & Registration | v1.2 | 5/6 | In Progress|  |
+| 6. Admin API — Stubs & Registration | v1.2 | 6/6 | Complete   | 2026-05-17 |
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
-| 8. RFC 9859 DSYNC | v1.2 | 6/6 | Complete   | 2026-05-17 |
+| 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
 
 ---
-*Last updated: 2026-05-16 — Phase 6 gap plans added (6 plans, 5 waves — TSIG support added)*
+*Last updated: 2026-05-17 — v1.2 complete (phases 6–8 all done)*
