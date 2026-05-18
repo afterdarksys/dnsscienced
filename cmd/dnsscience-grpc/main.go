@@ -86,7 +86,7 @@ cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, 
 		h := health.NewServer()
 		healthpb.RegisterHealthServer(s, h)
 		reflection.Register(s)
-		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil, nil)
+		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil, nil, nil)
 	}
 
 	gs, ln, _, _, err := server.New(cfg, deps)

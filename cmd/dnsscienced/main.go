@@ -256,12 +256,13 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Register closure is called inside New() before the registry is returned,
-		// so we pass nil here and fix it up post-construction via RegisterConnRegistry.
-		// Plan 05 restructures this to wire the live registry after New() returns.
+		// adminSvc is captured from the Register closure and used post-construction
+		// to wire the ConnRegistry (chicken-and-egg: connReg isn't available until after
+		// grpcserver.New returns, but Register runs inside New).
+		var adminSvc *admin.Service
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier())
+				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger)
 			},
 			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
 			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
@@ -273,8 +274,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error creating gRPC server: %v\n", err)
 			os.Exit(1)
 		}
-		_ = connReg // connReg is wired via nil in RegisterAll closure above (chicken-and-egg);
-		            // Plan 05 completes the live-registry wiring post-construction.
+		// Wire connReg into adminSvc post-construction (ADMIN-CONN-01).
+		if adminSvc != nil && connReg != nil {
+			adminSvc.SetConnRegistry(connReg)
+		}
 
 		// Start gRPC server in background
 		go func() {
