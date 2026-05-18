@@ -445,6 +445,11 @@ func (s *Server) GetTsigKeyRing() *tsig.KeyRing {
 	return s.tsigKeyRing
 }
 
+// GetRRL returns the rate-limit limiter (may be nil if RRL is disabled in config).
+func (s *Server) GetRRL() *rrl.Limiter {
+	return s.rrl
+}
+
 // GetDSYNCNotifier returns the DSYNC outbound notifier (may be nil if DSYNC is disabled).
 func (s *Server) GetDSYNCNotifier() *dsync.DSYNCNotifier {
 	return s.dsyncNotifier
@@ -918,6 +923,15 @@ func (s *Server) RemoveZone(origin string) {
 // GetZone returns a zone by origin
 func (s *Server) GetZone(origin string) *zone.Zone {
 	return s.cfg.Zones[origin]
+}
+
+// GetZoneNames returns the origin strings for all configured zones.
+func (s *Server) GetZoneNames() []string {
+	names := make([]string, 0, len(s.cfg.Zones))
+	for origin := range s.cfg.Zones {
+		names = append(names, origin)
+	}
+	return names
 }
 
 // EnableAuthoritative enables authoritative mode
