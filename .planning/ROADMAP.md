@@ -114,6 +114,29 @@ Plans:
 
 </details>
 
+### Phase 9: v1.2 Gap Closure — Admin API Wiring
+
+**Goal:** Wire the 4 production gaps identified in the v1.2 milestone audit: inject `*logging.Logger` and `*rrl.Limiter` into `admin.Service` so SetQueryLogging/SetRateLimit work at runtime; plumb `ConnRegistry` from `grpcserver.New()` to `admin.Service` so ListConnections returns real data; fix ListZones by wiring zone enumeration from `server.Server`.
+
+**Scope:**
+- Add `GetLogger() *logging.Logger` accessor to `server.Server` + `serverSrvAdapter`
+- Add `GetRRL() *rrl.Limiter` accessor to `server.Server` + `serverSrvAdapter`
+- Wire logger + rrlLimiter through `services.SrvAdapter` interface → `RegisterAll` → `admin.NewService`
+- Add `SetConnRegistry(*grpcserver.ConnRegistry)` setter to `admin.Service`; call post-construction in `main.go`; remove `_ = connReg` discard
+- Fix `ListZones` by adding `GetZoneNames() []string` to `server.Server` or wiring reloadMgr; admin service uses it when reloadMgr is nil
+- Fix TSIG bootstrap: always initialize `tsigKeyRing` in `server.New()` (zero-key ring is valid)
+- Fix stream interceptor key ID: store key ID in context from `apiKeyStreamInterceptor`
+- Update v1.2 milestone audit to `status: passed` after all gaps closed
+
+**Files:** `internal/server/server.go`, `api/grpc/services/management.go`, `cmd/dnsscienced/main.go`, `api/grpc/registry/register.go`, `internal/admin/service.go`, `api/grpc/server/server.go`
+
+**Plans:** 3 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — Add server accessors (GetLogger, GetRRL, GetZoneNames) + extend SrvAdapter interface (Wave 1)
+- [ ] 09-02-PLAN.md — Wire logger/rrlLimiter/reloadMgr into RegisterAll + admin.NewService; fix SetConnRegistry post-construction in main.go (Wave 2)
+- [ ] 09-03-PLAN.md — Fix TSIG always-init + stream interceptor key ID; verify all 4 gaps closed; update audit status (Wave 3)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -126,6 +149,7 @@ Plans:
 | 6. Admin API — Stubs & Registration | v1.2 | 6/6 | Complete   | 2026-05-17 |
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
+| 9. v1.2 Gap Closure | v1.2 | 0/3 | Not Started |  |
 
 ---
 *Last updated: 2026-05-17 — v1.2 complete (phases 6–8 all done)*
