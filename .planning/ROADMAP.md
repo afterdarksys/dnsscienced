@@ -130,12 +130,12 @@ Plans:
 
 **Files:** `internal/server/server.go`, `api/grpc/services/management.go`, `cmd/dnsscienced/main.go`, `api/grpc/registry/register.go`, `internal/admin/service.go`, `api/grpc/server/server.go`
 
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 09-01-PLAN.md — Add server accessors (GetLogger, GetRRL, GetZoneNames) + extend SrvAdapter interface (Wave 1)
 - [x] 09-02-PLAN.md — Wire logger/rrlLimiter/reloadMgr into RegisterAll + admin.NewService; fix SetConnRegistry post-construction in main.go (Wave 2)
-- [ ] 09-03-PLAN.md — Fix TSIG always-init + stream interceptor key ID; verify all 4 gaps closed; update audit status (Wave 3)
+- [x] 09-03-PLAN.md — Fix TSIG always-init + stream interceptor key ID; verify all 4 gaps closed; update audit status (Wave 3)
 
 ## Progress
 
@@ -149,7 +149,7 @@ Plans:
 | 6. Admin API — Stubs & Registration | v1.2 | 6/6 | Complete   | 2026-05-17 |
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
-| 9. v1.2 Gap Closure | v1.2 | 0/3 | Not Started |  |
+| 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
 
 ---
 *Last updated: 2026-05-17 — v1.2 complete (phases 6–8 all done)*
