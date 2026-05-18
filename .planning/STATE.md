@@ -17,9 +17,9 @@ progress:
 
 ## Current Position
 
-Phase: 09 (v1-2-gap-closure) — EXECUTING
+Phase: 09 (v1-2-gap-closure) — COMPLETE
 Plan: 3 of 3
-Status: Phase complete — ready for verification
+Status: Phase complete — all 4 gaps closed; v1.2 audit PASSED
 Last activity: 2026-05-18
 
 ## Project Reference
