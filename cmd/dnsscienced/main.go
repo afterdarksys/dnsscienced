@@ -22,6 +22,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -73,6 +74,14 @@ func (a *serverSrvAdapter) GetAdminStats() admin.AdminSrvStats {
 
 func (a *serverSrvAdapter) GetTsigKeyRing() *tsig.KeyRing {
 	return a.s.GetTsigKeyRing()
+}
+
+func (a *serverSrvAdapter) GetRRL() *rrl.Limiter {
+	return a.s.GetRRL()
+}
+
+func (a *serverSrvAdapter) GetZoneNames() []string {
+	return a.s.GetZoneNames()
 }
 
 var (

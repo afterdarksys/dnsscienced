@@ -13,6 +13,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/dsync"
 	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 )
@@ -32,6 +33,8 @@ func (NoopSrvAdapter) GetFirewall() *firewalld.Firewall          { return nil }
 func (NoopSrvAdapter) GetShardedCache() *cache.ShardedCache      { return nil }
 func (NoopSrvAdapter) GetAdminStats() admin.AdminSrvStats        { return admin.AdminSrvStats{} }
 func (NoopSrvAdapter) GetTsigKeyRing() *tsig.KeyRing             { return nil }
+func (NoopSrvAdapter) GetRRL() *rrl.Limiter                      { return nil }
+func (NoopSrvAdapter) GetZoneNames() []string                    { return nil }
 
 // SrvIface is the interface that RegisterAll requires from the DNS server.
 // It matches services.SrvAdapter so the caller can pass a *server.Server directly.
