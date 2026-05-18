@@ -133,7 +133,7 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Add server accessors (GetLogger, GetRRL, GetZoneNames) + extend SrvAdapter interface (Wave 1)
+- [x] 09-01-PLAN.md — Add server accessors (GetLogger, GetRRL, GetZoneNames) + extend SrvAdapter interface (Wave 1)
 - [ ] 09-02-PLAN.md — Wire logger/rrlLimiter/reloadMgr into RegisterAll + admin.NewService; fix SetConnRegistry post-construction in main.go (Wave 2)
 - [ ] 09-03-PLAN.md — Fix TSIG always-init + stream interceptor key ID; verify all 4 gaps closed; update audit status (Wave 3)
 
