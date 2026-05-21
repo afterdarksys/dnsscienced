@@ -8,6 +8,18 @@ dnsscienced is a production Go-based authoritative and caching DNS server. The d
 
 Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
 
+## Current Milestone: v1.3 DNS Protocol Completeness
+
+**Goal:** Close the RFC coverage gaps identified in the v1.2 audit — ship the record types, resolver behaviors, and zone-serving capabilities that a production DNS server is expected to support.
+
+**Target features:**
+- HTTPS/SVCB (RFC 9460), TLSA (RFC 6698), SSHFP (RFC 4255), NAPTR (RFC 3403), SMIMEA (RFC 8162), LOC (RFC 1876) record type support
+- Query name minimization (RFC 7816/9156)
+- Aggressive NSEC/NSEC3 caching (RFC 8198)
+- Serve-stale with proper TTL extension (RFC 8767)
+- AXFR server — serve zone transfers to secondaries (RFC 5936)
+- Dynamic DNS Updates (RFC 2136)
+
 ## Current State: v1.2 Shipped
 
 **Shipped:** 2026-05-18

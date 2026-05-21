@@ -1,32 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: milestone
-status: complete
+milestone: v1.3
+milestone_name: DNS Protocol Completeness
+status: planning
 last_updated: "2026-05-21T00:00:00.000Z"
 last_activity: 2026-05-21
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 23
-  completed_plans: 23
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # State
 
 ## Current Position
 
-Milestone: v1.2 — Fully Operational — SHIPPED 2026-05-18
-Status: Milestone complete — archived; ready for next milestone
-Last activity: 2026-05-21
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-21 — Milestone v1.3 started
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Planning next milestone (v1.3 DNS Protocol Completeness)
+**Current focus:** v1.3 — DNS Protocol Completeness
 
 ## Accumulated Context
 
