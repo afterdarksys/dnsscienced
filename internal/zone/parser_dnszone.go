@@ -393,14 +393,14 @@ func parseSOA(zf *DNSZoneFile, origin string, defaultTTL uint32) (*dns.SOA, erro
 	}
 
 	// Parse serial
-	if zf.SOA.Serial == "auto" {
+	if zf.SOA.Serial == "auto" || zf.SOA.Serial == "" {
 		// Generate serial: YYYYMMDD00
 		today := time.Now().Format("20060102")
 		fmt.Sscanf(today+"00", "%d", &soa.Serial)
 	} else {
 		var serial uint64
 		if n, err := fmt.Sscanf(zf.SOA.Serial, "%d", &serial); n != 1 || err != nil {
-			return nil, fmt.Errorf("invalid SOA serial %q: expected integer", zf.SOA.Serial)
+			return nil, fmt.Errorf("invalid SOA serial %q: expected integer or \"auto\"", zf.SOA.Serial)
 		}
 		soa.Serial = uint32(serial)
 	}
