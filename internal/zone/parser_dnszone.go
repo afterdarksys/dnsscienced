@@ -485,7 +485,9 @@ func parseAAAARecords(zone *Zone, owner string, data interface{}, ttl uint32) er
 
 	for _, ipStr := range ips {
 		ip := net.ParseIP(ipStr)
-		if ip == nil || ip.To16() == nil {
+		// To4() returns non-nil for IPv4 addresses; reject them here so that
+		// AAAA records only ever contain pure IPv6 addresses.
+		if ip == nil || ip.To4() != nil {
 			return fmt.Errorf("invalid IPv6 address: %s", ipStr)
 		}
 
