@@ -833,24 +833,26 @@ func parseSSHFPRecords(zone *Zone, owner string, data interface{}, ttl uint32) e
 	sshfpList := []SSHFPRecord{}
 	switch v := data.(type) {
 	case []interface{}:
-		for _, item := range v {
-			if sshfpMap, ok := item.(map[string]interface{}); ok {
-				rec := SSHFPRecord{}
-				if algorithm, ok := sshfpMap["algorithm"].(int); ok {
-					rec.Algorithm = algorithm
-				} else if algorithmF, ok := sshfpMap["algorithm"].(float64); ok {
-					rec.Algorithm = int(algorithmF)
-				}
-				if fpType, ok := sshfpMap["fingerprint_type"].(int); ok {
-					rec.FingerprintType = fpType
-				} else if fpTypeF, ok := sshfpMap["fingerprint_type"].(float64); ok {
-					rec.FingerprintType = int(fpTypeF)
-				}
-				if fp, ok := sshfpMap["fingerprint"].(string); ok {
-					rec.Fingerprint = fp
-				}
-				sshfpList = append(sshfpList, rec)
+		for i, item := range v {
+			sshfpMap, ok := item.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("SSHFP record item %d: expected map, got %T", i, item)
 			}
+			rec := SSHFPRecord{}
+			if algorithm, ok := sshfpMap["algorithm"].(int); ok {
+				rec.Algorithm = algorithm
+			} else if algorithmF, ok := sshfpMap["algorithm"].(float64); ok {
+				rec.Algorithm = int(algorithmF)
+			}
+			if fpType, ok := sshfpMap["fingerprint_type"].(int); ok {
+				rec.FingerprintType = fpType
+			} else if fpTypeF, ok := sshfpMap["fingerprint_type"].(float64); ok {
+				rec.FingerprintType = int(fpTypeF)
+			}
+			if fp, ok := sshfpMap["fingerprint"].(string); ok {
+				rec.Fingerprint = fp
+			}
+			sshfpList = append(sshfpList, rec)
 		}
 	default:
 		return fmt.Errorf("invalid SSHFP record format")
@@ -878,33 +880,35 @@ func parseNAPTRRecords(zone *Zone, owner string, data interface{}, ttl uint32) e
 	naptrList := []NAPTRRecord{}
 	switch v := data.(type) {
 	case []interface{}:
-		for _, item := range v {
-			if naptrMap, ok := item.(map[string]interface{}); ok {
-				rec := NAPTRRecord{}
-				if order, ok := naptrMap["order"].(int); ok {
-					rec.Order = order
-				} else if orderF, ok := naptrMap["order"].(float64); ok {
-					rec.Order = int(orderF)
-				}
-				if pref, ok := naptrMap["preference"].(int); ok {
-					rec.Preference = pref
-				} else if prefF, ok := naptrMap["preference"].(float64); ok {
-					rec.Preference = int(prefF)
-				}
-				if flags, ok := naptrMap["flags"].(string); ok {
-					rec.Flags = flags
-				}
-				if service, ok := naptrMap["service"].(string); ok {
-					rec.Service = service
-				}
-				if regexp, ok := naptrMap["regexp"].(string); ok {
-					rec.Regexp = regexp
-				}
-				if replacement, ok := naptrMap["replacement"].(string); ok {
-					rec.Replacement = replacement
-				}
-				naptrList = append(naptrList, rec)
+		for i, item := range v {
+			naptrMap, ok := item.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("NAPTR record item %d: expected map, got %T", i, item)
 			}
+			rec := NAPTRRecord{}
+			if order, ok := naptrMap["order"].(int); ok {
+				rec.Order = order
+			} else if orderF, ok := naptrMap["order"].(float64); ok {
+				rec.Order = int(orderF)
+			}
+			if pref, ok := naptrMap["preference"].(int); ok {
+				rec.Preference = pref
+			} else if prefF, ok := naptrMap["preference"].(float64); ok {
+				rec.Preference = int(prefF)
+			}
+			if flags, ok := naptrMap["flags"].(string); ok {
+				rec.Flags = flags
+			}
+			if service, ok := naptrMap["service"].(string); ok {
+				rec.Service = service
+			}
+			if regexp, ok := naptrMap["regexp"].(string); ok {
+				rec.Regexp = regexp
+			}
+			if replacement, ok := naptrMap["replacement"].(string); ok {
+				rec.Replacement = replacement
+			}
+			naptrList = append(naptrList, rec)
 		}
 	default:
 		return fmt.Errorf("invalid NAPTR record format")
@@ -942,29 +946,31 @@ func parseSMIMEARecords(zone *Zone, owner string, data interface{}, ttl uint32) 
 	smimeaList := []TLSARecord{}
 	switch v := data.(type) {
 	case []interface{}:
-		for _, item := range v {
-			if smimeaMap, ok := item.(map[string]interface{}); ok {
-				rec := TLSARecord{}
-				if usage, ok := smimeaMap["usage"].(int); ok {
-					rec.Usage = usage
-				} else if usageF, ok := smimeaMap["usage"].(float64); ok {
-					rec.Usage = int(usageF)
-				}
-				if selector, ok := smimeaMap["selector"].(int); ok {
-					rec.Selector = selector
-				} else if selectorF, ok := smimeaMap["selector"].(float64); ok {
-					rec.Selector = int(selectorF)
-				}
-				if matching, ok := smimeaMap["matching"].(int); ok {
-					rec.Matching = matching
-				} else if matchingF, ok := smimeaMap["matching"].(float64); ok {
-					rec.Matching = int(matchingF)
-				}
-				if d, ok := smimeaMap["data"].(string); ok {
-					rec.Data = d
-				}
-				smimeaList = append(smimeaList, rec)
+		for i, item := range v {
+			smimeaMap, ok := item.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("SMIMEA record item %d: expected map, got %T", i, item)
 			}
+			rec := TLSARecord{}
+			if usage, ok := smimeaMap["usage"].(int); ok {
+				rec.Usage = usage
+			} else if usageF, ok := smimeaMap["usage"].(float64); ok {
+				rec.Usage = int(usageF)
+			}
+			if selector, ok := smimeaMap["selector"].(int); ok {
+				rec.Selector = selector
+			} else if selectorF, ok := smimeaMap["selector"].(float64); ok {
+				rec.Selector = int(selectorF)
+			}
+			if matching, ok := smimeaMap["matching"].(int); ok {
+				rec.Matching = matching
+			} else if matchingF, ok := smimeaMap["matching"].(float64); ok {
+				rec.Matching = int(matchingF)
+			}
+			if d, ok := smimeaMap["data"].(string); ok {
+				rec.Data = d
+			}
+			smimeaList = append(smimeaList, rec)
 		}
 	default:
 		return fmt.Errorf("invalid SMIMEA record format")
@@ -994,10 +1000,12 @@ func parseLOCRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 	locStrings := []string{}
 	switch v := data.(type) {
 	case []interface{}:
-		for _, item := range v {
-			if locStr, ok := item.(string); ok {
-				locStrings = append(locStrings, locStr)
+		for i, item := range v {
+			locStr, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("LOC record item %d: expected string, got %T", i, item)
 			}
+			locStrings = append(locStrings, locStr)
 		}
 	default:
 		return fmt.Errorf("invalid LOC record format: LOC records must be a list of strings")
