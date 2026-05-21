@@ -42,3 +42,26 @@ records:
         selector: 1
         matching: 1
         data: "a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401"
+
+  "_443._tcp":
+    TLSA:
+      - usage: 3
+        selector: 1
+        matching: 1
+        data: "a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401"
+
+  www:
+    HTTPS:
+      - priority: 1
+        target: "."
+        params:
+          alpn: "h2,h3"
+          ipv4hint: "198.51.100.10"
+
+  "_dns.resolver":
+    SVCB:
+      - priority: 1
+        target: "dns.roundtrip.test"
+        params:
+          alpn: "dot"
+          port: "853"

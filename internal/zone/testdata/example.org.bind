@@ -62,3 +62,12 @@ _smimecert._tcp.user  IN  SMIMEA  3 1 1 a87f1b687ac0e57d2a081a2f282672334d90ed31
 
 ; LOC record (RFC 1876) — MIT campus area
 host  IN  LOC  42 21 43.952 N 71 06 18.910 W 24m 30m 10m 2m
+
+; TLSA record (RFC 6698) — DANE-EE SPKI SHA-256 for _443._tcp
+_443._tcp  IN  TLSA  3 1 1 a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401
+
+; HTTPS record (RFC 9460) — service binding for www
+www  IN  HTTPS  1 . alpn=h2,h3 ipv4hint=198.51.100.10
+
+; SVCB record (RFC 9460) — service binding for _dns.resolver
+_dns.resolver  IN  SVCB  1 dns.example.org. alpn=dot port=853
