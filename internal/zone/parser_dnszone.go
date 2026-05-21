@@ -534,6 +534,8 @@ func parseMXRecords(zone *Zone, owner string, data interface{}, ttl uint32) erro
 				mx := MXRecord{}
 				if priority, ok := mxMap["priority"].(int); ok {
 					mx.Priority = priority
+				} else if priorityF, ok := mxMap["priority"].(float64); ok {
+					mx.Priority = int(priorityF)
 				}
 				if target, ok := mxMap["target"].(string); ok {
 					mx.Target = target
@@ -676,12 +678,18 @@ func parseSRVRecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 				srv := SRVRecord{}
 				if priority, ok := srvMap["priority"].(int); ok {
 					srv.Priority = priority
+				} else if priorityF, ok := srvMap["priority"].(float64); ok {
+					srv.Priority = int(priorityF)
 				}
 				if weight, ok := srvMap["weight"].(int); ok {
 					srv.Weight = weight
+				} else if weightF, ok := srvMap["weight"].(float64); ok {
+					srv.Weight = int(weightF)
 				}
 				if port, ok := srvMap["port"].(int); ok {
 					srv.Port = port
+				} else if portF, ok := srvMap["port"].(float64); ok {
+					srv.Port = int(portF)
 				}
 				if target, ok := srvMap["target"].(string); ok {
 					srv.Target = target
