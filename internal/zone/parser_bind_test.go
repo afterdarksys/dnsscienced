@@ -392,6 +392,42 @@ func TestParseBIND_LOC(t *testing.T) {
 	}
 }
 
+func TestParseBIND_TLSA(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("_443._tcp.example.org.", dns.TypeTLSA)
+	if len(recs) == 0 {
+		t.Fatal("expected TLSA records, got none")
+	}
+}
+
+func TestParseBIND_HTTPS(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("www.example.org.", dns.TypeHTTPS)
+	if len(recs) == 0 {
+		t.Fatal("expected HTTPS records, got none")
+	}
+}
+
+func TestParseBIND_SVCB(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("_dns.resolver.example.org.", dns.TypeSVCB)
+	if len(recs) == 0 {
+		t.Fatal("expected SVCB records, got none")
+	}
+}
+
 func BenchmarkParseBIND(b *testing.B) {
 	cfg := DefaultConfig()
 

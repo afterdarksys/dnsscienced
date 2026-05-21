@@ -594,3 +594,54 @@ func TestRoundTrip_LOC(t *testing.T) {
 	orig, loaded := doRoundTrip(t)
 	assertRoundTrip(t, orig, loaded, "host.roundtrip.test.", dns.TypeLOC)
 }
+
+func TestParseDNSZone_TLSA(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("_443._tcp.roundtrip.test.", dns.TypeTLSA)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 TLSA record for _443._tcp.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestParseDNSZone_HTTPS(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("www.roundtrip.test.", dns.TypeHTTPS)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 HTTPS record for www.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestParseDNSZone_SVCB(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("_dns.resolver.roundtrip.test.", dns.TypeSVCB)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 SVCB record for _dns.resolver.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestRoundTrip_TLSA(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "_443._tcp.roundtrip.test.", dns.TypeTLSA)
+}
+
+func TestRoundTrip_HTTPS(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "www.roundtrip.test.", dns.TypeHTTPS)
+}
+
+func TestRoundTrip_SVCB(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "_dns.resolver.roundtrip.test.", dns.TypeSVCB)
+}
