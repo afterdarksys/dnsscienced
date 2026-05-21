@@ -2,6 +2,7 @@ package zone
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -1199,11 +1200,18 @@ func parseDuration(s string) (time.Duration, error) {
 // parseTime parses a time value (supports "1h", "30m", or raw seconds)
 func parseTime(s string) (uint32, error) {
 	if d, err := parseDuration(s); err == nil {
-		return uint32(d.Seconds()), nil
+		secs := uint64(d.Seconds())
+		if secs > math.MaxUint32 {
+			return 0, fmt.Errorf("time value %d exceeds uint32 maximum", secs)
+		}
+		return uint32(secs), nil
 	}
 	// Try as raw number
 	var seconds uint64
 	if _, err := fmt.Sscanf(s, "%d", &seconds); err == nil {
+		if seconds > math.MaxUint32 {
+			return 0, fmt.Errorf("time value %d exceeds uint32 maximum", seconds)
+		}
 		return uint32(seconds), nil
 	}
 	return 0, fmt.Errorf("invalid time format: %s", s)
