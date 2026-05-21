@@ -160,7 +160,10 @@ Plans:
 **UI hint**: no
 
 Plans:
+**Wave 1**
 - [ ] 10-01-PLAN.md — YAML parser: add SSHFP/NAPTR/SMIMEA/LOC struct types, parse functions, RecordSection fields, wire both loops, unit tests (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 10-02-PLAN.md — BIND fixture extension, BIND parse tests, DZC round-trip wire equality tests (Wave 2)
 
 ### Phase 11: Resolver Behaviors
