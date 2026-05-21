@@ -1169,8 +1169,11 @@ func parseGenericTypes(zone *Zone, owner string, data map[string]interface{}, tt
 
 // applyTemplates applies templates to generate records
 func applyTemplates(zone *Zone, zf *DNSZoneFile, defaultTTL uint32) error {
-	// Template application not yet implemented
-	// Would need variable substitution and template expansion
+	// Template application not yet implemented.
+	// Return an error rather than silently omitting apply: records from the zone.
+	if len(zf.Apply) > 0 {
+		return fmt.Errorf("template application (apply:) is not yet implemented")
+	}
 	return nil
 }
 
