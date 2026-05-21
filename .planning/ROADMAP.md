@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phase 1 (shipped 2026-04-22)
 - ✅ **v1.1 dnsfirewalld Completion** — Phases 2–5 (shipped 2026-04-23)
-- ✅ **v1.2 Fully Operational** — Phases 6–8 (shipped 2026-05-17)
+- ✅ **v1.2 Fully Operational** — Phases 6–9 (shipped 2026-05-18)
 
 ## Phases
 
@@ -29,10 +29,10 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
-## Phases (v1.2 — Fully Operational)
+## Phases
 
-<details open>
-<summary>✅ v1.2 — Fully Operational (Phases 6–8) — COMPLETE 2026-05-17</summary>
+<details>
+<summary>✅ v1.2 — Fully Operational (Phases 6–9) — SHIPPED 2026-05-18</summary>
 
 **Goal:** Make dnsscienced production-complete: all admin RPCs functional, admin API authenticated with mandatory keys + mTLS, and RFC 9859 DSYNC/generalized notifications implemented.
 

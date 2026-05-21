@@ -33,3 +33,24 @@
 5. Starlark CustomerID branching verified — q["customer_id"] flows through on_query handler end-to-end
 
 **Archive:** `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`
+
+---
+
+## v1.2 — Fully Operational (Completed)
+
+**Shipped:** 2026-05-18
+**Phases:** 6–9 (4 phases, 23 plans, ~80 commits)
+**Git range:** 106a511..84ca143
+**Files changed:** 123 files, +25,176 / -335 lines
+**Test suite:** 44 → 80+ tests (all passing under -race)
+
+**Key accomplishments:**
+1. Admin API fully operational — all AdminService RPCs registered and implemented; zone/record CRUD, metrics, logging, rate-limit controls wired to live subsystems
+2. TSIG key management (RFC 2845/8945) — `internal/tsig` package with KeyRing, Verify, Sign; runtime Add/Remove via gRPC RPCs; secrets never returned or logged
+3. Admin gRPC hardened — mandatory AND-auth (API key + mTLS cert), structured audit logging (caller, method, latency, remote_addr), ConnRegistry StatsHandler, atomic SIGHUP reload
+4. RFC 9859 DSYNC fully implemented — DSYNC record type 66 codec, inbound NOTIFY(CDS/CSYNC) handler, per-source-IP rate limiting, outbound `_dsync` discovery and sender, source ACL, webhook delivery, Prometheus metrics, `SendDSYNCNotify` Admin RPC
+5. v1.2 audit gaps closed — SetQueryLogging/SetRateLimit wired to live logger/rrl; ConnRegistry in admin service; ListZones fixed; TSIG always-initialized; stream interceptor key ID propagated
+
+**Known deferred items at close:** 0
+
+**Archive:** `.planning/milestones/v1.2-ROADMAP.md`, `.planning/milestones/v1.2-MILESTONE-AUDIT.md`

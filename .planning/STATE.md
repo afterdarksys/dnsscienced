@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: verifying
-last_updated: "2026-05-18T07:33:07.338Z"
-last_activity: 2026-05-18
+status: complete
+last_updated: "2026-05-21T00:00:00.000Z"
+last_activity: 2026-05-21
 progress:
   total_phases: 4
   completed_phases: 4
@@ -17,17 +17,16 @@ progress:
 
 ## Current Position
 
-Phase: 09 (v1-2-gap-closure) — COMPLETE
-Plan: 3 of 3
-Status: Phase complete — all 4 gaps closed; v1.2 audit PASSED
-Last activity: 2026-05-18
+Milestone: v1.2 — Fully Operational — SHIPPED 2026-05-18
+Status: Milestone complete — archived; ready for next milestone
+Last activity: 2026-05-21
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-23)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 09 — v1-2-gap-closure
+**Current focus:** Planning next milestone (v1.3 DNS Protocol Completeness)
 
 ## Accumulated Context
 

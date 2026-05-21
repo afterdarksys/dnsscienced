@@ -8,17 +8,14 @@ dnsscienced is a production Go-based authoritative and caching DNS server. The d
 
 Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
 
-## Current State: v1.1 Shipped + Phase 08 Complete
+## Current State: v1.2 Shipped
 
-**Shipped:** 2026-04-23
-**Test suite:** 44 firewalld tests, all passing under `-race`
+**Shipped:** 2026-05-18
+**Test suite:** 80+ tests, all passing under `-race`
 **Binary:** `dnsscienced-linux` (Go-only, no CGO)
+**Total Go:** ~87,000 LOC across 195 files
 
-**Phase 06 complete (2026-05-16):** Admin API fully wired — all AdminService RPCs registered and callable via gRPC; zone/record CRUD persisted to disk; metrics/logging/rate-limit controls wired to live subsystems; TSIG (RFC 2845) key management implemented end-to-end with runtime Add/Remove RPCs.
-
-**Phase 07 complete (2026-05-16):** Admin gRPC API hardened — mTLS client certificate enforcement (RequireAndVerifyClientCert), AND-auth policy requiring both valid cert AND named API key bearer token, structured audit logging with all D-07 fields (caller, method, code, latency_ms, remote_addr, timestamp), connection registry StatsHandler per D-12, atomic config reload via SIGHUP (D-09/D-11). Auth bypass removed; secrets stored only as named IDs in audit logs. Note: ConnRegistry production wiring (ListConnections) pending manual verification (07-HUMAN-UAT.md).
-
-**Phase 08 complete (2026-05-17):** RFC 9859 DSYNC implemented — DSYNC record type 66 codec, inbound NOTIFY(CDS/CSYNC) handler with per-source-IP rate limiting, outbound notification sender, `_dsync` parent discovery, source IP allowlist ACL, webhook delivery, Prometheus metrics, `SendDSYNCNotify` Admin RPC, and DSYNCNotifier wired into production binary. 25/25 must-haves verified.
+v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API keys + audit logging), full RFC 9859 DSYNC implementation, and TSIG key management. All four v1.2 audit gaps closed.
 
 ## Requirements
 
@@ -38,6 +35,12 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - ✓ Live threat feed client polls and injects domain/IP scores — v1.1
 - ✓ QueryContext.CustomerID populated from EDNS0 option at query intake — v1.1
 - ✓ VerdictRedirect selects from multiple upstream targets (load balancing) — v1.1
+
+- ✓ All AdminService RPCs registered and implemented (zone/record CRUD, metrics, logging, RRL) — v1.2
+- ✓ TSIG key management (RFC 2845/8945) — KeyRing, Verify, Sign, runtime Add/Remove RPCs — v1.2
+- ✓ Admin gRPC hardened — mTLS + AND-auth policy, structured audit logging, ConnRegistry, SIGHUP reload — v1.2
+- ✓ RFC 9859 DSYNC fully implemented — record type 66, inbound/outbound NOTIFY, rate limiting, webhook, metrics — v1.2
+- ✓ v1.2 audit gaps closed — logger/RRL accessors, ConnRegistry wiring, ListZones, stream interceptor key ID — v1.2
 
 ### Active
 
@@ -85,6 +88,12 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 | UpstreamPool atomic.Uint64 round-robin | Zero-lock; correct under concurrent goroutines | ✓ Good |
 | redirect() rejects server= kwarg | Single source of truth for upstream selection; prevents config drift | ✓ Good |
 | AuthToken never logged | Only presence logged; mitigates credential leakage in log aggregators | ✓ Good |
+| AND-auth policy (cert + key) | Cert proves machine, key proves operator intent — both required even with mTLS | ✓ Good |
+| TSIG shared-map pattern | KeyRing.secrets = dns.Server.TsigSecret; mutations visible on next request without restart | ✓ Good |
+| NOTIFY dispatch before pool/defensive | NOTIFY is control-plane; must bypass query rate limiting and defensive checks | ✓ Good |
+| TypeDSYNC=66 defined in-package | miekg/dns v1.1.72 doesn't define it; RFC3597 fallback handles zone file parsing | ✓ Good |
+| ConnRegistry via gRPC stats.Handler | UUID per conn; key ID enriched post-auth — no surgery to transport layer required | ✓ Good |
+| keyIDStream wrapper for stream interceptor | Enriches ServerStream context without rewriting interceptor chain | ✓ Good |
 
 ## Evolution
 
@@ -104,4 +113,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-17 after Phase 08 completion*
+*Last updated: 2026-05-21 after v1.2 milestone completion*
