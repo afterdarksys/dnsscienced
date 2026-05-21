@@ -1,7 +1,9 @@
 package zone
 
 import (
+	"bytes"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -516,4 +518,79 @@ func TestParseDNSZone_LOC(t *testing.T) {
 	if len(rrs) < 1 {
 		t.Errorf("expected >= 1 LOC record for host.roundtrip.test., got %d", len(rrs))
 	}
+}
+
+// assertRoundTrip verifies that records of rrtype at owner survive a
+// compile-to-DZC then decompile round-trip with identical wire bytes.
+func assertRoundTrip(t *testing.T, orig *Zone, loaded *Zone, owner string, rrtype uint16) {
+	t.Helper()
+	origRecs := orig.GetRecords(owner, rrtype)
+	loadedRecs := loaded.GetRecords(owner, rrtype)
+	if len(origRecs) != len(loadedRecs) {
+		t.Fatalf("record count mismatch for %s type %d: orig=%d loaded=%d",
+			owner, rrtype, len(origRecs), len(loadedRecs))
+	}
+	if len(origRecs) == 0 {
+		t.Fatalf("no records found for %s type %d", owner, rrtype)
+	}
+	for i := range origRecs {
+		buf1 := make([]byte, dns.MaxMsgSize)
+		buf2 := make([]byte, dns.MaxMsgSize)
+		off1, err1 := dns.PackRR(origRecs[i], buf1, 0, nil, false)
+		off2, err2 := dns.PackRR(loadedRecs[i], buf2, 0, nil, false)
+		if err1 != nil {
+			t.Fatalf("PackRR orig[%d]: %v", i, err1)
+		}
+		if err2 != nil {
+			t.Fatalf("PackRR loaded[%d]: %v", i, err2)
+		}
+		if !bytes.Equal(buf1[:off1], buf2[:off2]) {
+			t.Errorf("wire mismatch for record %d of %s type %d\n  orig:   %x\n  loaded: %x",
+				i, owner, rrtype, buf1[:off1], buf2[:off2])
+		}
+	}
+}
+
+// doRoundTrip parses the roundtrip fixture, compiles to DZC, writes to a temp
+// file, then loads it back. Returns both zones for comparison.
+func doRoundTrip(t *testing.T) (*Zone, *Zone) {
+	t.Helper()
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	compiled, err := CompileZone(z, CompileOptions{SourceFormat: "dnszone"})
+	if err != nil {
+		t.Fatalf("CompileZone() error = %v", err)
+	}
+	tmp := filepath.Join(t.TempDir(), "roundtrip.dzc")
+	if err := WriteCompiledZone(compiled, tmp); err != nil {
+		t.Fatalf("WriteCompiledZone() error = %v", err)
+	}
+	z2, err := LoadCompiledZone(tmp)
+	if err != nil {
+		t.Fatalf("LoadCompiledZone() error = %v", err)
+	}
+	return z, z2
+}
+
+func TestRoundTrip_SSHFP(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "host.roundtrip.test.", dns.TypeSSHFP)
+}
+
+func TestRoundTrip_NAPTR(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "*.sip._tcp.roundtrip.test.", dns.TypeNAPTR)
+}
+
+func TestRoundTrip_SMIMEA(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "_smimecert._tcp.user.roundtrip.test.", dns.TypeSMIMEA)
+}
+
+func TestRoundTrip_LOC(t *testing.T) {
+	orig, loaded := doRoundTrip(t)
+	assertRoundTrip(t, orig, loaded, "host.roundtrip.test.", dns.TypeLOC)
 }

@@ -48,3 +48,17 @@ _sip._tcp  IN  SRV  10 40 5060 sip2.example.org.
 
 ; Wildcard
 *  IN  A  198.51.100.100
+
+; Phase 10: Record Type Expansion test records
+
+; SSHFP record (RFC 4255) — ECDSA SHA-256
+host  IN  SSHFP  3 2 a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401
+
+; NAPTR record (RFC 3403) — SIP E2U
+_sip._tcp  IN  NAPTR  100 10 "u" "E2U+sip" "!^.*$!sip:info@example.org!" .
+
+; SMIMEA record (RFC 8162) — DANE-EE SPKI SHA-256
+_smimecert._tcp.user  IN  SMIMEA  3 1 1 a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401
+
+; LOC record (RFC 1876) — MIT campus area
+host  IN  LOC  42 21 43.952 N 71 06 18.910 W 24m 30m 10m 2m
