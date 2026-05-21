@@ -344,6 +344,54 @@ func TestQuoteIfNeeded(t *testing.T) {
 	}
 }
 
+func TestParseBIND_SSHFP(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("host.example.org.", dns.TypeSSHFP)
+	if len(recs) == 0 {
+		t.Fatal("expected SSHFP records, got none")
+	}
+}
+
+func TestParseBIND_NAPTR(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("_sip._tcp.example.org.", dns.TypeNAPTR)
+	if len(recs) == 0 {
+		t.Fatal("expected NAPTR records, got none")
+	}
+}
+
+func TestParseBIND_SMIMEA(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("_smimecert._tcp.user.example.org.", dns.TypeSMIMEA)
+	if len(recs) == 0 {
+		t.Fatal("expected SMIMEA records, got none")
+	}
+}
+
+func TestParseBIND_LOC(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	recs := z.GetRecords("host.example.org.", dns.TypeLOC)
+	if len(recs) == 0 {
+		t.Fatal("expected LOC records, got none")
+	}
+}
+
 func BenchmarkParseBIND(b *testing.B) {
 	cfg := DefaultConfig()
 
