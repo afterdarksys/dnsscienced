@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-05-21T00:00:00.000Z"
 last_activity: 2026-05-21
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,28 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 10 — Record Type Expansion (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-21 — Milestone v1.3 started
+Status: Roadmap defined; ready to plan Phase 10
+Last activity: 2026-05-21 — v1.3 roadmap created (phases 10–13)
+
+Progress: ░░░░░░░░░░░░░░░░░░░░ 0% (0/4 phases)
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-23)
+See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** v1.3 — DNS Protocol Completeness
+**Current focus:** v1.3 — DNS Protocol Completeness (Phases 10–13)
+
+## Phase Reference
+
+| Phase | Goal | Requirements | Status |
+|-------|------|--------------|--------|
+| 10. Record Type Expansion | Parse + serve + round-trip HTTPS/SVCB/TLSA/SSHFP/NAPTR/SMIMEA/LOC | RRTYPE-01–08 | Not started |
+| 11. Resolver Behaviors | QNAME minimization, aggressive NSEC, serve-stale | RESOLVE-01–03 | Not started |
+| 12. AXFR Server | Zone transfer serving, TSIG auth, allow_transfer ACL | XFER-01–03 | Not started |
+| 13. Dynamic DNS Updates | RFC 2136 UPDATE, TSIG auth, allow_update ACL, immediate visibility | DYNUP-01–04 | Not started |
 
 ## Accumulated Context
 
@@ -146,3 +157,16 @@ See: .planning/PROJECT.md (updated 2026-04-23)
 - RegisterAll variadic extension: backward-compatible; existing callers without dsyncNotifier arg skip DSYNC registration
 - Strict qtype validation: "CDS" and "CSYNC" only (case-sensitive); any other value returns InvalidArgument (T-08-20)
 - DSYNC-07 (Prometheus metrics) and DSYNC-08 (Admin RPC) requirements complete; Phase 8 rfc9859-dsync fully delivered
+- Phase 9 complete: all 4 v1.2 audit gaps closed; TSIG always-init; stream interceptor key ID; logger/rrlLimiter wired to admin.Service; ConnRegistry live in admin; ListZones uses GetZoneNames(); audit status updated to PASSED
+
+## v1.3 Planning Decisions
+
+- Phase 10 scope: Both BIND (parser_bind.go) and .dnszone (parser_dnszone.go) parsers need all 6 new record types; miekg/dns has native support for HTTPS/SVCB/TLSA/SSHFP/NAPTR/LOC — SMIMEA uses TLSA wire format; .dzc round-trip validation via compiler.go + serializer.go
+- Phase 11 scope: recursive.go already stubs RFC 8198 at line 191 — aggressive NSEC is the extension point; QNAME minimization needs new outbound query rewriting; serve-stale extends the cache layer TTL behavior
+- Phase 12 scope: AXFR is TCP-only per RFC 5936; reuse existing tsig.KeyRing for per-transfer TSIG auth; per-zone allow_transfer CIDR ACL mirrors the DSYNC SourceACL pattern
+- Phase 13 scope: UPDATE opcode (5) dispatch before query processing, mirrors NOTIFY dispatch pattern; zone mutation must be concurrent-safe; allow_update ACL per-zone in ZoneConfig
+
+## Session Continuity
+
+Next session: `/gsd-plan-phase 10`
+Blocking issues: None

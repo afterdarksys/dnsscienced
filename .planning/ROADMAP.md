@@ -5,6 +5,7 @@
 - ✅ **v1.0 MVP** — Phase 1 (shipped 2026-04-22)
 - ✅ **v1.1 dnsfirewalld Completion** — Phases 2–5 (shipped 2026-04-23)
 - ✅ **v1.2 Fully Operational** — Phases 6–9 (shipped 2026-05-18)
+- 🔄 **v1.3 DNS Protocol Completeness** — Phases 10–13 (in progress)
 
 ## Phases
 
@@ -58,7 +59,7 @@ See archive: `.planning/milestones/v1.1-ROADMAP.md`
 **Plans:** 6 plans
 
 Plans:
-- [x] 06-01-PLAN.md ��� Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
+- [x] 06-01-PLAN.md — Package extensions: logging dynamic control, rrl RWMutex, server UDP/TCP atomics (Wave 1)
 - [x] 06-02-PLAN.md — AdminService registration + SrvAdapter wiring + SrvStats UDP/TCP (Wave 2)
 - [x] 06-03-PLAN.md — Zone/record CRUD + ListZones fix + SetQueryLogging + SetRateLimit (Wave 3)
 - [x] 06-04-PLAN.md — GetMetrics live stats + ListConnections/KillConnection Unimplemented + build gate (Wave 3, parallel)
@@ -137,6 +138,71 @@ Plans:
 - [x] 09-02-PLAN.md — Wire logger/rrlLimiter/reloadMgr into RegisterAll + admin.NewService; fix SetConnRegistry post-construction in main.go (Wave 2)
 - [x] 09-03-PLAN.md — Fix TSIG always-init + stream interceptor key ID; verify all 4 gaps closed; update audit status (Wave 3)
 
+<details open>
+<summary>🔄 v1.3 — DNS Protocol Completeness (Phases 10–13) — IN PROGRESS</summary>
+
+**Goal:** Close the RFC coverage gaps identified in the v1.2 audit — ship the record types, resolver behaviors, and zone-serving capabilities that a production DNS server is expected to support.
+
+## Phase Details
+
+### Phase 10: Record Type Expansion
+
+**Goal:** Users can load, serve, and round-trip all six new record types through both zone parsers and the compiled .dzc format
+**Depends on**: Phase 9
+**Requirements**: RRTYPE-01, RRTYPE-02, RRTYPE-03, RRTYPE-04, RRTYPE-05, RRTYPE-06, RRTYPE-07, RRTYPE-08
+**Success Criteria** (what must be TRUE):
+  1. A BIND zone file containing HTTPS, SVCB, TLSA, SSHFP, NAPTR, SMIMEA, and LOC records loads without parse errors
+  2. A .dnszone (YAML) zone file containing all six new record types loads without parse errors
+  3. All six record types survive a compile-to-.dzc then decompile round-trip with identical wire data
+  4. A query for any new record type where no matching record exists returns NOERROR with empty answer section (not NOTIMP or SERVFAIL)
+  5. A query for any new record type where a matching record exists returns the correct NOERROR answer
+**Plans**: TBD
+**UI hint**: no
+
+### Phase 11: Resolver Behaviors
+
+**Goal:** The recursive resolver minimizes query names, synthesizes responses from cached NSEC/NSEC3, and serves stale records when upstreams are unreachable
+**Depends on**: Phase 10
+**Requirements**: RESOLVE-01, RESOLVE-02, RESOLVE-03
+**Success Criteria** (what must be TRUE):
+  1. Outgoing queries from the resolver contain only the labels required for each nameserver level — not the full QNAME — when QNAME minimization is enabled
+  2. A cached NSEC/NSEC3 record that proves nonexistence causes the resolver to return NXDOMAIN without sending any upstream query
+  3. When all upstream nameservers are unreachable, the resolver returns a cached record with its TTL extended up to the configured stale-max-ttl rather than returning SERVFAIL
+  4. Serve-stale behavior is bounded: records older than stale-max-ttl are not served stale
+**Plans**: TBD
+
+### Phase 12: AXFR Server
+
+**Goal:** The server serves complete TSIG-authenticated zone transfers to secondaries and refuses unauthorized requests
+**Depends on**: Phase 10
+**Requirements**: XFER-01, XFER-02, XFER-03
+**Success Criteria** (what must be TRUE):
+  1. An AXFR request over TCP receives the full zone contents in correct wire format: opening SOA, all RRs, closing SOA
+  2. An AXFR request signed with a known TSIG key is accepted and the transfer proceeds
+  3. An AXFR request with no TSIG signature is rejected with REFUSED when the zone requires authentication
+  4. An AXFR request from an IP not in the zone's allow_transfer CIDR list receives REFUSED regardless of TSIG
+**Plans**: TBD
+**UI hint**: no
+
+### Phase 13: Dynamic DNS Updates
+
+**Goal:** The server accepts RFC 2136 UPDATE opcodes, applies them to the in-memory zone immediately, and rejects unauthorized updates
+**Depends on**: Phase 12
+**Requirements**: DYNUP-01, DYNUP-02, DYNUP-03, DYNUP-04
+**Success Criteria** (what must be TRUE):
+  1. A valid DNS UPDATE message (RFC 2136) adding a record results in that record being visible to subsequent queries without zone reload
+  2. A valid DNS UPDATE message deleting a record causes the record to disappear from subsequent queries without zone reload
+  3. An UPDATE request signed with a known TSIG key is accepted; an unsigned UPDATE request is rejected with REFUSED
+  4. An UPDATE request from an IP not in the zone's allow_update CIDR list receives REFUSED regardless of TSIG signature
+**Plans**: TBD
+
+- [ ] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups
+- [ ] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension
+- [ ] **Phase 12: AXFR Server** — Zone transfer serving (RFC 5936), TSIG authentication, per-zone allow_transfer ACL
+- [ ] **Phase 13: Dynamic DNS Updates** — RFC 2136 UPDATE opcode, TSIG auth, per-zone allow_update ACL, immediate visibility
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -150,6 +216,10 @@ Plans:
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
+| 10. Record Type Expansion | v1.3 | 0/? | Not started | - |
+| 11. Resolver Behaviors | v1.3 | 0/? | Not started | - |
+| 12. AXFR Server | v1.3 | 0/? | Not started | - |
+| 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-05-17 — v1.2 complete (phases 6–8 all done)*
+*Last updated: 2026-05-21 — v1.3 roadmap created (phases 10–13)*

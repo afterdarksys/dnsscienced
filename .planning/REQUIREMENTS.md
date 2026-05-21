@@ -71,30 +71,30 @@ Deferred to future milestone. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RRTYPE-01 | — | Pending |
-| RRTYPE-02 | — | Pending |
-| RRTYPE-03 | — | Pending |
-| RRTYPE-04 | — | Pending |
-| RRTYPE-05 | — | Pending |
-| RRTYPE-06 | — | Pending |
-| RRTYPE-07 | — | Pending |
-| RRTYPE-08 | — | Pending |
-| RESOLVE-01 | — | Pending |
-| RESOLVE-02 | — | Pending |
-| RESOLVE-03 | — | Pending |
-| XFER-01 | — | Pending |
-| XFER-02 | — | Pending |
-| XFER-03 | — | Pending |
-| DYNUP-01 | — | Pending |
-| DYNUP-02 | — | Pending |
-| DYNUP-03 | — | Pending |
-| DYNUP-04 | — | Pending |
+| RRTYPE-01 | Phase 10 | Pending |
+| RRTYPE-02 | Phase 10 | Pending |
+| RRTYPE-03 | Phase 10 | Pending |
+| RRTYPE-04 | Phase 10 | Pending |
+| RRTYPE-05 | Phase 10 | Pending |
+| RRTYPE-06 | Phase 10 | Pending |
+| RRTYPE-07 | Phase 10 | Pending |
+| RRTYPE-08 | Phase 10 | Pending |
+| RESOLVE-01 | Phase 11 | Pending |
+| RESOLVE-02 | Phase 11 | Pending |
+| RESOLVE-03 | Phase 11 | Pending |
+| XFER-01 | Phase 12 | Pending |
+| XFER-02 | Phase 12 | Pending |
+| XFER-03 | Phase 12 | Pending |
+| DYNUP-01 | Phase 13 | Pending |
+| DYNUP-02 | Phase 13 | Pending |
+| DYNUP-03 | Phase 13 | Pending |
+| DYNUP-04 | Phase 13 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 18 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 18 ⚠
+- Mapped to phases: 18 (roadmap complete)
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-21*
-*Last updated: 2026-05-21 after initial definition*
+*Last updated: 2026-05-21 — traceability filled after roadmap creation*
