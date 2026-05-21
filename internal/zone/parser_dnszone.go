@@ -131,6 +131,10 @@ type RecordSection struct {
 	HTTPS   interface{} `yaml:"HTTPS,omitempty"`
 	SVCB    interface{} `yaml:"SVCB,omitempty"`
 	CAA     interface{} `yaml:"CAA,omitempty"`
+	SSHFP  interface{} `yaml:"SSHFP,omitempty"`
+	NAPTR  interface{} `yaml:"NAPTR,omitempty"`
+	SMIMEA interface{} `yaml:"SMIMEA,omitempty"`
+	LOC    interface{} `yaml:"LOC,omitempty"`
 
 	// Generic type support (TYPE### syntax)
 	// Key is type code (e.g., "TYPE257" for CAA)
@@ -162,6 +166,23 @@ type TLSARecord struct {
 	Selector  int    `yaml:"selector"`
 	Matching  int    `yaml:"matching"`
 	Data      string `yaml:"data"`
+}
+
+// SSHFPRecord represents an SSHFP record (RFC 4255)
+type SSHFPRecord struct {
+	Algorithm       int    `yaml:"algorithm"`        // 1=RSA, 2=DSA, 3=ECDSA, 4=Ed25519
+	FingerprintType int    `yaml:"fingerprint_type"` // 1=SHA-1, 2=SHA-256
+	Fingerprint     string `yaml:"fingerprint"`
+}
+
+// NAPTRRecord represents a NAPTR record (RFC 3403)
+type NAPTRRecord struct {
+	Order       int    `yaml:"order"`
+	Preference  int    `yaml:"preference"`
+	Flags       string `yaml:"flags"`
+	Service     string `yaml:"service"`
+	Regexp      string `yaml:"regexp,omitempty"`
+	Replacement string `yaml:"replacement"`
 }
 
 // HTTPSRecord represents an HTTPS/SVCB record
@@ -289,6 +310,18 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		}
 		if err := parseSVCBHTTPRecords(zone, fqdn, section.SVCB, recordTTL, "SVCB"); err != nil {
 			return nil, fmt.Errorf("parse SVCB records for %s: %w", owner, err)
+		}
+		if err := parseSSHFPRecords(zone, fqdn, section.SSHFP, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse SSHFP records for %s: %w", owner, err)
+		}
+		if err := parseNAPTRRecords(zone, fqdn, section.NAPTR, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse NAPTR records for %s: %w", owner, err)
+		}
+		if err := parseSMIMEARecords(zone, fqdn, section.SMIMEA, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse SMIMEA records for %s: %w", owner, err)
+		}
+		if err := parseLOCRecords(zone, fqdn, section.LOC, recordTTL); err != nil {
+			return nil, fmt.Errorf("parse LOC records for %s: %w", owner, err)
 		}
 
 		// Parse generic TYPE### records (defensive DNS feature)
@@ -785,6 +818,190 @@ func parseTLSARecords(zone *Zone, owner string, data interface{}, ttl uint32) er
 	return nil
 }
 
+// parseSSHFPRecords parses SSHFP records (RFC 4255)
+func parseSSHFPRecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	sshfpList := []SSHFPRecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if sshfpMap, ok := item.(map[string]interface{}); ok {
+				rec := SSHFPRecord{}
+				if algorithm, ok := sshfpMap["algorithm"].(int); ok {
+					rec.Algorithm = algorithm
+				} else if algorithmF, ok := sshfpMap["algorithm"].(float64); ok {
+					rec.Algorithm = int(algorithmF)
+				}
+				if fpType, ok := sshfpMap["fingerprint_type"].(int); ok {
+					rec.FingerprintType = fpType
+				} else if fpTypeF, ok := sshfpMap["fingerprint_type"].(float64); ok {
+					rec.FingerprintType = int(fpTypeF)
+				}
+				if fp, ok := sshfpMap["fingerprint"].(string); ok {
+					rec.Fingerprint = fp
+				}
+				sshfpList = append(sshfpList, rec)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid SSHFP record format")
+	}
+
+	for _, rec := range sshfpList {
+		s := fmt.Sprintf("%s %d IN SSHFP %d %d %s", owner, ttl, rec.Algorithm, rec.FingerprintType, rec.Fingerprint)
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse SSHFP string: %w", err)
+		}
+		if rr != nil {
+			zone.AddRecord(rr)
+		}
+	}
+	return nil
+}
+
+// parseNAPTRRecords parses NAPTR records (RFC 3403)
+func parseNAPTRRecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	naptrList := []NAPTRRecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if naptrMap, ok := item.(map[string]interface{}); ok {
+				rec := NAPTRRecord{}
+				if order, ok := naptrMap["order"].(int); ok {
+					rec.Order = order
+				} else if orderF, ok := naptrMap["order"].(float64); ok {
+					rec.Order = int(orderF)
+				}
+				if pref, ok := naptrMap["preference"].(int); ok {
+					rec.Preference = pref
+				} else if prefF, ok := naptrMap["preference"].(float64); ok {
+					rec.Preference = int(prefF)
+				}
+				if flags, ok := naptrMap["flags"].(string); ok {
+					rec.Flags = flags
+				}
+				if service, ok := naptrMap["service"].(string); ok {
+					rec.Service = service
+				}
+				if regexp, ok := naptrMap["regexp"].(string); ok {
+					rec.Regexp = regexp
+				}
+				if replacement, ok := naptrMap["replacement"].(string); ok {
+					rec.Replacement = replacement
+				}
+				naptrList = append(naptrList, rec)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid NAPTR record format")
+	}
+
+	for _, rec := range naptrList {
+		s := fmt.Sprintf("%s %d IN NAPTR %d %d \"%s\" \"%s\" \"%s\" %s",
+			owner, ttl, rec.Order, rec.Preference, rec.Flags, rec.Service, rec.Regexp, dns.Fqdn(rec.Replacement))
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse NAPTR string: %w", err)
+		}
+		if rr != nil {
+			zone.AddRecord(rr)
+		}
+	}
+	return nil
+}
+
+// parseSMIMEARecords parses SMIMEA records (RFC 8162)
+// SMIMEA has the same wire format as TLSA; reuses TLSARecord for deserialization.
+func parseSMIMEARecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	smimeaList := []TLSARecord{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if smimeaMap, ok := item.(map[string]interface{}); ok {
+				rec := TLSARecord{}
+				if usage, ok := smimeaMap["usage"].(int); ok {
+					rec.Usage = usage
+				} else if usageF, ok := smimeaMap["usage"].(float64); ok {
+					rec.Usage = int(usageF)
+				}
+				if selector, ok := smimeaMap["selector"].(int); ok {
+					rec.Selector = selector
+				} else if selectorF, ok := smimeaMap["selector"].(float64); ok {
+					rec.Selector = int(selectorF)
+				}
+				if matching, ok := smimeaMap["matching"].(int); ok {
+					rec.Matching = matching
+				} else if matchingF, ok := smimeaMap["matching"].(float64); ok {
+					rec.Matching = int(matchingF)
+				}
+				if d, ok := smimeaMap["data"].(string); ok {
+					rec.Data = d
+				}
+				smimeaList = append(smimeaList, rec)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid SMIMEA record format")
+	}
+
+	for _, rec := range smimeaList {
+		s := fmt.Sprintf("%s %d IN SMIMEA %d %d %d %s", owner, ttl, rec.Usage, rec.Selector, rec.Matching, rec.Data)
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse SMIMEA string: %w", err)
+		}
+		if rr != nil {
+			zone.AddRecord(rr)
+		}
+	}
+	return nil
+}
+
+// parseLOCRecords parses LOC records (RFC 1876)
+// LOC records are expressed as plain strings (e.g. "42 21 43.952 N 71 06 18.910 W 24m").
+// Only list format is accepted; a single string value is an error.
+func parseLOCRecords(zone *Zone, owner string, data interface{}, ttl uint32) error {
+	if data == nil {
+		return nil
+	}
+
+	locStrings := []string{}
+	switch v := data.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if locStr, ok := item.(string); ok {
+				locStrings = append(locStrings, locStr)
+			}
+		}
+	default:
+		return fmt.Errorf("invalid LOC record format: LOC records must be a list of strings")
+	}
+
+	for _, locStr := range locStrings {
+		s := fmt.Sprintf("%s %d IN LOC %s", owner, ttl, locStr)
+		rr, err := dns.NewRR(s)
+		if err != nil {
+			return fmt.Errorf("failed to parse LOC string: %w", err)
+		}
+		if rr != nil {
+			zone.AddRecord(rr)
+		}
+	}
+	return nil
+}
+
 // parseSVCBHTTPRecords parses SVCB or HTTPS records
 func parseSVCBHTTPRecords(zone *Zone, owner string, data interface{}, ttl uint32, recType string) error {
 	if data == nil {
@@ -1020,6 +1237,18 @@ func parseIncludeFile(zone *Zone, filename string, defaultTTL uint32) error {
 		}
 		if err := parseSVCBHTTPRecords(zone, fqdn, section.SVCB, recordTTL, "SVCB"); err != nil {
 			return fmt.Errorf("SVCB records for %s: %w", owner, err)
+		}
+		if err := parseSSHFPRecords(zone, fqdn, section.SSHFP, recordTTL); err != nil {
+			return fmt.Errorf("SSHFP records for %s: %w", owner, err)
+		}
+		if err := parseNAPTRRecords(zone, fqdn, section.NAPTR, recordTTL); err != nil {
+			return fmt.Errorf("NAPTR records for %s: %w", owner, err)
+		}
+		if err := parseSMIMEARecords(zone, fqdn, section.SMIMEA, recordTTL); err != nil {
+			return fmt.Errorf("SMIMEA records for %s: %w", owner, err)
+		}
+		if err := parseLOCRecords(zone, fqdn, section.LOC, recordTTL); err != nil {
+			return fmt.Errorf("LOC records for %s: %w", owner, err)
 		}
 		if err := parseGenericTypes(zone, fqdn, section.Generic, recordTTL); err != nil {
 			return fmt.Errorf("generic types for %s: %w", owner, err)

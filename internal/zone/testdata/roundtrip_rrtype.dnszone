@@ -1,0 +1,44 @@
+zone:
+  name: roundtrip.test
+  ttl: 300
+
+soa:
+  primary_ns: ns1.roundtrip.test
+  contact: admin@roundtrip.test
+  serial: auto
+  refresh: 3600
+  retry: 900
+  expire: 604800
+  negative_ttl: 300
+
+records:
+  "@":
+    NS:
+      - ns1.roundtrip.test
+
+  ns1:
+    A: 192.0.2.1
+
+  host:
+    SSHFP:
+      - algorithm: 3
+        fingerprint_type: 2
+        fingerprint: "a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401"
+    LOC:
+      - "42 21 43.952 N 71 06 18.910 W 24m 30m 10m 2m"
+
+  "*.sip._tcp":
+    NAPTR:
+      - order: 100
+        preference: 10
+        flags: "u"
+        service: "E2U+sip"
+        regexp: "!^.*$!sip:info@roundtrip.test!"
+        replacement: "."
+
+  "_smimecert._tcp.user":
+    SMIMEA:
+      - usage: 3
+        selector: 1
+        matching: 1
+        data: "a87f1b687ac0e57d2a081a2f282672334d90ed316d2b818ca9580ea384d92401"

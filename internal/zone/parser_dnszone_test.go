@@ -469,3 +469,51 @@ func BenchmarkParseDNSZone(b *testing.B) {
 		_, _ = ParseDNSZone("testdata/example.com.dnszone", cfg)
 	}
 }
+
+func TestParseDNSZone_SSHFP(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("host.roundtrip.test.", dns.TypeSSHFP)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 SSHFP record for host.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestParseDNSZone_NAPTR(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("*.sip._tcp.roundtrip.test.", dns.TypeNAPTR)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 NAPTR record for *.sip._tcp.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestParseDNSZone_SMIMEA(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("_smimecert._tcp.user.roundtrip.test.", dns.TypeSMIMEA)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 SMIMEA record for _smimecert._tcp.user.roundtrip.test., got %d", len(rrs))
+	}
+}
+
+func TestParseDNSZone_LOC(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseDNSZone("testdata/roundtrip_rrtype.dnszone", cfg)
+	if err != nil {
+		t.Fatalf("ParseDNSZone() error = %v", err)
+	}
+	rrs := z.GetRecords("host.roundtrip.test.", dns.TypeLOC)
+	if len(rrs) < 1 {
+		t.Errorf("expected >= 1 LOC record for host.roundtrip.test., got %d", len(rrs))
+	}
+}
