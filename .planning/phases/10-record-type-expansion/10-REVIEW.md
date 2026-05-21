@@ -5,53 +5,48 @@ depth: standard
 files_reviewed: 5
 files_reviewed_list:
   - internal/zone/parser_dnszone.go
-  - internal/zone/parser_dnszone_test.go
   - internal/zone/parser_bind_test.go
+  - internal/zone/parser_dnszone_test.go
   - internal/zone/testdata/example.org.bind
   - internal/zone/testdata/roundtrip_rrtype.dnszone
 findings:
-  critical: 3
+  critical: 4
   warning: 5
   info: 3
-  total: 11
+  total: 12
 status: issues_found
 ---
 
 # Phase 10: Code Review Report
 
-**Reviewed:** 2026-05-21
+**Reviewed:** 2026-05-21T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 5
 **Status:** issues_found
 
 ## Summary
 
-This phase adds SSHFP, NAPTR, SMIMEA, and LOC record type support to the dnszone parser,
-plus generic TYPE### fallback parsing. The new record parsers follow the established pattern
-(list-of-maps for structured records, string-per-item for LOC). Core logic is sound but several
-correctness bugs and security gaps were found in the new code.
+Phase 10 expands the dnszone parser to support TLSA, HTTPS, SVCB, SSHFP, NAPTR, SMIMEA, LOC, and generic `TYPE###` records. The implementation is largely correct but contains four critical issues: a path-prefix spoofing bypass in the include guard, silent serial=0 from ignored `fmt.Sscanf` errors, RR string injection in NAPTR and CAA parsers from user-controlled fields, and an AAAA validation bug that accepts IPv4 addresses. Five warnings cover silent data loss patterns (non-string list items silently dropped, MX/SRV missing float64 fallback, zero-value SOA timers, uint32 truncation). Three info items address a no-op template stub, inconsistent indentation, and missing BIND round-trip tests.
 
 ---
 
 ## Critical Issues
 
-### CR-01: Directory traversal guard fails for the base directory itself
+### CR-01: Directory Traversal Guard Has Path-Prefix Spoofing Flaw
 
-**File:** `internal/zone/parser_dnszone.go:345`
+**File:** `internal/zone/parser_dnszone.go:344-346`
 
-**Issue:** The traversal check uses `strings.HasPrefix(cleanInc, baseDir+string(filepath.Separator))`.
-This check requires a trailing separator, which means a path that resolves to exactly `baseDir`
-(no separator) passes the `HasPrefix` test as `false` and is correctly blocked — but it also
-means any absolute path supplied directly for `inc` bypasses the relative-path branch on
-line 338 (`!filepath.IsAbs(inc)`) and is handed to `filepath.Clean` without ever being rewritten
-relative to `baseDir`. An absolute path like `/etc/passwd` will be cleaned to itself, which does
-NOT start with `baseDir + sep`, so it will be blocked — that part is fine. However, if the caller
-passes an absolute path whose prefix happens to be `baseDir` (e.g. `baseDir` is `/var/zones` and
-the include is `/var/zones-evil/secret.yaml`), the `HasPrefix` guard passes and the file is read.
-This is a path-prefix spoofing attack.
+**Issue:** The traversal check is:
 
-**Fix:** Reject all absolute include paths outright before the `filepath.Join` call, and ensure
-the comparison appends the separator to `cleanInc` as well:
+```go
+if !strings.HasPrefix(cleanInc, baseDir+string(filepath.Separator)) {
+    return nil, fmt.Errorf("include %q: path escapes zone directory ...")
+}
+```
+
+If `baseDir` is `/var/zones` and a user-controlled absolute include resolves to `/var/zones-evil/secret.yaml`, then `cleanInc` (`/var/zones-evil/secret.yaml`) starts with `/var/zones` (no separator appended to the left operand in `HasPrefix`). Wait — the code does append the separator to `baseDir`: `baseDir + string(filepath.Separator)` = `/var/zones/`. So `/var/zones-evil/...` does NOT pass that check. However: a path that resolves to exactly `baseDir` itself (`/var/zones`) does NOT start with `/var/zones/` either — it is blocked. The real bug is that absolute paths bypass the `filepath.Join` rewriting (line 338-341) and enter `filepath.Clean` as-is. If `inc` is an absolute path whose `filepath.Clean` result happens to be a child of `baseDir` (e.g. `inc = "/var/zones/../../var/zones/legit.yaml"` cleans to `/var/zones/legit.yaml`), it passes. More critically: a symlink target is never resolved, so a symlink at `/var/zones/link.yaml` pointing to `/etc/passwd` passes the guard but reads outside the directory. The symlink case cannot be fixed here, but absolute path acceptance is a clear bug.
+
+**Fix:** Reject absolute include paths before they enter the join/clean pipeline:
 
 ```go
 if filepath.IsAbs(inc) {
@@ -59,7 +54,6 @@ if filepath.IsAbs(inc) {
 }
 incPath := filepath.Join(baseDir, inc)
 cleanInc := filepath.Clean(incPath)
-// Both sides must be normalized with separator to prevent prefix spoofing
 if cleanInc != baseDir && !strings.HasPrefix(cleanInc, baseDir+string(filepath.Separator)) {
     return nil, fmt.Errorf("include %q: path escapes zone directory", inc)
 }
@@ -67,107 +61,115 @@ if cleanInc != baseDir && !strings.HasPrefix(cleanInc, baseDir+string(filepath.S
 
 ---
 
-### CR-02: SOA serial "auto" silently produces serial 0 when `fmt.Sscanf` fails
+### CR-02: SOA Serial Silently Becomes 0 on Malformed Input
 
-**File:** `internal/zone/parser_dnszone.go:393-400`
+**File:** `internal/zone/parser_dnszone.go:398-400`
 
-**Issue:** The auto-serial path uses `fmt.Sscanf(today+"00", "%d", &soa.Serial)` but ignores
-both the return values. `time.Now().Format("20060102")` produces an 8-digit string; appending
-`"00"` makes a 10-digit integer (e.g. `2026052100 = 0x78D04A04`). The maximum value of
-`uint32` is `4294967295` (`0xFFFFFFFF`), so dates up to 2147483647 (year 2147) overflow cleanly
-into `uint32` — but `fmt.Sscanf` writes into `soa.Serial` which is typed `uint32`. The Go
-`fmt.Sscanf` verb `%d` reads into the pointer target's type; for a `uint32` target it reads an
-unsigned 32-bit integer. The specific current concern: if `fmt.Sscanf` returns an error (it will
-not for the date format, but any future refactor that changes the format string or target could
-silently leave `soa.Serial` at 0). More concretely, the non-auto branch also uses
-`fmt.Sscanf(zf.SOA.Serial, "%d", &serial)` with an ignored error return, meaning a malformed
-serial string (e.g. `""`, `"abc"`) silently produces serial 0 — a valid but incorrect serial
-that causes serving stale data to resolvers.
-
-**Fix:** Check the `fmt.Sscanf` return values (both non-auto and auto paths):
+**Issue:** The non-auto serial path is:
 
 ```go
-// Non-auto serial
-n, err := fmt.Sscanf(zf.SOA.Serial, "%d", &serial)
-if n != 1 || err != nil {
-    return nil, fmt.Errorf("invalid SOA serial %q: %w", zf.SOA.Serial, err)
+var serial uint64
+fmt.Sscanf(zf.SOA.Serial, "%d", &serial)
+soa.Serial = uint32(serial)
+```
+
+`fmt.Sscanf` return values (count, error) are ignored. If `zf.SOA.Serial` is `""`, `"abc"`, or any non-numeric string, `fmt.Sscanf` writes nothing into `serial`, leaving it at 0. The function returns a valid SOA with `Serial=0` — a legal but almost certainly wrong value. Secondaries receiving serial 0 will believe the zone is perpetually outdated. No error is surfaced to the caller.
+
+**Fix:**
+
+```go
+var serial uint64
+if n, err := fmt.Sscanf(zf.SOA.Serial, "%d", &serial); n != 1 || err != nil {
+    return nil, fmt.Errorf("invalid SOA serial %q: expected integer", zf.SOA.Serial)
 }
 soa.Serial = uint32(serial)
 ```
 
-For the auto path, prefer `strconv.ParseUint` for clarity:
-
-```go
-today := time.Now().Format("20060102")
-serialStr := today + "00"
-sv, err := strconv.ParseUint(serialStr, 10, 32)
-if err != nil {
-    return nil, fmt.Errorf("auto serial overflow: %w", err)
-}
-soa.Serial = uint32(sv)
-```
+The auto-serial path at line 395-396 has the same `fmt.Sscanf` ignore pattern but is lower risk since the format string is machine-generated.
 
 ---
 
-### CR-03: NAPTR Regexp field is user-controlled and injected verbatim into a DNS RR string
+### CR-03: NAPTR RR String Injection via User-Controlled Fields
 
 **File:** `internal/zone/parser_dnszone.go:908`
 
-**Issue:** The NAPTR record string is constructed as:
+**Issue:** NAPTR record construction embeds user-supplied YAML fields verbatim into a string that is passed to `dns.NewRR`:
 
 ```go
 s := fmt.Sprintf("%s %d IN NAPTR %d %d \"%s\" \"%s\" \"%s\" %s",
     owner, ttl, rec.Order, rec.Preference, rec.Flags, rec.Service, rec.Regexp, dns.Fqdn(rec.Replacement))
 ```
 
-The `rec.Regexp` field comes directly from user-supplied YAML and is placed inside a `"..."` pair
-in the RR string. If `rec.Regexp` contains a literal `"` character, the resulting string will have
-an unbalanced quote and `dns.NewRR` will fail with a parse error — but that is recoverable.
-More dangerously, `rec.Regexp` may also contain a newline (`\n`), which would break the single-line
-RR format and cause `dns.NewRR` to parse a completely different record type from the injected
-second line. The same issue applies to `rec.Flags` and `rec.Service`, and analogously to the
-`parseCAARecords` value field (`caa.Value` at line 759).
+If any of `rec.Flags`, `rec.Service`, or `rec.Regexp` contains a newline character (`\n`), the resulting multi-line string causes `dns.NewRR` to parse only the first line and ignore or misparse the remainder — or, depending on the library, parse a second injected record from the second line. A `rec.Regexp` value of `"!^.*$!\n@ 300 IN A 1.2.3.4\n!"` would break the format string into multiple lines. The `replacement` field is passed unquoted, so whitespace in it splits it into multiple NAPTR arguments.
 
-**Fix:** Sanitize or escape all user-supplied string fields before embedding in the RR string.
-At minimum, reject values containing `"` or `\n`:
+**Fix:** Build the `dns.NAPTR` struct directly to avoid format-string injection entirely:
 
 ```go
-for _, field := range []string{rec.Flags, rec.Service, rec.Regexp} {
-    if strings.ContainsAny(field, "\"\n\r") {
-        return fmt.Errorf("NAPTR field contains invalid character")
-    }
+rr := &dns.NAPTR{
+    Hdr:         dns.RR_Header{Name: owner, Rrtype: dns.TypeNAPTR, Class: dns.ClassINET, Ttl: ttl},
+    Order:       uint16(rec.Order),
+    Preference:  uint16(rec.Preference),
+    Flags:       rec.Flags,
+    Service:     rec.Service,
+    Regexp:      rec.Regexp,
+    Replacement: dns.Fqdn(rec.Replacement),
+}
+zone.AddRecord(rr)
+```
+
+---
+
+### CR-04: AAAA Validation Accepts IPv4 Addresses
+
+**File:** `internal/zone/parser_dnszone.go:482-496`
+
+**Issue:** The AAAA validation is:
+
+```go
+ip := net.ParseIP(ipStr)
+if ip == nil || ip.To16() == nil {
+    return fmt.Errorf("invalid IPv6 address: %s", ipStr)
 }
 ```
 
-Alternatively, build the `dns.NAPTR` struct directly instead of going through `dns.NewRR` with a
-manually formatted string, avoiding injection entirely.
+`net.ParseIP` returns a 16-byte slice for any valid IP, including IPv4. `ip.To16()` on an IPv4 address returns the IPv4-mapped IPv6 form (`::ffff:x.x.x.x`) and is never nil. So the guard passes for IPv4 inputs like `"192.0.2.1"`. The resulting `dns.AAAA` record stores `ip.To16()` — an IPv4-mapped address — which is technically invalid as a standalone AAAA record and will confuse resolvers expecting a pure IPv6 address. Compare with `parseARecords` which correctly uses `ip.To4() == nil` to reject IPv6 addresses.
+
+**Fix:**
+
+```go
+ip := net.ParseIP(ipStr)
+if ip == nil || ip.To4() != nil {
+    return fmt.Errorf("invalid IPv6 address: %s", ipStr)
+}
+rr := &dns.AAAA{
+    // ...
+    AAAA: ip.To16(),
+}
+```
 
 ---
 
 ## Warnings
 
-### WR-01: LOC parser silently drops non-string items in the list
+### WR-01: Non-String List Items Silently Dropped in SSHFP/NAPTR/SMIMEA/LOC Parsers
 
-**File:** `internal/zone/parser_dnszone.go:983-986`
+**File:** `internal/zone/parser_dnszone.go:831-836` (SSHFP), `875-901` (NAPTR), `932-955` (SMIMEA), `983-987` (LOC)
 
-**Issue:** In `parseLOCRecords`, when the YAML value is `[]interface{}`, non-string items are
-silently ignored:
+**Issue:** When iterating over a `[]interface{}` list, non-matching items are silently skipped:
 
 ```go
+// LOC example (line 983-987):
 for _, item := range v {
     if locStr, ok := item.(string); ok {
         locStrings = append(locStrings, locStr)
     }
-    // else: silently dropped
+    // non-strings silently dropped
 }
 ```
 
-The same pattern exists in `parseSSHFPRecords` (line 831), `parseNAPTRRecords` (line 875), and
-`parseSMIMEARecords` (line 932) for map-valued items. This means a YAML typo (e.g. a numeric
-LOC value instead of a quoted string) causes the record to be silently omitted from the zone
-rather than surfacing an error. In a DNS context silent omission is worse than a hard error.
+A YAML typo (e.g. a bare integer instead of a quoted string in a LOC list) causes the record to be silently omitted from the zone. In DNS, a silently missing record is far worse than a hard parse error. The same pattern exists in SSHFP and SMIMEA for `map[string]interface{}` type assertions.
 
-**Fix:** Return an error when an item in the list is not the expected type:
+**Fix:** Return an error on unexpected item types:
 
 ```go
 for i, item := range v {
@@ -181,21 +183,40 @@ for i, item := range v {
 
 ---
 
-### WR-02: `parseSOA` ignores `parseTime` errors for an empty string
+### WR-02: MX and SRV Numeric Fields Missing float64 Fallback
 
-**File:** `internal/zone/parser_dnszone.go:404-416`
+**File:** `internal/zone/parser_dnszone.go:529` (MX priority), `671-677` (SRV priority/weight/port)
 
-**Issue:** If any SOA timing field (Refresh, Retry, Expire, NegativeTTL) is empty in the YAML
-(omitted key), `parseTime("")` is called. `parseDuration("")` calls `time.ParseDuration("")`
-which returns an error, then the fallback `fmt.Sscanf("", "%d", ...)` also fails, so `parseTime`
-returns `(0, error)`. The error propagates to `parseSOA` as a hard failure — which is correct.
-However, the legacy conversion in `convertOldFormat` calls `strconv.Itoa(0)` for a zero
-`OldSOASection.Refresh`, producing `"0"`. `parseTime("0")` returns `(0, nil)` because the
-numeric fallback path succeeds for `"0"`. A zone with unset legacy SOA timers silently gets
-`Refresh=0`, `Retry=0`, etc. — these are valid uint32 values but cause immediate re-querying
-by secondaries and are almost certainly a data error.
+**Issue:** The MX and SRV parsers assert numeric fields only as `.(int)`:
 
-**Fix:** In `parseSOA`, validate that timing values are non-zero after parsing:
+```go
+if priority, ok := mxMap["priority"].(int); ok {
+    mx.Priority = priority
+}
+// no float64 fallback
+```
+
+When YAML numeric values are decoded into `interface{}` (as happens when using map-based unmarshalling), the Go YAML library can produce either `int` or `float64` depending on the value and YAML library version. All other new parsers in this phase (CAA at lines 740-744, TLSA at 785-787, SSHFP at 833-836, NAPTR at 879-886) include float64 fallback. Missing it in MX and SRV means priority/weight/port default silently to 0. An MX with priority 0 is a correctness bug (0 is highest priority, so a mis-parsed MX gets promoted to highest priority).
+
+**Fix:** Add float64 fallback for all numeric fields in `parseMXRecords` and `parseSRVRecords`:
+
+```go
+if priority, ok := mxMap["priority"].(int); ok {
+    mx.Priority = priority
+} else if priorityF, ok := mxMap["priority"].(float64); ok {
+    mx.Priority = int(priorityF)
+}
+```
+
+---
+
+### WR-03: Legacy Format SOA Produces Zero-Valued Timing Fields Without Error
+
+**File:** `internal/zone/parser_dnszone.go:73-118`
+
+**Issue:** `convertOldFormat` calls `strconv.Itoa(ozf.SOA.Refresh)` etc. — if `ozf.SOA.Refresh` is 0 (unset in legacy file), the result is `"0"`. `parseTime("0")` succeeds (returns 0). The SOA record is constructed with `Refresh=0`, `Retry=0`, etc. — all legal uint32 values but operationally incorrect: `Refresh=0` means secondaries poll the primary continuously. There is no validation or warning for zero SOA timers.
+
+**Fix:** Validate non-zero SOA timers in `parseSOA`:
 
 ```go
 if soa.Refresh == 0 {
@@ -203,91 +224,41 @@ if soa.Refresh == 0 {
 }
 ```
 
-Or add a minimum value check. At minimum document that zero is accepted.
-
 ---
 
-### WR-03: `parseTime` accepts large values that silently truncate to uint32
+### WR-04: `parseTime` Silently Truncates Values Exceeding uint32
 
-**File:** `internal/zone/parser_dnszone.go:1161-1171`
+**File:** `internal/zone/parser_dnszone.go:1166-1170`
 
-**Issue:** `parseTime` parses raw seconds via `fmt.Sscanf(s, "%d", &seconds)` where `seconds`
-is `uint64`. It then returns `uint32(seconds)`. Values above `4294967295` (about 136 years)
-silently truncate. A zone with `expire: 99999999999` would produce a truncated expire value
-with no error or warning.
+**Issue:**
 
-**Fix:** Add a range check before the conversion:
+```go
+var seconds uint64
+if _, err := fmt.Sscanf(s, "%d", &seconds); err == nil {
+    return uint32(seconds), nil
+}
+```
+
+Values above 4,294,967,295 (roughly 136 years) silently truncate. A zone with `expire: 9999999999` produces `expire = 1410065407` with no error.
+
+**Fix:**
 
 ```go
 if seconds > math.MaxUint32 {
-    return 0, fmt.Errorf("time value %d exceeds maximum uint32", seconds)
+    return 0, fmt.Errorf("time value %d exceeds uint32 maximum", seconds)
 }
 return uint32(seconds), nil
 ```
 
 ---
 
-### WR-04: `parseDuration` does not handle the `s` suffix (seconds)
-
-**File:** `internal/zone/parser_dnszone.go:1141-1158`
-
-**Issue:** `parseDuration` handles `d` (days) and `w` (weeks) explicitly, then falls through to
-`time.ParseDuration`. The test at line 387 passes `"90S"` and expects it to work because `time.ParseDuration`
-accepts `s`. But `parseDuration` calls `strings.ToLower` first, so `"90S"` becomes `"90s"` which
-`time.ParseDuration` handles. This is fine. However, the function is documented as
-"supports 1h, 30m, or raw seconds" but will fail for inputs like `"300"` (no suffix) passed
-through `parseDuration` directly — the caller has to use `parseTime` for that. This is a
-documentation gap that can cause subtle bugs if the functions are called incorrectly in future
-additions.
-
-**Fix:** Add a clear doc comment clarifying that `parseDuration` does NOT accept bare integers —
-bare-integer second values must go through `parseTime`. Low risk for current callers but a
-maintenance trap.
-
----
-
-### WR-05: YAML fallback detection is logic-inverted; a valid new-format file that has a YAML error is silently retried as legacy
-
-**File:** `internal/zone/parser_dnszone.go:236-243`
-
-**Issue:** The format detection strategy is:
-
-```go
-if err := yaml.Unmarshal(data, &zf); err != nil {
-    var ozf OldDNSZoneFile
-    if err2 := yaml.Unmarshal(data, &ozf); err2 != nil {
-        return nil, fmt.Errorf("parse YAML: %w", err)
-    }
-    zf = convertOldFormat(ozf)
-}
-```
-
-`yaml.Unmarshal` into a struct never returns an error for missing keys; it only errors on
-malformed YAML syntax. Since both `DNSZoneFile` and `OldDNSZoneFile` accept any valid YAML
-document (all fields are optional), the `err != nil` branch is unreachable in practice for any
-syntactically valid file, meaning both old and new formats are parsed by the first unmarshal
-call. The problem: for a new-format file where `zone:` is a struct (map), unmarshalling into
-`OldDNSZoneFile` (where `Zone` is a plain string) would silently produce an empty `Zone.Name`.
-This path is never reached but could produce silent data loss if the detection strategy is
-ever modified. The format detection approach is fragile.
-
-**Fix:** Distinguish old from new format explicitly — e.g. by checking whether `zone:` is a
-string or map type before full unmarshalling, or by using a `yaml.Node` intermediate parse.
-
----
-
-## Info
-
-### IN-01: `applyTemplates` is a no-op stub
+### WR-05: `applyTemplates` is a Silent No-Op Stub
 
 **File:** `internal/zone/parser_dnszone.go:1131-1135`
 
-**Issue:** The function is called in the hot path of `ParseDNSZone` but does nothing. Any
-`apply:` section in a zone file is silently ignored. No error is returned, and there is no
-log warning. A user who relies on templates will get a zone missing records with no indication
-of why.
+**Issue:** The function is called in the main `ParseDNSZone` parse path and returns nil unconditionally with a comment that it is "not yet implemented". If a zone file uses `apply:` directives, those records are silently omitted from the output zone. This is a data-loss bug from the user's perspective.
 
-**Fix:** Either implement template application, or return an error when `zf.Apply` is non-empty:
+**Fix:** Return an error when `apply:` is non-empty:
 
 ```go
 func applyTemplates(zone *Zone, zf *DNSZoneFile, defaultTTL uint32) error {
@@ -300,42 +271,38 @@ func applyTemplates(zone *Zone, zf *DNSZoneFile, defaultTTL uint32) error {
 
 ---
 
-### IN-02: Inconsistent indentation (tabs vs. spaces) in new record parsers
+## Info
 
-**File:** `internal/zone/parser_dnszone.go:743-744, 765-766, 786-787, 791-792, 795-796, 1020-1021, 1064-1065`
+### IN-01: Inconsistent Indentation (Tabs vs. Spaces) in New Code
 
-**Issue:** The pre-existing code uses tabs throughout, but the new CAA, TLSA, and SVCB/HTTPS
-parsers contain several lines indented with spaces (visible in lines 743-744 inside
-`parseCAARecords`, and 1020 inside `parseSVCBHTTPRecords`). This is a minor style inconsistency
-but gofmt will flag it, and it indicates the new code was not run through `gofmt` before
-submission.
+**File:** `internal/zone/parser_dnszone.go:743-744, 764-766, 786-792, 1020-1021, 1064-1065`
 
-**Fix:** Run `gofmt -w internal/zone/parser_dnszone.go`.
+**Issue:** Pre-existing code uses hard tabs throughout. The newly added float64 fallback blocks and `if rr != nil` blocks inside `parseCAARecords`, `parseTLSARecords`, and `parseSVCBHTTPRecords` use spaces. This indicates the new code was not run through `gofmt` before submission.
+
+**Fix:** `gofmt -w internal/zone/parser_dnszone.go`
 
 ---
 
-### IN-03: No test coverage for SSHFP/NAPTR/SMIMEA/LOC in BIND parser path after round-trip
+### IN-02: No Round-Trip Tests for New Record Types in BIND Parser Path
 
-**File:** `internal/zone/parser_bind_test.go:347-393`
+**File:** `internal/zone/parser_bind_test.go:347-429`
 
-**Issue:** `TestParseBIND_SSHFP`, `TestParseBIND_NAPTR`, `TestParseBIND_SMIMEA`, and
-`TestParseBIND_LOC` verify that records are present after BIND parsing, but there are no
-corresponding round-trip tests for the BIND path (only the dnszone path has round-trip tests in
-`parser_dnszone_test.go`). If BIND export of these record types is broken, no test will catch it.
+**Issue:** Tests verify that SSHFP, NAPTR, SMIMEA, LOC, TLSA, HTTPS, SVCB records are present after BIND parsing but do not test the compile-and-reload round-trip for the BIND fixture. Only the `.dnszone` path has round-trip coverage. If export of any of these new record types is broken, no test catches it.
 
-**Fix:** Add round-trip tests analogous to `TestRoundTrip_SSHFP` etc. that start from the BIND
-fixture:
-
-```go
-func TestBINDRoundTrip_SSHFP(t *testing.T) {
-    cfg := DefaultConfig()
-    z, err := ParseBIND("testdata/example.org.bind", "example.org.", cfg)
-    // ... compile, reload, assertRoundTrip
-}
-```
+**Fix:** Add round-trip tests for the BIND path analogous to the `TestRoundTrip_*` tests in `parser_dnszone_test.go`.
 
 ---
 
-_Reviewed: 2026-05-21_
+### IN-03: `assertRoundTrip` Calls `t.Fatalf` When `len(origRecs) == 0`
+
+**File:** `internal/zone/parser_dnszone_test.go:533-535`
+
+**Issue:** When `origRecs` is empty, `assertRoundTrip` fails with `"no records found for %s type %d"`. This is correct behavior, but the function is also called directly from round-trip tests that already verified record presence (e.g. `TestRoundTrip_SSHFP` calls `doRoundTrip` then `assertRoundTrip`). The double-check is harmless but adds confusion; a more useful pattern would verify that `doRoundTrip` produces `orig` with records present before calling `assertRoundTrip`, rather than letting `assertRoundTrip` fail with a generic message.
+
+**Fix:** Minor test clarity improvement — document that `assertRoundTrip` requires `len(origRecs) > 0`, or call `require` in the round-trip tests themselves.
+
+---
+
+_Reviewed: 2026-05-21T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
