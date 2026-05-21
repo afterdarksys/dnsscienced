@@ -164,7 +164,7 @@ Plans:
 - [x] 10-01-PLAN.md — YAML parser: add SSHFP/NAPTR/SMIMEA/LOC struct types, parse functions, RecordSection fields, wire both loops, unit tests (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 10-02-PLAN.md — BIND fixture extension, BIND parse tests, DZC round-trip wire equality tests (Wave 2)
+- [x] 10-02-PLAN.md — BIND fixture extension, BIND parse tests, DZC round-trip wire equality tests (Wave 2)
 
 ### Phase 11: Resolver Behaviors
 
@@ -223,7 +223,7 @@ Plans:
 | 7. Admin Auth Hardening | v1.2 | 7/7 | Complete   | 2026-05-16 |
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
-| 10. Record Type Expansion | v1.3 | 1/2 | In Progress|  |
+| 10. Record Type Expansion | v1.3 | 2/2 | Complete   | 2026-05-21 |
 | 11. Resolver Behaviors | v1.3 | 0/? | Not started | - |
 | 12. AXFR Server | v1.3 | 0/? | Not started | - |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
