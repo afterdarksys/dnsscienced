@@ -3,19 +3,21 @@ status: partial
 phase: 07-admin-auth-hardening
 source: [07-VERIFICATION.md]
 started: 2026-05-16T00:00:00Z
-updated: 2026-05-16T00:00:00Z
+updated: 2026-05-21T00:00:00Z
 ---
 
 ## Current Test
 
-[awaiting human testing]
+[testing complete]
 
 ## Tests
 
 ### 1. ListConnections returns real data in production
 
 expected: When a gRPC client connects to the live admin server, ListConnections should return at least 1 connection with real IP, port, and connected_at timestamp.
-result: [pending]
+result: blocked
+blocked_by: other
+reason: "we have no way to test"
 
 **Context:** In production, `connRegistry` is passed as `nil` to `RegisterAll` (chicken-and-egg constraint documented in 07-05-SUMMARY). The registry returned by `grpcserver.New()` is discarded with `_ = connReg`. `Service.ListConnections` nil-guards and returns an empty slice when `connRegistry` is nil. Tests pass because they wire the registry directly.
 
@@ -28,8 +30,8 @@ result: [pending]
 total: 1
 passed: 0
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
-blocked: 0
+blocked: 1
 
 ## Gaps
