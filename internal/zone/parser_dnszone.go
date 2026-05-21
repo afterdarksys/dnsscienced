@@ -398,7 +398,9 @@ func parseSOA(zf *DNSZoneFile, origin string, defaultTTL uint32) (*dns.SOA, erro
 		fmt.Sscanf(today+"00", "%d", &soa.Serial)
 	} else {
 		var serial uint64
-		fmt.Sscanf(zf.SOA.Serial, "%d", &serial)
+		if n, err := fmt.Sscanf(zf.SOA.Serial, "%d", &serial); n != 1 || err != nil {
+			return nil, fmt.Errorf("invalid SOA serial %q: expected integer", zf.SOA.Serial)
+		}
 		soa.Serial = uint32(serial)
 	}
 
