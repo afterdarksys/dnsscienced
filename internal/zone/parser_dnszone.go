@@ -909,15 +909,23 @@ func parseNAPTRRecords(zone *Zone, owner string, data interface{}, ttl uint32) e
 	}
 
 	for _, rec := range naptrList {
-		s := fmt.Sprintf("%s %d IN NAPTR %d %d \"%s\" \"%s\" \"%s\" %s",
-			owner, ttl, rec.Order, rec.Preference, rec.Flags, rec.Service, rec.Regexp, dns.Fqdn(rec.Replacement))
-		rr, err := dns.NewRR(s)
-		if err != nil {
-			return fmt.Errorf("failed to parse NAPTR string: %w", err)
+		// Build the struct directly to avoid format-string injection from
+		// user-controlled fields (flags, service, regexp) containing newlines.
+		rr := &dns.NAPTR{
+			Hdr: dns.RR_Header{
+				Name:   owner,
+				Rrtype: dns.TypeNAPTR,
+				Class:  dns.ClassINET,
+				Ttl:    ttl,
+			},
+			Order:       uint16(rec.Order),
+			Preference:  uint16(rec.Preference),
+			Flags:       rec.Flags,
+			Service:     rec.Service,
+			Regexp:      rec.Regexp,
+			Replacement: dns.Fqdn(rec.Replacement),
 		}
-		if rr != nil {
-			zone.AddRecord(rr)
-		}
+		zone.AddRecord(rr)
 	}
 	return nil
 }
