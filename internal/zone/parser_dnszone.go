@@ -409,11 +409,20 @@ func parseSOA(zf *DNSZoneFile, origin string, defaultTTL uint32) (*dns.SOA, erro
 	if soa.Refresh, err = parseTime(zf.SOA.Refresh); err != nil {
 		return nil, fmt.Errorf("invalid refresh: %w", err)
 	}
+	if soa.Refresh == 0 {
+		return nil, fmt.Errorf("SOA refresh must be non-zero")
+	}
 	if soa.Retry, err = parseTime(zf.SOA.Retry); err != nil {
 		return nil, fmt.Errorf("invalid retry: %w", err)
 	}
+	if soa.Retry == 0 {
+		return nil, fmt.Errorf("SOA retry must be non-zero")
+	}
 	if soa.Expire, err = parseTime(zf.SOA.Expire); err != nil {
 		return nil, fmt.Errorf("invalid expire: %w", err)
+	}
+	if soa.Expire == 0 {
+		return nil, fmt.Errorf("SOA expire must be non-zero")
 	}
 	if soa.Minttl, err = parseTime(zf.SOA.NegativeTTL); err != nil {
 		return nil, fmt.Errorf("invalid negative_ttl: %w", err)
