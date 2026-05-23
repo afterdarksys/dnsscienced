@@ -64,6 +64,11 @@ type Config struct {
 	// Conversion from config.TsigKeyConfig to tsig.KeyConfig happens at config load time.
 	TsigKeys []tsig.KeyConfig `yaml:"-"`
 
+	// ZoneTransferCIDRs maps zone FQDN origin to CIDR strings allowed to AXFR.
+	// Populated by main.go from config.ZoneConfig.AllowTransfer.
+	// Empty/absent = deny all (D-01).
+	ZoneTransferCIDRs map[string][]string `yaml:"-"`
+
 	// DSYNC configures inbound RFC 9859 NOTIFY(CDS/CSYNC) handling.
 	DSYNC DSYNCConfig `yaml:"dsync"`
 
@@ -151,9 +156,10 @@ type Server struct {
 	defensive    *defensive.Manager
 	protective   *protective.Engine
 	firewall     *firewalld.Firewall
-	tsigKeyRing   *tsig.KeyRing
-	dsyncHandler  *dsync.Handler
-	dsyncNotifier *dsync.DSYNCNotifier
+	tsigKeyRing      *tsig.KeyRing
+	dsyncHandler     *dsync.Handler
+	dsyncNotifier    *dsync.DSYNCNotifier
+	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -306,6 +312,22 @@ func New(cfg Config) (*Server, error) {
 				return nil, fmt.Errorf("init TSIG key ring: add key %q: %w", kc.Name, err)
 			}
 		}
+	}
+
+	// Build per-zone transfer ACLs from ZoneTransferCIDRs.
+	// D-01: zones with no entry or empty CIDR list get nil ACL = deny all.
+	s.zoneTransferACLs = make(map[string]*dsync.SourceACL)
+	for zoneName, cidrs := range cfg.ZoneTransferCIDRs {
+		if len(cidrs) == 0 {
+			s.zoneTransferACLs[zoneName] = nil
+			continue
+		}
+		acl, err := dsync.NewSourceACL(cidrs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("zone %s allow_transfer: %w", zoneName, err)
+		}
+		s.zoneTransferACLs[zoneName] = acl
 	}
 
 	// Create UDP servers (SO_REUSEPORT)
@@ -497,6 +519,20 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = dns.RcodeNotImplemented
 			w.WriteMsg(m) //nolint:errcheck
 		}
+		return
+	}
+
+	// RFC 5936: dispatch AXFR before pool.GetMessage() — AXFR streams multiple
+	// messages and must NOT use the pooled single-response path.
+	if len(r.Question) > 0 && r.Question[0].Qtype == dns.TypeAXFR {
+		if clientIP == nil {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+		s.handleAXFR(w, r, clientIP)
 		return
 	}
 
