@@ -415,6 +415,31 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 				}
 			}
 
+			// No glue found: resolve each NS target name to obtain addresses.
+			// This handles out-of-zone nameservers (the common real-world case).
+			// Each glue resolution uses a fresh sub-chain capped by the remaining
+			// iteration budget to prevent unbounded recursion.
+			if len(newNameservers) == 0 {
+				for _, rr := range resp.Ns {
+					ns, ok := rr.(*dns.NS)
+					if !ok {
+						continue
+					}
+					if iterations >= r.cfg.MaxIterations {
+						break
+					}
+					glueResp, glueErr := r.resolveIterative(ctx, ns.Ns, dns.TypeA, qclass)
+					if glueErr != nil {
+						continue
+					}
+					for _, arec := range glueResp.Answer {
+						if a, ok := arec.(*dns.A); ok {
+							newNameservers = append(newNameservers, a.A.String()+":53")
+						}
+					}
+				}
+			}
+
 			if len(newNameservers) == 0 {
 				return nil, ErrNoNameservers
 			}
