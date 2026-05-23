@@ -2,27 +2,27 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Gap Closure — Config Fixes & Validation
-status: executing
-last_updated: "2026-05-23T15:50:24.743Z"
+status: verifying
+last_updated: "2026-05-23T15:57:00.530Z"
 last_activity: 2026-05-23
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 13
-  completed_plans: 12
-  percent: 92
+  completed_plans: 13
+  percent: 100
 ---
 
 # State
 
 ## Current Position
 
-Phase: 13 (dynamic-dns-updates) — EXECUTING
+Phase: 13 (dynamic-dns-updates) — COMPLETE
 Plan: 3 of 3
-Status: Executing Phase 13 — Plan 02 complete (UPDATE handler + server wiring)
-Last activity: 2026-05-23 -- Phase 13 Plan 02 complete (handleUpdate with full RFC 2136 guard chain, 22 tests)
+Status: Phase 13 complete — all 13 plans done; RFC 2136 Dynamic DNS Updates fully delivered
+Last activity: 2026-05-23 -- Phase 13 Plan 03 complete (config wiring + persistZone implementation)
 
-Progress: [█████████░] 92% (12/13 plans)
+Progress: [██████████] 100% (13/13 plans)
 
 ## Project Reference
 
@@ -182,8 +182,11 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 - DeleteRecord RFC 2136 normalization: class and TTL set to stored values before String() comparison — RFC 2136 §3.4.2.3 delete-specific-RR matches rdata only; ClassNONE+TTL=0 from client vs ClassINET+TTL=N stored would otherwise never match
 - Zone.Lock()/Unlock() exported wrappers over updateMu; Zone.GetTypeMap() for CNAME coexistence check (D-04) — needed since updateMu is unexported but handleUpdate is in the same package (internal/server)
 - persistZone is a no-op stub in update.go — Plan 03 implements write-back by populating s.persistPaths from ZoneConfig.PersistUpdates
+- Phase 13 Plan 03 complete: cfg.ZoneUpdateCIDRs wired from ZoneConfig.AllowUpdate; cfg.PersistPaths wired from ZoneConfig.PersistUpdates+File in main.go; server.Config.PersistPaths added (yaml:"-"); s.persistPaths = cfg.PersistPaths in New(); persistZone implemented with atomic .tmp+Rename write; go build + race tests all pass; DYNUP-01/02/03/04 complete; Phase 13 fully delivered
+- PersistPaths wiring pattern: yaml:"-" Config field populated by main.go → New() wires to s.persistPaths (third instance of this pattern alongside ZoneTransferCIDRs + ZoneUpdateCIDRs)
+- persistZone: uses only pre-configured File path (no user-controlled path injection, T-13-12); non-fatal errors logged to stderr (D-14); atomic write via .tmp+Rename prevents corruption
 
 ## Session Continuity
 
-Next session: Phase 13 — Plan 03 (main.go wiring + persistence)
+Next session: Phase 13 complete — all 13 plans delivered; RFC 2136 Dynamic DNS Updates (DYNUP-01/02/03/04) fully implemented
 Blocking issues: None
