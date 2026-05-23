@@ -11,18 +11,18 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 
 - [ ] **RRTYPE-01**: Server parses and serves HTTPS/SVCB records (RFC 9460) from BIND and .dnszone zone files
 - [ ] **RRTYPE-02**: Server parses and serves TLSA/DANE records (RFC 6698) from BIND and .dnszone zone files
-- [ ] **RRTYPE-03**: Server parses and serves SSHFP records (RFC 4255) from BIND and .dnszone zone files
-- [ ] **RRTYPE-04**: Server parses and serves NAPTR records (RFC 3403) from BIND and .dnszone zone files
-- [ ] **RRTYPE-05**: Server parses and serves SMIMEA records (RFC 8162) from BIND and .dnszone zone files
-- [ ] **RRTYPE-06**: Server parses and serves LOC records (RFC 1876) from BIND and .dnszone zone files
-- [ ] **RRTYPE-07**: All new record types survive compile/decompile round-trip in .dzc binary format
-- [ ] **RRTYPE-08**: Authoritative server returns correct NOERROR + empty answer (not NOTIMP) for in-zone queries of new types with no matching records
+- [x] **RRTYPE-03**: Server parses and serves SSHFP records (RFC 4255) from BIND and .dnszone zone files
+- [x] **RRTYPE-04**: Server parses and serves NAPTR records (RFC 3403) from BIND and .dnszone zone files
+- [x] **RRTYPE-05**: Server parses and serves SMIMEA records (RFC 8162) from BIND and .dnszone zone files
+- [x] **RRTYPE-06**: Server parses and serves LOC records (RFC 1876) from BIND and .dnszone zone files
+- [x] **RRTYPE-07**: All new record types survive compile/decompile round-trip in .dzc binary format
+- [x] **RRTYPE-08**: Authoritative server returns correct NOERROR + empty answer (not NOTIMP) for in-zone queries of new types with no matching records
 
 ### Resolver Behaviors (RESOLVE)
 
-- [x] **RESOLVE-01**: Recursive resolver sends minimized QNAME in outgoing queries (RFC 7816 / RFC 9156) — only the necessary labels sent to each nameserver level
-- [x] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
-- [x] **RESOLVE-03**: Resolver serves stale cached records with extended TTL (up to configurable stale-max-ttl) when upstream nameservers are unreachable (RFC 8767 proper serve-stale)
+- [ ] **RESOLVE-01**: Recursive resolver sends minimized QNAME in outgoing queries (RFC 7816 / RFC 9156) — only the necessary labels sent to each nameserver level
+- [ ] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
+- [ ] **RESOLVE-03**: Resolver serves stale cached records with extended TTL (up to configurable stale-max-ttl) when upstream nameservers are unreachable (RFC 8767 proper serve-stale)
 
 ### Zone Transfer — AXFR Server (XFER)
 
@@ -71,17 +71,17 @@ Deferred to future milestone. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RRTYPE-01 | Phase 10 | Pending |
-| RRTYPE-02 | Phase 10 | Pending |
-| RRTYPE-03 | Phase 10 | Pending |
-| RRTYPE-04 | Phase 10 | Pending |
-| RRTYPE-05 | Phase 10 | Pending |
-| RRTYPE-06 | Phase 10 | Pending |
-| RRTYPE-07 | Phase 10 | Pending |
-| RRTYPE-08 | Phase 10 | Pending |
-| RESOLVE-01 | Phase 11 | Complete |
-| RESOLVE-02 | Phase 11 | Complete |
-| RESOLVE-03 | Phase 11 | Complete |
+| RRTYPE-01 | Phase 14 | Pending |
+| RRTYPE-02 | Phase 14 | Pending |
+| RRTYPE-03 | Phase 10 | Complete |
+| RRTYPE-04 | Phase 10 | Complete |
+| RRTYPE-05 | Phase 10 | Complete |
+| RRTYPE-06 | Phase 10 | Complete |
+| RRTYPE-07 | Phase 10 | Complete |
+| RRTYPE-08 | Phase 10 | Complete |
+| RESOLVE-01 | Phase 14 | Pending |
+| RESOLVE-02 | Phase 14 | Pending |
+| RESOLVE-03 | Phase 14 | Pending |
 | XFER-01 | Phase 12 | Complete |
 | XFER-02 | Phase 12 | Complete |
 | XFER-03 | Phase 12 | Complete |
@@ -94,7 +94,10 @@ Deferred to future milestone. Tracked but not in current roadmap.
 - v1.3 requirements: 18 total
 - Mapped to phases: 18 (roadmap complete)
 - Unmapped: 0 ✓
+- Satisfied: 9 (RRTYPE-03..08, XFER-01..03)
+- Pending (gap closure Phase 14): 5 (RRTYPE-01/02, RESOLVE-01/02/03)
+- Pending (Phase 13): 4 (DYNUP-01..04)
 
 ---
 *Requirements defined: 2026-05-21*
-*Last updated: 2026-05-21 — traceability filled after roadmap creation*
+*Last updated: 2026-05-23 — Phase 14 gap closure phase added; RESOLVE-01/02/03 reopened (config wiring gap); RRTYPE-03..08 marked complete (confirmed by Phase 10 Plan 03 SUMMARY)*

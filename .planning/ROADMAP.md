@@ -217,10 +217,26 @@ Plans:
   4. An UPDATE request from an IP not in the zone's allow_update CIDR list receives REFUSED regardless of TSIG signature
 **Plans**: [To be planned]
 
-- [ ] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups
+### Phase 14: v1.3 Gap Closure — Config Fixes & Validation
+
+**Goal:** Close the three blockers found by the v1.3 milestone audit: fix resolver feature flags disabled in all config-file deployments, fix a test regression introduced by Phase 11, and complete administrative cleanup (Phase 10 re-verification, stale REQUIREMENTS.md checkboxes, Nyquist validation for phases 10 and 11)
+**Depends on**: Phase 13
+**Requirements**: RESOLVE-01, RESOLVE-02, RESOLVE-03, RRTYPE-01, RRTYPE-02
+**Gap Closure:** Closes gaps from v1.3-MILESTONE-AUDIT.md
+**Success Criteria** (what must be TRUE):
+  1. `server.DefaultConfig()` embeds `resolver.DefaultConfig()` so QNAME minimization, Aggressive NSEC, and Serve Stale default to `true` in all deployments
+  2. `config.example.yaml` and `config.production.yaml` use the correct YAML keys (`qname_minimization`, `aggressive_nsec`, `serve_stale`, `stale_ttl`) and a config-file deployment enables all three resolver features
+  3. `go test ./internal/resolver/...` passes — TestGetTTL `"no answers - default"` expects `300` (not `3600`)
+  4. Phase 10 VERIFICATION.md is re-verified and reflects Plan 03 results (RRTYPE-01/02 satisfied by TLSA/HTTPS/SVCB tests)
+  5. All RRTYPE-01..08 checkboxes in REQUIREMENTS.md match actual implementation status
+  6. Nyquist compliance passes for phases 10 and 11
+**Plans**: [To be planned]
+
+- [x] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups (completed 2026-05-21)
 - [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
 - [x] **Phase 12: AXFR Server** — Zone transfer serving (RFC 5936), TSIG authentication, per-zone allow_transfer ACL (completed 2026-05-23)
 - [ ] **Phase 13: Dynamic DNS Updates** — RFC 2136 UPDATE opcode, TSIG auth, per-zone allow_update ACL, immediate visibility
+- [ ] **Phase 14: v1.3 Gap Closure** — Config wiring fix (RESOLVE-01/02/03), TestGetTTL fix, Phase 10 re-verification, REQUIREMENTS.md cleanup, Nyquist validation
 
 </details>
 
@@ -241,6 +257,7 @@ Plans:
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
+| 14. v1.3 Gap Closure | v1.3 | 0/? | Not started | - |
 
 ---
 *Last updated: 2026-05-23 — Phase 12 planned (2 plans, 2 waves)*
