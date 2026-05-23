@@ -103,6 +103,10 @@ type ZoneConfig struct {
 	AllowTransfer []string `yaml:"allow_transfer,omitempty"` // CIDRs allowed to AXFR
 	AlsoNotify    []string `yaml:"also_notify,omitempty"`    // Additional NOTIFY targets
 
+	// Dynamic DNS Update configuration (RFC 2136)
+	AllowUpdate    []string `yaml:"allow_update,omitempty"`    // CIDRs allowed to send UPDATE; empty = REFUSED (D-15)
+	PersistUpdates *bool    `yaml:"persist_updates,omitempty"` // nil/false = in-memory only; true = write-back to zone file (D-11)
+
 	// Zone transfer options (for secondary zones)
 	TransferSource  string        `yaml:"transfer_source,omitempty"`  // Source IP for AXFR
 	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
