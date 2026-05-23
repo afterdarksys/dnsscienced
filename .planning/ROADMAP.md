@@ -196,14 +196,14 @@ Plans:
   3. An AXFR request with no TSIG signature is rejected with REFUSED when the zone requires authentication
   4. An AXFR request from an IP not in the zone's allow_transfer CIDR list receives REFUSED regardless of TSIG
 **Plans**: 2 plans
+**UI hint**: no
 
 Plans:
 **Wave 1**
-- [x] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
+- [ ] 12-01-PLAN.md — AXFR handler (axfr.go) + server.go config/dispatch/init + unit tests (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [x] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
-**UI hint**: no
+- [ ] 12-02-PLAN.md — main.go wiring: ZoneTransferCIDRs + TsigKeys from config + build gate (Wave 2)
 
 ### Phase 13: Dynamic DNS Updates
 
@@ -215,14 +215,7 @@ Plans:
   2. A valid DNS UPDATE message deleting a record causes the record to disappear from subsequent queries without zone reload
   3. An UPDATE request signed with a known TSIG key is accepted; an unsigned UPDATE request is rejected with REFUSED
   4. An UPDATE request from an IP not in the zone's allow_update CIDR list receives REFUSED regardless of TSIG signature
-**Plans**: 2 plans
-
-Plans:
-**Wave 1**
-- [x] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
+**Plans**: [To be planned]
 
 - [ ] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups
 - [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
@@ -246,8 +239,8 @@ Plans:
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
-| 12. AXFR Server | v1.3 | 0/? | Not started | - |
+| 12. AXFR Server | v1.3 | 0/2 | Not started | - |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-05-22 — Phase 11 planned (2 plans, 2 waves)*
+*Last updated: 2026-05-23 — Phase 12 planned (2 plans, 2 waves)*
