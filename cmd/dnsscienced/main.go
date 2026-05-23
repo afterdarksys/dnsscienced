@@ -156,6 +156,38 @@ func main() {
 			}
 		}
 
+		// Wire per-zone allow_update CIDRs from zone config into server config.
+		// Same pattern as ZoneTransferCIDRs; wired here to avoid import cycle.
+		// Empty AllowUpdate slice is passed as-is; server.New() intercepts empty → nil (deny all per D-15).
+		if len(loadedCfg.Zones) > 0 {
+			cfg.ZoneUpdateCIDRs = make(map[string][]string, len(loadedCfg.Zones))
+			for _, zc := range loadedCfg.Zones {
+				zoneName := zc.Name
+				if !strings.HasSuffix(zoneName, ".") {
+					zoneName += "."
+				}
+				cfg.ZoneUpdateCIDRs[zoneName] = zc.AllowUpdate
+			}
+		}
+
+		// Wire per-zone persist paths for RFC 2136 dynamic update write-back (D-11, D-13).
+		// Only zones with persist_updates=true get a path entry; all others persist in-memory only (D-12).
+		if len(loadedCfg.Zones) > 0 {
+			persistPaths := make(map[string]string)
+			for _, zc := range loadedCfg.Zones {
+				if zc.PersistUpdates != nil && *zc.PersistUpdates && zc.File != "" {
+					zoneName := zc.Name
+					if !strings.HasSuffix(zoneName, ".") {
+						zoneName += "."
+					}
+					persistPaths[zoneName] = zc.File
+				}
+			}
+			if len(persistPaths) > 0 {
+				cfg.PersistPaths = persistPaths
+			}
+		}
+
 		// Wire TSIG keys from config into server config. server.Config.TsigKeys uses
 		// yaml:"-" so it is not decoded from the server YAML section directly.
 		// config.TsigKeyConfig and tsig.KeyConfig have identical fields.

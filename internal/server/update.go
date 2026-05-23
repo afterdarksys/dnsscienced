@@ -1,7 +1,9 @@
 package server
 
 import (
+	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -300,11 +302,35 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	s.persistZone(zoneName, clone)
 }
 
-// persistZone writes the zone to disk if a persist path is configured for it.
-// This is a no-op if persistPaths is empty or the zone has no configured path.
-// Write errors are intentionally non-fatal: the in-memory UPDATE already succeeded.
-// Plan 03 (main.go wiring) populates s.persistPaths from ZoneConfig.PersistUpdates.
-func (s *Server) persistZone(_ string, _ *zone.Zone) {
-	// Persistence write-back is wired in Plan 03.
-	// The stub is here so the call site above compiles and the field is reserved.
+// persistZone writes the zone to disk if a persist path is configured for it (D-11, D-13).
+// This is a no-op if persistPaths is empty or the zone has no configured path (D-12).
+// Write errors are intentionally non-fatal: the in-memory UPDATE already succeeded (D-14).
+// Only the path already configured in zone config File field is used — no user-controlled
+// path injection is possible (T-13-12).
+func (s *Server) persistZone(zoneName string, z *zone.Zone) {
+	if len(s.persistPaths) == 0 {
+		return
+	}
+	path, ok := s.persistPaths[zoneName]
+	if !ok || path == "" {
+		return
+	}
+
+	data, err := zone.SerializeDNSZone(z)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "persist_updates: serialize zone %s: %v\n", zoneName, err)
+		return
+	}
+
+	// Write atomically: write to a temp file then rename over the target.
+	// This prevents a partial-write from leaving a corrupt zone file (T-13-12).
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "persist_updates: write zone %s to %s: %v\n", zoneName, tmpPath, err)
+		return
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		fmt.Fprintf(os.Stderr, "persist_updates: rename %s → %s: %v\n", tmpPath, path, err)
+		_ = os.Remove(tmpPath) // best-effort cleanup
+	}
 }

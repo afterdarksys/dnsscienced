@@ -74,6 +74,12 @@ type Config struct {
 	// Empty/absent = deny all (D-15).
 	ZoneUpdateCIDRs map[string][]string `yaml:"-"`
 
+	// PersistPaths maps zone FQDN origin to the .dnszone file path for write-back
+	// after a successful RFC 2136 UPDATE (D-11, D-13).
+	// Populated by main.go from config.ZoneConfig.PersistUpdates + File.
+	// Zones absent from this map use in-memory-only updates (D-12).
+	PersistPaths map[string]string `yaml:"-"`
+
 	// DSYNC configures inbound RFC 9859 NOTIFY(CDS/CSYNC) handling.
 	DSYNC DSYNCConfig `yaml:"dsync"`
 
@@ -362,6 +368,11 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.zoneUpdateACLs[zoneName] = acl
 	}
+
+	// Wire per-zone persist paths from config (D-11, D-12).
+	// Main.go populates cfg.PersistPaths with zones that have persist_updates=true.
+	// Zones absent from the map use in-memory-only updates.
+	s.persistPaths = cfg.PersistPaths
 
 	// Create UDP servers (SO_REUSEPORT)
 	for i := 0; i < cfg.UDPListeners; i++ {
