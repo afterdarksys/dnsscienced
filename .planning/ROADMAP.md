@@ -215,7 +215,17 @@ Plans:
   2. A valid DNS UPDATE message deleting a record causes the record to disappear from subsequent queries without zone reload
   3. An UPDATE request signed with a known TSIG key is accepted; an unsigned UPDATE request is rejected with REFUSED
   4. An UPDATE request from an IP not in the zone's allow_update CIDR list receives REFUSED regardless of TSIG signature
-**Plans**: [To be planned]
+**Plans**: 3 plans
+
+Plans:
+**Wave 1**
+- [ ] 13-01-PLAN.md — Zone mutation methods (DeleteRecord/DeleteRRSet/DeleteName) + updateMu + config fields (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 13-02-PLAN.md — UPDATE handler (update.go) + server.go dispatch/config/ACL wiring + comprehensive tests (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 13-03-PLAN.md — main.go wiring (ZoneUpdateCIDRs + PersistPaths) + full build/test gate (Wave 3)
 
 ### Phase 14: v1.3 Gap Closure — Config Fixes & Validation
 
@@ -256,8 +266,8 @@ Plans:
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
-| 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
+| 13. Dynamic DNS Updates | v1.3 | 0/3 | Not started | - |
 | 14. v1.3 Gap Closure | v1.3 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-05-23 — Phase 12 planned (2 plans, 2 waves)*
+*Last updated: 2026-05-23 — Phase 13 planned (3 plans, 3 waves)*
