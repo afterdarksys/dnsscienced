@@ -577,17 +577,15 @@ Step 2.6: No external runtime dependencies beyond existing Go toolchain and miek
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **NODATA at intermediate QNAME minimization hops**
+1. **NODATA at intermediate QNAME minimization hops** — RESOLVED
    - What we know: RFC 9156 §4 says re-try with original qtype when intermediate NODATA received
-   - What's unclear: Whether to implement the retry or simply fall through to full-QNAME query on NODATA
-   - Recommendation: On NODATA at a minimized hop, set `sendName = qname` (disable minimization for remainder of resolution) rather than implementing the full RFC 9156 §4 retry loop — simpler and correct for the common case
+   - Resolution: On NODATA at a minimized hop, set `sendName = qname` (disable minimization for remainder of resolution) rather than implementing the full RFC 9156 §4 retry loop — simpler and correct for the common case. Adopted in Plan 02 Task 1 Part B.
 
-2. **NSEC3 records field in NSECCache — slice vs. map**
+2. **NSEC3 records field in NSECCache — slice vs. map** — RESOLVED
    - What we know: `nsecRecord` uses a slice; NSEC3 follows the same pattern
-   - What's unclear: Whether a map keyed by `ownerHash+zone` would be more efficient for lookup
-   - Recommendation: Use a slice matching the NSEC pattern — same mutex, same Flush() pattern; optimization can come later
+   - Resolution: Use a slice (`nsec3records []nsec3Record`) matching the NSEC pattern — same mutex, same Flush() pattern. Adopted in Plan 01 Task 2.
 
 ---
 
