@@ -22,6 +22,11 @@ var _ Allower = (*SourceACL)(nil)
 // Returns an error if any entry in cidrs is invalid. This prevents a
 // misconfigured ACL (e.g., a typo in a CIDR) from silently falling back to
 // allow-all behavior.
+//
+// IMPORTANT: an empty/nil cidrs slice returns allowAll=true — "no restriction
+// list" is treated as "accept from anywhere" (correct for DSYNC notify sources).
+// Callers that need deny-all-on-empty semantics (e.g. AXFR allow_transfer) MUST
+// intercept the empty case before calling this function and store nil instead.
 func NewSourceACL(cidrs []string) (*SourceACL, error) {
 	if len(cidrs) == 0 {
 		return &SourceACL{allowAll: true}, nil

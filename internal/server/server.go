@@ -316,10 +316,18 @@ func New(cfg Config) (*Server, error) {
 
 	// Build per-zone transfer ACLs from ZoneTransferCIDRs.
 	// D-01: zones with no entry or empty CIDR list get nil ACL = deny all.
+	//
+	// NOTE: NewSourceACL(emptySlice) returns allowAll=true (correct for DSYNC
+	// notify sources, where an empty list means "accept from anywhere").  For
+	// AXFR we want the opposite: an empty allow_transfer list means deny all.
+	// We therefore intercept the empty-list case here and store nil explicitly,
+	// never passing an empty slice to NewSourceACL.  Any future call site that
+	// needs deny-all-on-empty semantics MUST do the same check before calling
+	// NewSourceACL, or use a purpose-built constructor.
 	s.zoneTransferACLs = make(map[string]*dsync.SourceACL)
 	for zoneName, cidrs := range cfg.ZoneTransferCIDRs {
 		if len(cidrs) == 0 {
-			s.zoneTransferACLs[zoneName] = nil
+			s.zoneTransferACLs[zoneName] = nil // deny-all: no allow_transfer configured
 			continue
 		}
 		acl, err := dsync.NewSourceACL(cidrs)
