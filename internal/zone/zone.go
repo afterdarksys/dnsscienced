@@ -2,6 +2,7 @@ package zone
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -92,6 +93,10 @@ func DefaultConfig() Config {
 
 // New creates a new empty zone
 func New(name string) *Zone {
+	// WR-05: guard against empty name to prevent index-out-of-range panic.
+	if name == "" {
+		panic("zone.New: empty zone name")
+	}
 	// Ensure name is fully qualified
 	if name[len(name)-1] != '.' {
 		name += "."
@@ -202,6 +207,14 @@ func (z *Zone) DeleteRecord(rr dns.RR) error {
 		typeMap[rrtype] = updated
 	}
 
+	// WR-02: keep z.SOA consistent with Records. If the SOA RR was removed,
+	// clear the fast-path field to prevent stale dual-storage divergence.
+	// (The UPDATE guard in update.go rejects SOA deletes before reaching here;
+	// this guard defends against direct DeleteRecord calls from other callers.)
+	if rrtype == dns.TypeSOA {
+		z.SOA = nil
+	}
+
 	return nil
 }
 
@@ -246,6 +259,10 @@ func (z *Zone) DeleteName(owner string) error {
 
 // GetRecords returns all records for a given owner name and type
 func (z *Zone) GetRecords(owner string, rrtype uint16) []dns.RR {
+	// WR-06: guard against empty owner to prevent index-out-of-range panic.
+	if len(owner) == 0 {
+		return nil
+	}
 	// Ensure owner is fully qualified
 	if owner[len(owner)-1] != '.' {
 		owner += "."
@@ -291,6 +308,10 @@ func (z *Zone) GetRecords(owner string, rrtype uint16) []dns.RR {
 
 // HasName returns true if the owner name exists in the zone (exact or wildcard match)
 func (z *Zone) HasName(owner string) bool {
+	// WR-06: guard against empty owner to prevent index-out-of-range panic.
+	if len(owner) == 0 {
+		return false
+	}
 	if owner[len(owner)-1] != '.' {
 		owner += "."
 	}
@@ -425,7 +446,12 @@ func (z *Zone) IncrementSerial() error {
 		// Increment within today
 		z.SOA.Serial++
 	} else {
-		// Fallback: just increment
+		// Fallback: just increment.
+		// CR-05: guard against uint32 overflow — a serial of 0 would cause secondaries
+		// to consider the zone older than any non-zero serial (RFC 1982), halting replication.
+		if z.SOA.Serial == math.MaxUint32 {
+			return fmt.Errorf("zone %s: SOA serial at MaxUint32, cannot increment", z.Origin)
+		}
 		z.SOA.Serial++
 	}
 
