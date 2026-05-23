@@ -202,7 +202,7 @@ Plans:
 - [x] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
+- [x] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
 **UI hint**: no
 
 ### Phase 13: Dynamic DNS Updates
@@ -219,13 +219,13 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
+- [x] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
 
 - [ ] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups
-- [ ] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension
+- [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
 - [ ] **Phase 12: AXFR Server** — Zone transfer serving (RFC 5936), TSIG authentication, per-zone allow_transfer ACL
 - [ ] **Phase 13: Dynamic DNS Updates** — RFC 2136 UPDATE opcode, TSIG auth, per-zone allow_update ACL, immediate visibility
 
@@ -245,7 +245,7 @@ Plans:
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
-| 11. Resolver Behaviors | v1.3 | 2/2 | Complete   | 2026-05-23 |
+| 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 0/? | Not started | - |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
 
