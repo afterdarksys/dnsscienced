@@ -205,6 +205,10 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 			}
 			// D-04: CNAME coexistence check — adding a CNAME when other types exist,
 			// or adding other types when a CNAME exists, is a protocol violation.
+			// WR-03: check runs against clone (the mid-mutation state), not the live zone.
+			// RFC 2136 §3.4.2 requires update directives to be applied in order; earlier
+			// directives in this message are already reflected in clone, so this check
+			// correctly sees the state as it will be after each sequential operation.
 			if rrtype == dns.TypeCNAME {
 				// If owner already has non-CNAME records, reject.
 				for existType := range clone.GetTypeMap(owner) {
@@ -268,6 +272,16 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 				sendRcode(dns.RcodeRefused)
 				return
 			}
+			// WR-01: NS floor guard for ClassNONE (delete-specific-RR) path.
+			// Parallel to the ClassANY NS guard above — deleting a specific NS at the
+			// apex one-by-one must not be allowed to remove the last nameserver.
+			// Check against the live zone (z) to avoid mid-mutation clone inflation (CR-03).
+			if rrtype == dns.TypeNS && strings.EqualFold(owner, strings.ToLower(z.Origin)) {
+				if len(z.GetRecords(owner, dns.TypeNS)) <= 1 {
+					sendRcode(dns.RcodeRefused)
+					return
+				}
+			}
 			if err := clone.DeleteRecord(rr); err != nil {
 				sendRcode(dns.RcodeServerFailure)
 				return
@@ -322,7 +336,14 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	w.WriteMsg(m) //nolint:errcheck
 
 	// 15. Persist to disk if configured (D-11, D-14).
-	s.persistZone(zoneName, clone)
+	// WR-04: run in a goroutine so blocking disk I/O does not hold z.Lock() (released
+	// by defer above when handleUpdate returns) and does not stall subsequent UPDATE
+	// clients waiting on the zone lock. The in-memory swap already succeeded; the
+	// acknowledged trade-off (D-14) is that a crash between reply and persist leaves
+	// the zone file one serial behind the response already sent to the client.
+	zoneNameCopy := zoneName
+	cloneCopy := clone
+	go s.persistZone(zoneNameCopy, cloneCopy)
 }
 
 // persistZone writes the zone to disk if a persist path is configured for it (D-11, D-13).
