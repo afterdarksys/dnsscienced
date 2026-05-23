@@ -247,7 +247,7 @@ Plans:
 - [x] 14-01-PLAN.md — Fix server.DefaultConfig() + YAML config keys + TestGetTTL + REQUIREMENTS.md checkboxes (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 14-02-PLAN.md — Phase 10 re-verification + Nyquist compliance for phases 10 and 11 (Wave 2)
+- [x] 14-02-PLAN.md — Phase 10 re-verification + Nyquist compliance for phases 10 and 11 (Wave 2)
 
 - [x] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups (completed 2026-05-21)
 - [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
@@ -274,7 +274,7 @@ Plans:
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 13. Dynamic DNS Updates | v1.3 | 3/3 | Complete    | 2026-05-23 |
-| 14. v1.3 Gap Closure | v1.3 | 1/2 | In Progress|  |
+| 14. v1.3 Gap Closure | v1.3 | 2/2 | Complete   | 2026-05-23 |
 
 ---
 *Last updated: 2026-05-23 — Phase 14 planned (2 plans, 2 waves)*
