@@ -380,22 +380,25 @@ Step 2.5: This is not a rename/refactor phase. No runtime state inventory requir
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`stale_ttl` vs `stale_max_ttl` in CONTEXT.md D-02**
    - What we know: CONTEXT.md D-02 says add `stale_ttl: 86400`; the actual struct tag is `yaml:"stale_max_ttl"` (verified at `recursive.go:86`).
    - What's unclear: Whether to add `stale_ttl:` (which would be silently ignored, perpetuating the bug pattern) or `stale_max_ttl:`.
    - Recommendation: Use `stale_max_ttl: 24h` — this matches the struct tag and sets the correct field. This is unambiguous and within Claude's discretion per CONTEXT.md.
+   - RESOLVED: Use `stale_max_ttl: 24h` (applied in plans 14-01 and 14-02).
 
 2. **DefaultConfig override — inline func vs two-step assignment**
    - What we know: CONTEXT.md says "one-line change" but the actual fix requires preserving 4 server-specific config overrides (ShardCount, MaxEntries, Workers, QueryTimeout, MaxIterations) on top of resolver defaults.
    - What's unclear: Exact syntactic form of the fix.
    - Recommendation: Two-step assignment (assign resolver.DefaultConfig() then override fields). Clean, readable, avoids inline func complexity. The planner should specify this exact form.
+   - RESOLVED: Two-step assignment pattern specified in plan 14-01 Task 1 action.
 
 3. **Phase 10 VALIDATION.md Task 10-02-02 `TestQuery` pattern**
    - What we know: Row 10-02-02 uses `-run TestQuery` but no `TestQuery*` test exists in `./internal/zone/...`. The behavior it covers (RRTYPE-08: NOERROR for missing records) is verified via `server.go:790-793` code path, not a zone-package test.
    - What's unclear: Whether to delete row 10-02-02, map it to a different test, or keep it as a manual-only row.
    - Recommendation: The Nyquist task should update 10-02-02 to reference the full-suite command that exercises the server path, or mark it manual-only with rationale. This is a decision for the Nyquist validation task in Wave 2.
+   - RESOLVED: Plan 14-02 Task 2 marks row 10-02-02 as manual-only with rationale.
 
 ---
 
