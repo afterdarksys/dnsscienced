@@ -156,6 +156,13 @@ func (c *NSECCache) SynthesizeNXDOMAIN(qname string, qtype uint16, qclass uint16
 			continue
 		}
 
+		// Guard: qname must be a subdomain of the NSEC record's zone.
+		// Without this check, a wrap-around NSEC from example.com could incorrectly
+		// synthesize NXDOMAIN for names in example.net or other unrelated zones.
+		if !dns.IsSubDomain(rec.Zone, qname) {
+			continue
+		}
+
 		// Check if qname falls strictly between Owner and Next in canonical order.
 		// NSEC record "A NSEC B" proves non-existence of all names X where A < X < B.
 		if canonicalLess(rec.Owner, qname) && canonicalLess(qname, rec.Next) {
