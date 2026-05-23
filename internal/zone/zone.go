@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -22,6 +23,10 @@ type Zone struct {
 	// Records organized by owner name
 	// Map: owner name -> record type -> []RR
 	Records map[string]map[uint16][]dns.RR
+
+	// updateMu serializes concurrent RFC 2136 UPDATE operations per zone (D-06).
+	// The UPDATE handler acquires this lock before applying mutations to the cloned zone.
+	updateMu sync.Mutex
 
 	// DNSSEC configuration
 	DNSSEC *DNSSECConfig
@@ -131,6 +136,105 @@ func (z *Zone) AddRecord(rr dns.RR) error {
 		z.SOA = rr.(*dns.SOA)
 	}
 
+	return nil
+}
+
+// DeleteRecord removes an exact-match resource record from the zone.
+//
+// The match is performed by comparing string representations of dns.RR (rr.String()).
+// Owner name is normalized to lowercase before lookup (mirrors AddRecord).
+// Returns nil if the record is not found (RFC 2136 §3.4.2.5 no-op semantics).
+// Returns an error only if rr is nil.
+func (z *Zone) DeleteRecord(rr dns.RR) error {
+	if rr == nil {
+		return fmt.Errorf("cannot delete nil record")
+	}
+
+	// Normalize owner to lowercase (mirrors AddRecord)
+	owner := strings.ToLower(rr.Header().Name)
+	if owner == "" || owner[len(owner)-1] != '.' {
+		owner += "."
+	}
+
+	rrtype := rr.Header().Rrtype
+
+	typeMap, ok := z.Records[owner]
+	if !ok {
+		return nil // no-op: owner not in zone
+	}
+
+	existing, ok := typeMap[rrtype]
+	if !ok {
+		return nil // no-op: rrtype not at owner
+	}
+
+	// Build a normalized copy of the RR for string comparison.
+	// The stored records have lowercase owners; we must compare with the same
+	// owner normalization applied so that case-insensitive inputs match correctly.
+	normalized := dns.Copy(rr)
+	normalized.Header().Name = owner
+	target := normalized.String()
+	found := -1
+	for i, e := range existing {
+		if e.String() == target {
+			found = i
+			break
+		}
+	}
+	if found == -1 {
+		return nil // no-op: record not found
+	}
+
+	// Splice out the matched record
+	updated := append(existing[:found], existing[found+1:]...)
+	if len(updated) == 0 {
+		delete(typeMap, rrtype)
+		if len(typeMap) == 0 {
+			delete(z.Records, owner)
+		}
+	} else {
+		typeMap[rrtype] = updated
+	}
+
+	return nil
+}
+
+// DeleteRRSet removes all records of a given type at a given owner name.
+//
+// Owner name is normalized to lowercase before lookup.
+// Returns nil if the rrset is not found (no-op per RFC 2136 §3.4.2.5).
+func (z *Zone) DeleteRRSet(owner string, rrtype uint16) error {
+	// Normalize owner
+	owner = strings.ToLower(owner)
+	if owner == "" || owner[len(owner)-1] != '.' {
+		owner += "."
+	}
+
+	typeMap, ok := z.Records[owner]
+	if !ok {
+		return nil // no-op: owner not in zone
+	}
+
+	delete(typeMap, rrtype)
+	if len(typeMap) == 0 {
+		delete(z.Records, owner)
+	}
+
+	return nil
+}
+
+// DeleteName removes all rrsets at a given owner name.
+//
+// Owner name is normalized to lowercase before lookup.
+// Returns nil if the owner is not found (no-op per RFC 2136 §3.4.2.5).
+func (z *Zone) DeleteName(owner string) error {
+	// Normalize owner
+	owner = strings.ToLower(owner)
+	if owner == "" || owner[len(owner)-1] != '.' {
+		owner += "."
+	}
+
+	delete(z.Records, owner)
 	return nil
 }
 
