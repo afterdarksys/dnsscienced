@@ -141,6 +141,35 @@ func main() {
 			cfg.DefensiveManager = defensiveMgr
 		}
 
+		// Wire per-zone allow_transfer CIDRs from zone config into server config.
+		// config.Config.Zones holds AllowTransfer; server.Config.ZoneTransferCIDRs
+		// carries them to the AXFR handler. Wired here to avoid import cycle.
+		if len(loadedCfg.Zones) > 0 {
+			cfg.ZoneTransferCIDRs = make(map[string][]string, len(loadedCfg.Zones))
+			for _, zc := range loadedCfg.Zones {
+				// Ensure zone name is FQDN (trailing dot)
+				zoneName := zc.Name
+				if !strings.HasSuffix(zoneName, ".") {
+					zoneName += "."
+				}
+				cfg.ZoneTransferCIDRs[zoneName] = zc.AllowTransfer
+			}
+		}
+
+		// Wire TSIG keys from config into server config. server.Config.TsigKeys uses
+		// yaml:"-" so it is not decoded from the server YAML section directly.
+		// config.TsigKeyConfig and tsig.KeyConfig have identical fields.
+		if len(loadedCfg.TsigKeys) > 0 {
+			cfg.TsigKeys = make([]tsig.KeyConfig, len(loadedCfg.TsigKeys))
+			for i, kc := range loadedCfg.TsigKeys {
+				cfg.TsigKeys[i] = tsig.KeyConfig{
+					Name:      kc.Name,
+					Algorithm: kc.Algorithm,
+					Secret:    kc.Secret,
+				}
+			}
+		}
+
 		// Check if DHCP config was loaded
 		if loadedCfg.DHCP.Enabled {
 			fmt.Println("DHCP Configuration detected (Feature coming soon)")
