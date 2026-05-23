@@ -235,12 +235,19 @@ Plans:
 **Gap Closure:** Closes gaps from v1.3-MILESTONE-AUDIT.md
 **Success Criteria** (what must be TRUE):
   1. `server.DefaultConfig()` embeds `resolver.DefaultConfig()` so QNAME minimization, Aggressive NSEC, and Serve Stale default to `true` in all deployments
-  2. `config.example.yaml` and `config.production.yaml` use the correct YAML keys (`qname_minimization`, `aggressive_nsec`, `serve_stale`, `stale_ttl`) and a config-file deployment enables all three resolver features
+  2. `config.example.yaml` and `config.production.yaml` use the correct YAML keys (`qname_minimization`, `aggressive_nsec`, `serve_stale`, `stale_max_ttl`) and a config-file deployment enables all three resolver features
   3. `go test ./internal/resolver/...` passes — TestGetTTL `"no answers - default"` expects `300` (not `3600`)
   4. Phase 10 VERIFICATION.md is re-verified and reflects Plan 03 results (RRTYPE-01/02 satisfied by TLSA/HTTPS/SVCB tests)
   5. All RRTYPE-01..08 checkboxes in REQUIREMENTS.md match actual implementation status
   6. Nyquist compliance passes for phases 10 and 11
-**Plans**: [To be planned]
+**Plans**: 2 plans
+
+Plans:
+**Wave 1**
+- [ ] 14-01-PLAN.md — Fix server.DefaultConfig() + YAML config keys + TestGetTTL + REQUIREMENTS.md checkboxes (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 14-02-PLAN.md — Phase 10 re-verification + Nyquist compliance for phases 10 and 11 (Wave 2)
 
 - [x] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups (completed 2026-05-21)
 - [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
@@ -267,7 +274,7 @@ Plans:
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 13. Dynamic DNS Updates | v1.3 | 3/3 | Complete    | 2026-05-23 |
-| 14. v1.3 Gap Closure | v1.3 | 0/? | Not started | - |
+| 14. v1.3 Gap Closure | v1.3 | 0/2 | Not started | - |
 
 ---
-*Last updated: 2026-05-23 — Phase 13 planned (3 plans, 3 waves)*
+*Last updated: 2026-05-23 — Phase 14 planned (2 plans, 2 waves)*
