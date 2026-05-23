@@ -95,8 +95,18 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 	// Opening SOA (RFC 5936 §2.2)
 	ch <- &dns.Envelope{RR: []dns.RR{z.SOA}}
 
-	// Middle: all zone RRs — GetAllRecords iterates z.Records only, does NOT include z.SOA
-	rrs := z.GetAllRecords()
+	// Middle: all zone RRs — exclude SOA because all production loaders
+	// (ParseDNSZone, ParseBIND, LoadCompiledZone) call AddRecord for the SOA,
+	// placing it in both z.SOA and z.Records.  Sending it again here would
+	// produce a malformed transfer (RFC 5936 §2.2 forbids extra SOAs in the
+	// middle section).
+	allRRs := z.GetAllRecords()
+	var rrs []dns.RR
+	for _, rr := range allRRs {
+		if rr.Header().Rrtype != dns.TypeSOA {
+			rrs = append(rrs, rr)
+		}
+	}
 	for i := 0; i < len(rrs); i += axfrBatchSize {
 		end := i + axfrBatchSize
 		if end > len(rrs) {
