@@ -9,8 +9,8 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 
 ### Record Type Expansion (RRTYPE)
 
-- [ ] **RRTYPE-01**: Server parses and serves HTTPS/SVCB records (RFC 9460) from BIND and .dnszone zone files
-- [ ] **RRTYPE-02**: Server parses and serves TLSA/DANE records (RFC 6698) from BIND and .dnszone zone files
+- [x] **RRTYPE-01**: Server parses and serves HTTPS/SVCB records (RFC 9460) from BIND and .dnszone zone files
+- [x] **RRTYPE-02**: Server parses and serves TLSA/DANE records (RFC 6698) from BIND and .dnszone zone files
 - [x] **RRTYPE-03**: Server parses and serves SSHFP records (RFC 4255) from BIND and .dnszone zone files
 - [x] **RRTYPE-04**: Server parses and serves NAPTR records (RFC 3403) from BIND and .dnszone zone files
 - [x] **RRTYPE-05**: Server parses and serves SMIMEA records (RFC 8162) from BIND and .dnszone zone files
@@ -20,9 +20,9 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 
 ### Resolver Behaviors (RESOLVE)
 
-- [ ] **RESOLVE-01**: Recursive resolver sends minimized QNAME in outgoing queries (RFC 7816 / RFC 9156) — only the necessary labels sent to each nameserver level
-- [ ] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
-- [ ] **RESOLVE-03**: Resolver serves stale cached records with extended TTL (up to configurable stale-max-ttl) when upstream nameservers are unreachable (RFC 8767 proper serve-stale)
+- [x] **RESOLVE-01**: Recursive resolver sends minimized QNAME in outgoing queries (RFC 7816 / RFC 9156) — only the necessary labels sent to each nameserver level
+- [x] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
+- [x] **RESOLVE-03**: Resolver serves stale cached records with extended TTL (up to configurable stale-max-ttl) when upstream nameservers are unreachable (RFC 8767 proper serve-stale)
 
 ### Zone Transfer — AXFR Server (XFER)
 
@@ -71,17 +71,17 @@ Deferred to future milestone. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RRTYPE-01 | Phase 14 | Pending |
-| RRTYPE-02 | Phase 14 | Pending |
+| RRTYPE-01 | Phase 10 | Complete |
+| RRTYPE-02 | Phase 10 | Complete |
 | RRTYPE-03 | Phase 10 | Complete |
 | RRTYPE-04 | Phase 10 | Complete |
 | RRTYPE-05 | Phase 10 | Complete |
 | RRTYPE-06 | Phase 10 | Complete |
 | RRTYPE-07 | Phase 10 | Complete |
 | RRTYPE-08 | Phase 10 | Complete |
-| RESOLVE-01 | Phase 14 | Pending |
-| RESOLVE-02 | Phase 14 | Pending |
-| RESOLVE-03 | Phase 14 | Pending |
+| RESOLVE-01 | Phase 11 | Complete |
+| RESOLVE-02 | Phase 11 | Complete |
+| RESOLVE-03 | Phase 11 | Complete |
 | XFER-01 | Phase 12 | Complete |
 | XFER-02 | Phase 12 | Complete |
 | XFER-03 | Phase 12 | Complete |
@@ -94,10 +94,9 @@ Deferred to future milestone. Tracked but not in current roadmap.
 - v1.3 requirements: 18 total
 - Mapped to phases: 18 (roadmap complete)
 - Unmapped: 0 ✓
-- Satisfied: 9 (RRTYPE-03..08, XFER-01..03)
-- Pending (gap closure Phase 14): 5 (RRTYPE-01/02, RESOLVE-01/02/03)
-- Pending (Phase 13): 4 (DYNUP-01..04)
+- Satisfied: 18 (all v1.3 requirements complete)
+- Pending: 0
 
 ---
 *Requirements defined: 2026-05-21*
-*Last updated: 2026-05-23 — Phase 14 gap closure phase added; RESOLVE-01/02/03 reopened (config wiring gap); RRTYPE-03..08 marked complete (confirmed by Phase 10 Plan 03 SUMMARY)*
+*Last updated: 2026-05-23 — Phase 14 Plan 01 gap closure complete; all 18 v1.3 requirements satisfied; RRTYPE-01/02 confirmed Phase 10 (traceability corrected); RESOLVE-01/02/03 confirmed Phase 11 (config wiring gap resolved)*
