@@ -3,33 +3,33 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-23T12:01:35.979Z"
-last_activity: 2026-05-23 -- Phase 12 planning complete
+last_updated: "2026-05-23T12:38:52.468Z"
+last_activity: 2026-05-23
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 10
-  completed_plans: 8
-  percent: 80
+  completed_plans: 9
+  percent: 90
 ---
 
 # State
 
 ## Current Position
 
-Phase: 12
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-23 -- Phase 12 planning complete
+Phase: 12 (axfr-server) — EXECUTING
+Plan: 2 of 2
+Status: Executing Phase 12
+Last activity: 2026-05-23 -- Phase 12 Plan 01 complete (AXFR server handler)
 
-Progress: [██████████] 100% (8/8 plans)
+Progress: [█████████░] 90% (9/10 plans)
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 11 — resolver-behaviors
+**Current focus:** Phase 12 — axfr-server
 
 ## Phase Reference
 
@@ -168,8 +168,12 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 
 - Phase 11 Plan 01 complete: resolver.Config extended with QNAMEMinimization/AggressiveNSEC/ServeStale/StaleTTL; D-10 all-false guard enables all three by default; D-11 wires into CacheConfig before construction; two serve-stale bugs fixed (IsExpired guard removed; stale fallback with TTL=0 rewrite); NSECCache extended with nsec3Record struct, NSEC3 storage/flush/synthesis via dns.NSEC3.Cover(); RESOLVE-01 and RESOLVE-03 marked complete; go build ./... passes
 - Phase 11 Plan 02 complete: QNAME minimization implemented in resolveIterative() — currentZone tracking from root, engine.ApplyQNAMEMinimization per-hop, qtype=A at intermediate hops (RFC 9156), NODATA fallback, currentZone update from NS owner name; RFC 8767 stale TTL=0 rewrite fixed in first cache.Get() path (was only in stale fallback); 14 new tests across resolver_behaviors_test.go + nsec_test.go all pass; Phase 11 complete — RESOLVE-01/02/03 all delivered
+- Phase 12 Plan 01 complete: handleAXFR implemented (internal/server/axfr.go) with full RFC 5936 guard chain: UDP TC=1, TSIG presence before validity, per-zone ACL (nil=deny-all D-01), streaming via dns.Transfer.Out; ZoneTransferCIDRs config + zoneTransferACLs server field; TypeAXFR early dispatch in handleDNS before pool.GetMessage(); 7 tests pass; go build ./... passes; XFER-01/02/03 complete
+- nil ACL in zoneTransferACLs = deny all (D-01 secure-by-default) — empty CIDR list stores nil, not allowAll=true (do NOT call NewSourceACL with empty slice for AXFR)
+- TSIG presence check before validity in handleAXFR: r.IsTsig()==nil guard first — absent TSIG yields TsigStatus()==nil which would silently accept unsigned requests
+- AXFR dispatched before pool.GetMessage() in handleDNS — dns.Transfer.Out streams multiple messages and cannot use pooled single-response path
 
 ## Session Continuity
 
-Next session: Phase 12 — AXFR Server (XFER-01, XFER-02, XFER-03)
+Next session: Phase 12 — Plan 02 (remaining AXFR work if any)
 Blocking issues: None

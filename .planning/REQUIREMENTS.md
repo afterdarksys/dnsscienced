@@ -26,9 +26,9 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 
 ### Zone Transfer — AXFR Server (XFER)
 
-- [ ] **XFER-01**: Server responds to AXFR requests with complete zone contents in correct wire format (RFC 5936) — SOA + all RRs + SOA
-- [ ] **XFER-02**: AXFR transfers are TSIG-authenticated using the existing KeyRing; unsigned AXFR requests are rejected when the zone requires authentication
-- [ ] **XFER-03**: AXFR access is controlled by a per-zone `allow_transfer` ACL (CIDR list); requests from unlisted sources receive REFUSED
+- [x] **XFER-01**: Server responds to AXFR requests with complete zone contents in correct wire format (RFC 5936) — SOA + all RRs + SOA
+- [x] **XFER-02**: AXFR transfers are TSIG-authenticated using the existing KeyRing; unsigned AXFR requests are rejected when the zone requires authentication
+- [x] **XFER-03**: AXFR access is controlled by a per-zone `allow_transfer` ACL (CIDR list); requests from unlisted sources receive REFUSED
 
 ### Dynamic DNS Updates (DYNUP)
 
@@ -82,9 +82,9 @@ Deferred to future milestone. Tracked but not in current roadmap.
 | RESOLVE-01 | Phase 11 | Complete |
 | RESOLVE-02 | Phase 11 | Complete |
 | RESOLVE-03 | Phase 11 | Complete |
-| XFER-01 | Phase 12 | Pending |
-| XFER-02 | Phase 12 | Pending |
-| XFER-03 | Phase 12 | Pending |
+| XFER-01 | Phase 12 | Complete |
+| XFER-02 | Phase 12 | Complete |
+| XFER-03 | Phase 12 | Complete |
 | DYNUP-01 | Phase 13 | Pending |
 | DYNUP-02 | Phase 13 | Pending |
 | DYNUP-03 | Phase 13 | Pending |

@@ -200,7 +200,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 12-01-PLAN.md — AXFR handler (axfr.go) + server.go config/dispatch/init + unit tests (Wave 1)
+- [x] 12-01-PLAN.md — AXFR handler (axfr.go) + server.go config/dispatch/init + unit tests (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 12-02-PLAN.md — main.go wiring: ZoneTransferCIDRs + TsigKeys from config + build gate (Wave 2)
@@ -239,7 +239,7 @@ Plans:
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
-| 12. AXFR Server | v1.3 | 0/2 | Not started | - |
+| 12. AXFR Server | v1.3 | 1/2 | In Progress|  |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
 
 ---
