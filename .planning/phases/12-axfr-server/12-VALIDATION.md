@@ -1,9 +1,9 @@
 ---
 phase: 12
 slug: axfr-server
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-05-23
 ---
 
@@ -19,7 +19,7 @@ created: 2026-05-23
 |----------|-------|
 | **Framework** | go test |
 | **Config file** | none — existing Go test infrastructure |
-| **Quick run command** | `go test ./internal/server/... -run TestAXFR -v` |
+| **Quick run command** | `go test ./internal/server/... -run TestHandleAXFR -v` |
 | **Full suite command** | `go test ./... -count=1` |
 | **Estimated runtime** | ~10 seconds |
 
@@ -27,7 +27,7 @@ created: 2026-05-23
 
 ## Sampling Rate
 
-- **After every task commit:** Run `go test ./internal/server/... -run TestAXFR -v`
+- **After every task commit:** Run `go test ./internal/server/... -run TestHandleAXFR -v`
 - **After every plan wave:** Run `go test ./... -count=1`
 - **Before `/gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 15 seconds
@@ -38,11 +38,13 @@ created: 2026-05-23
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 12-01-01 | 01 | 1 | XFER-01 | — | Full zone stream: SOA + all RRs + closing SOA | unit | `go test ./internal/server/... -run TestAXFR_TCPTransfer` | ❌ W0 | ⬜ pending |
-| 12-01-02 | 01 | 1 | XFER-02 | — | TSIG present → accepted; missing TSIG → NOTAUTH | unit | `go test ./internal/server/... -run TestAXFR_TSIG` | ❌ W0 | ⬜ pending |
-| 12-01-03 | 01 | 1 | XFER-03 | — | IP not in allow_transfer → REFUSED | unit | `go test ./internal/server/... -run TestAXFR_ACL` | ❌ W0 | ⬜ pending |
-| 12-01-04 | 01 | 1 | XFER-01 | — | UDP AXFR returns TC=1, no answer section | unit | `go test ./internal/server/... -run TestAXFR_UDP` | ❌ W0 | ⬜ pending |
-| 12-01-05 | 01 | 1 | XFER-02 | — | Empty allow_transfer → REFUSED (D-01 secure-by-default) | unit | `go test ./internal/server/... -run TestAXFR_EmptyACL` | ❌ W0 | ⬜ pending |
+| 12-01-01 | 01 | 1 | XFER-01 | — | Full zone stream: SOA + all RRs + closing SOA | unit | `go test ./internal/server/... -run TestHandleAXFR_Success_StreamsSOA -v` | ✓ | ✅ green |
+| 12-01-04 | 01 | 1 | XFER-01 | D-08 | UDP AXFR returns TC=1, no answer section | unit | `go test ./internal/server/... -run TestHandleAXFR_UDPTruncation -v` | ✓ | ✅ green |
+| 12-01-02a | 01 | 1 | XFER-02 | D-04 | TSIG missing → NOTAUTH | unit | `go test ./internal/server/... -run TestHandleAXFR_NoTSIG_NotAuth -v` | ✓ | ✅ green |
+| 12-01-02b | 01 | 1 | XFER-02 | D-05 | TSIG bad → NOTAUTH | unit | `go test ./internal/server/... -run TestHandleAXFR_BadTSIG_NotAuth -v` | ✓ | ✅ green |
+| 12-01-05 | 01 | 1 | XFER-02 | D-01 | Empty allow_transfer → REFUSED (secure-by-default) | unit | `go test ./internal/server/... -run TestHandleAXFR_EmptyAllowTransfer_Refused -v` | ✓ | ✅ green |
+| 12-01-03a | 01 | 1 | XFER-03 | D-03 | IP not in allow_transfer → REFUSED | unit | `go test ./internal/server/... -run TestHandleAXFR_IPNotAllowed_Refused -v` | ✓ | ✅ green |
+| 12-01-03b | 01 | 1 | XFER-03 | — | Non-existent zone → REFUSED | unit | `go test ./internal/server/... -run TestHandleAXFR_NonExistentZone_Refused -v` | ✓ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -50,8 +52,8 @@ created: 2026-05-23
 
 ## Wave 0 Requirements
 
-- [ ] `internal/server/axfr_test.go` — stubs for XFER-01, XFER-02, XFER-03 (TCP transfer, TSIG enforcement, ACL enforcement, UDP TC=1, empty-ACL deny)
-- [ ] Existing `internal/server/` test helpers reused — no new infrastructure needed
+- [x] `internal/server/axfr_test.go` — 7 tests covering XFER-01, XFER-02, XFER-03 (TCP transfer, TSIG enforcement, ACL enforcement, UDP TC=1, empty-ACL deny)
+- [x] Existing `internal/server/` test helpers reused — no new infrastructure needed
 
 *Existing `go test` infrastructure covers the phase; only new test file needed.*
 
@@ -67,11 +69,11 @@ created: 2026-05-23
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** complete
