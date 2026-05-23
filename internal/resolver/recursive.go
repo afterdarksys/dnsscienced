@@ -300,7 +300,15 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	// 5. DNSSEC validation before caching.
 	var dnssecValidated, dnssecBogus bool
 	if r.validator != nil {
-		result, _ := r.validator.Validate(ctx, resp, question.Name, question.Qtype)
+		result, validErr := r.validator.Validate(ctx, resp, question.Name, question.Qtype)
+		if validErr != nil {
+			// Validation error (network failure, chain depth, context cancellation):
+			// return SERVFAIL rather than serving the response as if it were valid.
+			// This prevents a transient validator failure from allowing bogus data through.
+			m := new(dns.Msg)
+			m.SetRcode(q, dns.RcodeServerFailure)
+			return m, nil
+		}
 		if result != nil {
 			dnssecValidated = result.Secure
 			dnssecBogus = result.Bogus
