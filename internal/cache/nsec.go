@@ -303,6 +303,12 @@ func buildSyntheticNXDOMAIN(qname string, qtype, qclass uint16, queryID uint16, 
 // canonicalLess implements RFC 4034 §6.1 canonical DNS name ordering.
 // Names are compared label-by-label from right (TLD) to left (most specific),
 // with case-insensitive octet comparison within each label.
+//
+// ASCII/ACE assumption: this implementation is correct only for labels that
+// contain ASCII or ACE-encoded (xn--...) octets. Internationalized labels
+// stored in raw UTF-8 wire form would require byte-level comparison per
+// RFC 4034 §6.1 to avoid incorrect ordering. All NSEC records stored by this
+// cache must have labels normalized to ASCII/ACE form before storage.
 func canonicalLess(a, b string) bool {
 	a = strings.ToLower(strings.TrimSuffix(a, "."))
 	b = strings.ToLower(strings.TrimSuffix(b, "."))
@@ -315,6 +321,7 @@ func canonicalLess(a, b string) bool {
 	reverseLabels(bLabels)
 
 	for i := 0; i < len(aLabels) && i < len(bLabels); i++ {
+		// label comparison: byte-wise per RFC 4034 §6.1 (safe for ASCII/ACE labels)
 		if aLabels[i] < bLabels[i] {
 			return true
 		}
