@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/dnssec"
+	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/packet"
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/random"
@@ -325,12 +327,24 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, qclass uint16) (*dns.Msg, error) {
 	nameservers := rootServers
 	iterations := 0
+	currentZone := "."
 
 	for iterations < r.cfg.MaxIterations {
 		iterations++
 
+		// Compute minimized send name and type for this hop (D-02, D-03).
+		sendName := qname
+		sendType := qtype
+		if r.cfg.QNAMEMinimization {
+			sendName = engine.ApplyQNAMEMinimization(qname, currentZone)
+			// RFC 9156: intermediate hops use qtype=A; final hop uses original qtype.
+			if sendName != qname {
+				sendType = dns.TypeA
+			}
+		}
+
 		// Query one of the nameservers
-		resp, err := r.queryNameserver(ctx, nameservers[0], qname, qtype, qclass)
+		resp, err := r.queryNameserver(ctx, nameservers[0], sendName, sendType, qclass)
 		if err != nil {
 			// Try next nameserver
 			if len(nameservers) > 1 {
@@ -338,6 +352,21 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 				continue
 			}
 			return nil, fmt.Errorf("all nameservers failed: %w", err)
+		}
+
+		// QNAME minimization NODATA at intermediate hop (RFC 9156 section 4):
+		// if minimized and answer is empty + NOERROR + no NS records, disable
+		// minimization and re-issue full qname to this same nameserver.
+		if r.cfg.QNAMEMinimization && sendName != qname &&
+			len(resp.Answer) == 0 && resp.Rcode == dns.RcodeSuccess && len(resp.Ns) == 0 {
+			resp, err = r.queryNameserver(ctx, nameservers[0], qname, qtype, qclass)
+			if err != nil {
+				if len(nameservers) > 1 {
+					nameservers = nameservers[1:]
+					continue
+				}
+				return nil, fmt.Errorf("all nameservers failed: %w", err)
+			}
 		}
 
 		// Check if we got an answer
@@ -370,6 +399,9 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 			}
 
 			nameservers = newNameservers
+			// Update zone to delegation zone: use NS RR owner name (the zone),
+			// NOT ns.Ns (the nameserver hostname). Pitfall 5: must be FQDN.
+			currentZone = dns.Fqdn(strings.ToLower(resp.Ns[0].Header().Name))
 			continue
 		}
 
