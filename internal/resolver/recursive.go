@@ -100,6 +100,22 @@ type Recursive struct {
 	client *dns.Client
 }
 
+// DefaultConfig returns an RFC-compliant default configuration with all three
+// resolver features enabled (QNAME minimization, Aggressive NSEC, Serve Stale).
+// Callers who want specific features off should start from DefaultConfig() and
+// set individual flags to false. Config{} means "all features off".
+func DefaultConfig() Config {
+	return Config{
+		QueryTimeout:      5 * time.Second,
+		MaxIterations:     20,
+		Workers:           100,
+		QNAMEMinimization: true,
+		AggressiveNSEC:    true,
+		ServeStale:        true,
+		StaleTTL:          24 * time.Hour,
+	}
+}
+
 // NewRecursive creates a new recursive resolver
 func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.QueryTimeout == 0 {
@@ -110,18 +126,6 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	}
 	if cfg.Workers == 0 {
 		cfg.Workers = 100
-	}
-
-	// D-10: All three features are ON by default for new deployments.
-	// Go bool zero-value is false, so Config{} would leave all features off.
-	// We detect "no explicit config" as all three flags being false simultaneously
-	// (a user who wants all three off explicitly sets at least one bool true then
-	// disables the others via a comment — unusual but supported via yaml false).
-	// This matches Unbound/Knot Resolver defaults: RFC compliance out of the box.
-	if !cfg.QNAMEMinimization && !cfg.AggressiveNSEC && !cfg.ServeStale {
-		cfg.QNAMEMinimization = true
-		cfg.AggressiveNSEC = true
-		cfg.ServeStale = true
 	}
 
 	// Wire resolver feature flags into cache config (D-11: avoid duplication).
