@@ -348,12 +348,31 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 		r.cache.Set(cacheKey, entry)
 
 		// Store NSEC records for aggressive synthesis if response was validated.
+		// Use the zone from the authority section (SOA/NS owner), not the queried
+		// name, so the zone membership check in SynthesizeNXDOMAIN works correctly.
 		if dnssecValidated && entry.IsNegative {
-			r.cache.StoreNSEC(resp, question.Name)
+			r.cache.StoreNSEC(resp, extractZoneFromResponse(resp))
 		}
 	}
 
 	return resp, nil
+}
+
+// extractZoneFromResponse returns the zone name from the authority section of
+// a DNS response. It prefers the SOA owner name (most authoritative) and falls
+// back to the NS owner name. Returns "." if neither is found.
+func extractZoneFromResponse(resp *dns.Msg) string {
+	for _, rr := range resp.Ns {
+		if soa, ok := rr.(*dns.SOA); ok {
+			return soa.Hdr.Name
+		}
+	}
+	for _, rr := range resp.Ns {
+		if ns, ok := rr.(*dns.NS); ok {
+			return ns.Hdr.Name
+		}
+	}
+	return "."
 }
 
 // resolveIterative performs iterative resolution starting from root
