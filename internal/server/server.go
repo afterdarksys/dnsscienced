@@ -69,6 +69,11 @@ type Config struct {
 	// Empty/absent = deny all (D-01).
 	ZoneTransferCIDRs map[string][]string `yaml:"-"`
 
+	// ZoneUpdateCIDRs maps zone FQDN origin to CIDR strings allowed to send RFC 2136 UPDATE.
+	// Populated by main.go from config.ZoneConfig.AllowUpdate.
+	// Empty/absent = deny all (D-15).
+	ZoneUpdateCIDRs map[string][]string `yaml:"-"`
+
 	// DSYNC configures inbound RFC 9859 NOTIFY(CDS/CSYNC) handling.
 	DSYNC DSYNCConfig `yaml:"dsync"`
 
@@ -160,6 +165,8 @@ type Server struct {
 	dsyncHandler     *dsync.Handler
 	dsyncNotifier    *dsync.DSYNCNotifier
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
+	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
+	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -336,6 +343,24 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("zone %s allow_transfer: %w", zoneName, err)
 		}
 		s.zoneTransferACLs[zoneName] = acl
+	}
+
+	// Build per-zone update ACLs from ZoneUpdateCIDRs.
+	// D-15: zones with no entry or empty CIDR list get nil ACL = deny all.
+	// CRITICAL: Do NOT pass empty slice to NewSourceACL — it returns allowAll=true.
+	// Empty AllowUpdate = no UPDATE allowed (secure-by-default, mirrors AXFR pattern).
+	s.zoneUpdateACLs = make(map[string]*dsync.SourceACL)
+	for zoneName, cidrs := range cfg.ZoneUpdateCIDRs {
+		if len(cidrs) == 0 {
+			s.zoneUpdateACLs[zoneName] = nil // deny-all: no allow_update configured
+			continue
+		}
+		acl, err := dsync.NewSourceACL(cidrs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("zone %s allow_update: %w", zoneName, err)
+		}
+		s.zoneUpdateACLs[zoneName] = acl
 	}
 
 	// Create UDP servers (SO_REUSEPORT)
@@ -546,6 +571,20 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			return
 		}
 		s.handleAXFR(w, r, clientIP)
+		return
+	}
+
+	// RFC 2136: dispatch UPDATE opcode before pool.GetMessage() — UPDATE modifies
+	// zones and must NOT use the pooled single-response path.
+	if r.Opcode == dns.OpcodeUpdate {
+		if clientIP == nil {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+		s.handleUpdate(w, r, clientIP)
 		return
 	}
 
