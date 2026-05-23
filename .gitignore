@@ -61,3 +61,6 @@ zones/
 
 # Linux compiled binaries
 dnsscienced-linux
+dnsscienced-linux-new
+dnsscienced-admin-linux
+dnsscienced-compile-linux-new
