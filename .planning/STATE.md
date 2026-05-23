@@ -2,27 +2,27 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-23T03:51:14.181Z"
+status: verifying
+last_updated: "2026-05-23T03:59:35.297Z"
 last_activity: 2026-05-23
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
-  percent: 88
+  completed_plans: 8
+  percent: 100
 ---
 
 # State
 
 ## Current Position
 
-Phase: 11 (resolver-behaviors) — EXECUTING
-Plan: 2 of 2
-Status: Plan 01 complete; ready for Plan 02
-Last activity: 2026-05-22 -- Phase 11 Plan 01 complete (RESOLVE-01, RESOLVE-03)
+Phase: 11 (resolver-behaviors) — COMPLETE
+Plan: 2 of 2 (ALL PLANS COMPLETE)
+Status: Phase 11 complete — RESOLVE-01, RESOLVE-02, RESOLVE-03 delivered
+Last activity: 2026-05-23
 
-Progress: [█████████░] 88% (7/8 plans)
+Progress: [██████████] 100% (8/8 plans)
 
 ## Project Reference
 
@@ -36,7 +36,7 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
 | 10. Record Type Expansion | Parse + serve + round-trip HTTPS/SVCB/TLSA/SSHFP/NAPTR/SMIMEA/LOC | RRTYPE-01–08 | Not started |
-| 11. Resolver Behaviors | QNAME minimization, aggressive NSEC, serve-stale | RESOLVE-01–03 | Not started |
+| 11. Resolver Behaviors | QNAME minimization, aggressive NSEC, serve-stale | RESOLVE-01–03 | COMPLETE |
 | 12. AXFR Server | Zone transfer serving, TSIG auth, allow_transfer ACL | XFER-01–03 | Not started |
 | 13. Dynamic DNS Updates | RFC 2136 UPDATE, TSIG auth, allow_update ACL, immediate visibility | DYNUP-01–04 | Not started |
 
@@ -167,8 +167,9 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 - Phase 13 scope: UPDATE opcode (5) dispatch before query processing, mirrors NOTIFY dispatch pattern; zone mutation must be concurrent-safe; allow_update ACL per-zone in ZoneConfig
 
 - Phase 11 Plan 01 complete: resolver.Config extended with QNAMEMinimization/AggressiveNSEC/ServeStale/StaleTTL; D-10 all-false guard enables all three by default; D-11 wires into CacheConfig before construction; two serve-stale bugs fixed (IsExpired guard removed; stale fallback with TTL=0 rewrite); NSECCache extended with nsec3Record struct, NSEC3 storage/flush/synthesis via dns.NSEC3.Cover(); RESOLVE-01 and RESOLVE-03 marked complete; go build ./... passes
+- Phase 11 Plan 02 complete: QNAME minimization implemented in resolveIterative() — currentZone tracking from root, engine.ApplyQNAMEMinimization per-hop, qtype=A at intermediate hops (RFC 9156), NODATA fallback, currentZone update from NS owner name; RFC 8767 stale TTL=0 rewrite fixed in first cache.Get() path (was only in stale fallback); 14 new tests across resolver_behaviors_test.go + nsec_test.go all pass; Phase 11 complete — RESOLVE-01/02/03 all delivered
 
 ## Session Continuity
 
-Next session: Continue Phase 11 Plan 02 (QNAME minimization)
+Next session: Phase 12 — AXFR Server (XFER-01, XFER-02, XFER-03)
 Blocking issues: None

@@ -21,7 +21,7 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 ### Resolver Behaviors (RESOLVE)
 
 - [x] **RESOLVE-01**: Recursive resolver sends minimized QNAME in outgoing queries (RFC 7816 / RFC 9156) — only the necessary labels sent to each nameserver level
-- [ ] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
+- [x] **RESOLVE-02**: Resolver synthesizes NXDOMAIN / NOERROR responses from cached NSEC/NSEC3 records without upstream queries (RFC 8198 aggressive caching)
 - [x] **RESOLVE-03**: Resolver serves stale cached records with extended TTL (up to configurable stale-max-ttl) when upstream nameservers are unreachable (RFC 8767 proper serve-stale)
 
 ### Zone Transfer — AXFR Server (XFER)
@@ -80,7 +80,7 @@ Deferred to future milestone. Tracked but not in current roadmap.
 | RRTYPE-07 | Phase 10 | Pending |
 | RRTYPE-08 | Phase 10 | Pending |
 | RESOLVE-01 | Phase 11 | Complete |
-| RESOLVE-02 | Phase 11 | Pending |
+| RESOLVE-02 | Phase 11 | Complete |
 | RESOLVE-03 | Phase 11 | Complete |
 | XFER-01 | Phase 12 | Pending |
 | XFER-02 | Phase 12 | Pending |
