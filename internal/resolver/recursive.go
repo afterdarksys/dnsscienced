@@ -507,16 +507,37 @@ func (r *Recursive) findGlue(msg *dns.Msg, nsName string) string {
 	return ipv6addr
 }
 
-// getTTL extracts the minimum TTL from a response
+// getTTL extracts the minimum TTL from a response.
+// For negative responses (NXDOMAIN/NODATA), uses the SOA minimum field per RFC 2308
+// rather than defaulting to 1 hour, which would over-cache negative results.
 func getTTL(msg *dns.Msg) uint32 {
-	minTTL := uint32(3600) // Default 1 hour
+	// Negative response: use SOA-based TTL per RFC 2308.
+	if msg.Rcode == dns.RcodeNameError || (msg.Rcode == dns.RcodeSuccess && len(msg.Answer) == 0) {
+		for _, rr := range msg.Ns {
+			if soa, ok := rr.(*dns.SOA); ok {
+				ttl := soa.Minttl
+				if soa.Hdr.Ttl < ttl {
+					ttl = soa.Hdr.Ttl
+				}
+				if ttl < 10 {
+					ttl = 10
+				}
+				if ttl > 10800 {
+					ttl = 10800
+				}
+				return ttl
+			}
+		}
+		return 300 // 5m default for negative responses with no SOA
+	}
 
+	// Positive response: minimum TTL across Answer section.
+	minTTL := uint32(3600)
 	for _, rr := range msg.Answer {
 		if rr.Header().Ttl < minTTL {
 			minTTL = rr.Header().Ttl
 		}
 	}
-
 	return minTTL
 }
 
