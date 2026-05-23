@@ -253,7 +253,7 @@ Plans:
 - [x] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension (completed 2026-05-23)
 - [x] **Phase 12: AXFR Server** — Zone transfer serving (RFC 5936), TSIG authentication, per-zone allow_transfer ACL (completed 2026-05-23)
 - [x] **Phase 13: Dynamic DNS Updates** — RFC 2136 UPDATE opcode, TSIG auth, per-zone allow_update ACL, immediate visibility (completed 2026-05-23)
-- [ ] **Phase 14: v1.3 Gap Closure** — Config wiring fix (RESOLVE-01/02/03), TestGetTTL fix, Phase 10 re-verification, REQUIREMENTS.md cleanup, Nyquist validation
+- [x] **Phase 14: v1.3 Gap Closure** — Config wiring fix (RESOLVE-01/02/03), TestGetTTL fix, Phase 10 re-verification, REQUIREMENTS.md cleanup, Nyquist validation (completed 2026-05-23)
 
 </details>
 
@@ -274,7 +274,7 @@ Plans:
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 13. Dynamic DNS Updates | v1.3 | 3/3 | Complete    | 2026-05-23 |
-| 14. v1.3 Gap Closure | v1.3 | 2/2 | Complete   | 2026-05-23 |
+| 14. v1.3 Gap Closure | v1.3 | 2/2 | Complete    | 2026-05-23 |
 
 ---
 *Last updated: 2026-05-23 — Phase 14 planned (2 plans, 2 waves)*
