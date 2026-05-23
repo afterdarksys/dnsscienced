@@ -20,14 +20,14 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - AXFR server — serve zone transfers to secondaries (RFC 5936)
 - Dynamic DNS Updates (RFC 2136)
 
-## Current State: Phase 11 Complete (v1.3 in progress)
+## Current State: Phase 13 Complete (v1.3 in progress)
 
-**Phase 11 complete:** 2026-05-23
-**Test suite:** 80+ tests + 14 new Phase 11 tests; pre-existing TestFindGlue/TestResolver_Resolve network-dependent failures documented
+**Phase 13 complete:** 2026-05-23
+**Test suite:** 31 new Phase 13 tests (9 zone mutation + 22 UPDATE handler); all gates green including race detector
 **Binary:** `dnsscienced-linux` (Go-only, no CGO)
 **Total Go:** ~87,000 LOC across 195 files
 
-Phase 11 delivered QNAME minimization (RFC 7816/9156), aggressive NSEC/NSEC3 synthesis (RFC 8198), and serve-stale (RFC 8767) with two bug fixes (IsExpired guard removal, TTL=0 rewrite on both stale paths). Next: Phase 12 AXFR server.
+Phase 13 delivered RFC 2136 dynamic DNS updates: zone mutation methods (`DeleteRecord`/`DeleteRRSet`/`DeleteName`), full `handleUpdate` with TSIG auth + IP ACL + prerequisite evaluation + atomic clone-and-swap + auto-serial-increment, and config wiring (`allow_update`/`persist_updates`). Next: Phase 14 v1.3 gap closure.
 
 v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API keys + audit logging), full RFC 9859 DSYNC implementation, and TSIG key management. All four v1.2 audit gaps closed.
 
@@ -133,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-21 after v1.2 milestone completion*
+*Last updated: 2026-05-23 after Phase 13 completion*
