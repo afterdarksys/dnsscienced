@@ -234,10 +234,10 @@ func TestFindGlue(t *testing.T) {
 		t.Errorf("findGlue() = %s, want 192.0.2.1", ip)
 	}
 
-	// Test AAAA record glue
+	// Test AAAA record glue (IPv6 is bracketed for net.Dial compatibility)
 	ip = r.findGlue(msg, "ns2.example.com.")
-	if ip != "2001:db8::1" {
-		t.Errorf("findGlue() = %s, want 2001:db8::1", ip)
+	if ip != "[2001:db8::1]" {
+		t.Errorf("findGlue() = %s, want [2001:db8::1]", ip)
 	}
 
 	// Test missing glue
