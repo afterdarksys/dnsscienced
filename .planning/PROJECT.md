@@ -20,12 +20,14 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - AXFR server — serve zone transfers to secondaries (RFC 5936)
 - Dynamic DNS Updates (RFC 2136)
 
-## Current State: v1.2 Shipped
+## Current State: Phase 11 Complete (v1.3 in progress)
 
-**Shipped:** 2026-05-18
-**Test suite:** 80+ tests, all passing under `-race`
+**Phase 11 complete:** 2026-05-23
+**Test suite:** 80+ tests + 14 new Phase 11 tests; pre-existing TestFindGlue/TestResolver_Resolve network-dependent failures documented
 **Binary:** `dnsscienced-linux` (Go-only, no CGO)
 **Total Go:** ~87,000 LOC across 195 files
+
+Phase 11 delivered QNAME minimization (RFC 7816/9156), aggressive NSEC/NSEC3 synthesis (RFC 8198), and serve-stale (RFC 8767) with two bug fixes (IsExpired guard removal, TTL=0 rewrite on both stale paths). Next: Phase 12 AXFR server.
 
 v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API keys + audit logging), full RFC 9859 DSYNC implementation, and TSIG key management. All four v1.2 audit gaps closed.
 
@@ -56,7 +58,13 @@ v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API key
 
 ### Active
 
-*(None — planning next milestone)*
+*(Phase 12 AXFR server — in progress)*
+
+### Validated in Phase 11
+
+- ✓ QNAME minimization (RFC 7816/9156) — per-delegation query name rewriting in resolveIterative() — Phase 11
+- ✓ Aggressive NSEC/NSEC3 synthesis (RFC 8198) — NSEC/NSEC3 cache storage + dns.NSEC3.Cover() synthesis — Phase 11
+- ✓ Serve-stale (RFC 8767) — stale fallback on upstream failure with TTL=0 rewrite on all RRs — Phase 11
 
 ### Out of Scope
 
