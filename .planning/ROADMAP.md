@@ -222,7 +222,7 @@ Plans:
 - [x] 13-01-PLAN.md — Zone mutation methods (DeleteRecord/DeleteRRSet/DeleteName) + updateMu + config fields (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 13-02-PLAN.md — UPDATE handler (update.go) + server.go dispatch/config/ACL wiring + comprehensive tests (Wave 2)
+- [x] 13-02-PLAN.md — UPDATE handler (update.go) + server.go dispatch/config/ACL wiring + comprehensive tests (Wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 13-03-PLAN.md — main.go wiring (ZoneUpdateCIDRs + PersistPaths) + full build/test gate (Wave 3)
@@ -266,7 +266,7 @@ Plans:
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
 | 11. Resolver Behaviors | v1.3 | 2/2 | Complete    | 2026-05-23 |
 | 12. AXFR Server | v1.3 | 2/2 | Complete    | 2026-05-23 |
-| 13. Dynamic DNS Updates | v1.3 | 1/3 | In Progress|  |
+| 13. Dynamic DNS Updates | v1.3 | 2/3 | In Progress|  |
 | 14. v1.3 Gap Closure | v1.3 | 0/? | Not started | - |
 
 ---

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Gap Closure — Config Fixes & Validation
 status: executing
-last_updated: "2026-05-23T15:38:55.782Z"
+last_updated: "2026-05-23T15:50:24.743Z"
 last_activity: 2026-05-23
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 13
-  completed_plans: 11
-  percent: 85
+  completed_plans: 12
+  percent: 92
 ---
 
 # State
@@ -18,11 +18,11 @@ progress:
 ## Current Position
 
 Phase: 13 (dynamic-dns-updates) — EXECUTING
-Plan: 2 of 3
-Status: Executing Phase 13 — Plan 01 complete
-Last activity: 2026-05-23 -- Phase 13 Plan 01 complete (zone mutation methods + config fields)
+Plan: 3 of 3
+Status: Executing Phase 13 — Plan 02 complete (UPDATE handler + server wiring)
+Last activity: 2026-05-23 -- Phase 13 Plan 02 complete (handleUpdate with full RFC 2136 guard chain, 22 tests)
 
-Progress: [█████████░] 85% (11/13 plans)
+Progress: [█████████░] 92% (12/13 plans)
 
 ## Project Reference
 
@@ -177,8 +177,13 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 - updateMu is unexported on Zone struct — UPDATE handler (Plan 02) acquires it externally on live zone before atomic swap; mutation methods operate on clones (no self-locking needed)
 - ZoneConfig.AllowUpdate empty slice = deny all (D-15 secure-by-default) — mirrors AllowTransfer/AXFR pattern; Plan 02 will use NewSourceACL(allowUpdate) to build ACL
 - ZoneConfig.PersistUpdates *bool: nil/false = in-memory only (Plan 03 checks this before write-back)
+- Phase 13 Plan 02 complete: handleUpdate implemented (update.go) with full RFC 2136 guard chain; classifyPrereq/evaluatePrereqs for all 5 prereq types; atomic clone-and-swap; ZoneUpdateCIDRs + zoneUpdateACLs + OpcodeUpdate dispatch wired in server.go; 22 tests pass including -race; go build ./... passes; DYNUP-01/02/03/04 complete
+- SOA-skip (D-10) applies only to zone-class (add) path in handleUpdate — ClassANY/ClassNONE delete paths still reach D-04 REFUSED guards; placing continue before the class switch was the bug
+- DeleteRecord RFC 2136 normalization: class and TTL set to stored values before String() comparison — RFC 2136 §3.4.2.3 delete-specific-RR matches rdata only; ClassNONE+TTL=0 from client vs ClassINET+TTL=N stored would otherwise never match
+- Zone.Lock()/Unlock() exported wrappers over updateMu; Zone.GetTypeMap() for CNAME coexistence check (D-04) — needed since updateMu is unexported but handleUpdate is in the same package (internal/server)
+- persistZone is a no-op stub in update.go — Plan 03 implements write-back by populating s.persistPaths from ZoneConfig.PersistUpdates
 
 ## Session Continuity
 
-Next session: Phase 13 — Plan 02 (UPDATE opcode handler)
+Next session: Phase 13 — Plan 03 (main.go wiring + persistence)
 Blocking issues: None

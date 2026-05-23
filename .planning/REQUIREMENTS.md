@@ -33,9 +33,9 @@ Requirements for the DNS Protocol Completeness milestone. Each maps to roadmap p
 ### Dynamic DNS Updates (DYNUP)
 
 - [x] **DYNUP-01**: Server accepts DNS UPDATE opcode (RFC 2136) and applies add/delete operations to the in-memory zone
-- [ ] **DYNUP-02**: Dynamic updates are TSIG-authenticated; unauthenticated UPDATE requests are rejected
+- [x] **DYNUP-02**: Dynamic updates are TSIG-authenticated; unauthenticated UPDATE requests are rejected
 - [x] **DYNUP-03**: Update access is controlled by a per-zone `allow_update` ACL (CIDR list); requests from unlisted sources receive REFUSED
-- [ ] **DYNUP-04**: Successful updates are immediately visible to subsequent queries without zone reload
+- [x] **DYNUP-04**: Successful updates are immediately visible to subsequent queries without zone reload
 
 ## v2 Requirements
 
@@ -86,9 +86,9 @@ Deferred to future milestone. Tracked but not in current roadmap.
 | XFER-02 | Phase 12 | Complete |
 | XFER-03 | Phase 12 | Complete |
 | DYNUP-01 | Phase 13 | Complete |
-| DYNUP-02 | Phase 13 | Pending |
+| DYNUP-02 | Phase 13 | Complete |
 | DYNUP-03 | Phase 13 | Complete |
-| DYNUP-04 | Phase 13 | Pending |
+| DYNUP-04 | Phase 13 | Complete |
 
 **Coverage:**
 - v1.3 requirements: 18 total
