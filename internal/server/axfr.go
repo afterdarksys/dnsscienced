@@ -94,17 +94,39 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 
 	// 8. Multi-message streaming (D-09) via dns.Transfer.Out.
 	//    RFC 5936 §2.2: opening SOA, middle RRs, closing SOA.
+	//
+	//    errCh is buffered so tr.Out can exit without blocking on the send,
+	//    even if we are still inside the select below.  The send() helper
+	//    aborts the loop and lets the caller drain wg if tr.Out exits early
+	//    (e.g. TCP connection closed by peer), preventing a goroutine leak on
+	//    an unbuffered ch.
 	ch := make(chan *dns.Envelope)
+	errCh := make(chan error, 1)
 	tr := new(dns.Transfer)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		tr.Out(w, r, ch) //nolint:errcheck
+		errCh <- tr.Out(w, r, ch)
 		wg.Done()
 	}()
 
+	// send transmits one envelope; returns false if tr.Out exited early.
+	send := func(env *dns.Envelope) bool {
+		select {
+		case ch <- env:
+			return true
+		case <-errCh:
+			// tr.Out exited; abort send loop to avoid blocking forever.
+			return false
+		}
+	}
+
 	// Opening SOA (RFC 5936 §2.2)
-	ch <- &dns.Envelope{RR: []dns.RR{z.SOA}}
+	if !send(&dns.Envelope{RR: []dns.RR{z.SOA}}) {
+		close(ch)
+		wg.Wait()
+		return
+	}
 
 	// Middle: all zone RRs — exclude SOA because all production loaders
 	// (ParseDNSZone, ParseBIND, LoadCompiledZone) call AddRecord for the SOA,
@@ -118,16 +140,25 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 			rrs = append(rrs, rr)
 		}
 	}
+	aborted := false
 	for i := 0; i < len(rrs); i += axfrBatchSize {
 		end := i + axfrBatchSize
 		if end > len(rrs) {
 			end = len(rrs)
 		}
-		ch <- &dns.Envelope{RR: rrs[i:end]}
+		if !send(&dns.Envelope{RR: rrs[i:end]}) {
+			aborted = true
+			break
+		}
+	}
+	if aborted {
+		close(ch)
+		wg.Wait()
+		return
 	}
 
 	// Closing SOA (RFC 5936 §2.2)
-	ch <- &dns.Envelope{RR: []dns.RR{z.SOA}}
+	send(&dns.Envelope{RR: []dns.RR{z.SOA}}) //nolint:errcheck — peer disconnect OK here
 	close(ch)
 	wg.Wait()
 	w.Close() //nolint:errcheck
