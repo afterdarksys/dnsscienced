@@ -168,11 +168,17 @@ func (z *Zone) DeleteRecord(rr dns.RR) error {
 		return nil // no-op: rrtype not at owner
 	}
 
-	// Build a normalized copy of the RR for string comparison.
-	// The stored records have lowercase owners; we must compare with the same
-	// owner normalization applied so that case-insensitive inputs match correctly.
+	// Build a normalized copy of the RR for rdata comparison.
+	// RFC 2136 §3.4.2.3: delete-specific-RR matches on owner+type+rdata only;
+	// class and TTL in the delete request are ignored. The stored records have
+	// lowercase owners, ClassINET, and their original TTL. We normalize class
+	// and TTL to the stored values so that rdata-only comparison works correctly.
 	normalized := dns.Copy(rr)
 	normalized.Header().Name = owner
+	if len(existing) > 0 {
+		normalized.Header().Class = existing[0].Header().Class
+		normalized.Header().Ttl = existing[0].Header().Ttl
+	}
 	target := normalized.String()
 	found := -1
 	for i, e := range existing {
@@ -487,6 +493,28 @@ func parseIP(s string) (net.IP, error) {
 		return nil, fmt.Errorf("invalid IP address: %s", s)
 	}
 	return ip, nil
+}
+
+// Lock acquires the zone's updateMu for RFC 2136 UPDATE serialization (D-06).
+// Call before prerequisite evaluation and hold through the atomic zone swap.
+func (z *Zone) Lock() {
+	z.updateMu.Lock()
+}
+
+// Unlock releases the zone's updateMu.
+func (z *Zone) Unlock() {
+	z.updateMu.Unlock()
+}
+
+// GetTypeMap returns the type→[]RR map for the given owner name, or nil if absent.
+// Used by the UPDATE handler for CNAME coexistence checks (D-04).
+// Owner name is normalized to lowercase before lookup.
+func (z *Zone) GetTypeMap(owner string) map[uint16][]dns.RR {
+	owner = strings.ToLower(owner)
+	if owner != "" && owner[len(owner)-1] != '.' {
+		owner += "."
+	}
+	return z.Records[owner]
 }
 
 // Stats returns zone statistics
