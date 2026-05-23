@@ -3,33 +3,33 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Gap Closure — Config Fixes & Validation
 status: executing
-last_updated: "2026-05-23T15:32:09.003Z"
-last_activity: 2026-05-23 -- Phase 13 planning complete
+last_updated: "2026-05-23T15:38:55.782Z"
+last_activity: 2026-05-23
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 13
-  completed_plans: 10
-  percent: 77
+  completed_plans: 11
+  percent: 85
 ---
 
 # State
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-23 -- Phase 13 planning complete
+Phase: 13 (dynamic-dns-updates) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 13 — Plan 01 complete
+Last activity: 2026-05-23 -- Phase 13 Plan 01 complete (zone mutation methods + config fields)
 
-Progress: [██████████] 100% (10/10 plans)
+Progress: [█████████░] 85% (11/13 plans)
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 12 — axfr-server
+**Current focus:** Phase 13 — dynamic-dns-updates
 
 ## Phase Reference
 
@@ -172,8 +172,13 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 - nil ACL in zoneTransferACLs = deny all (D-01 secure-by-default) — empty CIDR list stores nil, not allowAll=true (do NOT call NewSourceACL with empty slice for AXFR)
 - TSIG presence check before validity in handleAXFR: r.IsTsig()==nil guard first — absent TSIG yields TsigStatus()==nil which would silently accept unsigned requests
 - AXFR dispatched before pool.GetMessage() in handleDNS — dns.Transfer.Out streams multiple messages and cannot use pooled single-response path
+- Phase 13 Plan 01 complete: Zone.DeleteRecord/DeleteRRSet/DeleteName added; updateMu sync.Mutex on Zone struct; ZoneConfig.AllowUpdate []string + PersistUpdates *bool; 11 tests pass; go build ./... passes; DYNUP-01/DYNUP-03 complete
+- DeleteRecord uses dns.Copy(rr) with normalized owner before String() comparison — caller may pass mixed-case owner from RFC 2136 UPDATE message; stored records have lowercase owners (AddRecord normalizes); without dns.Copy the comparison would fail silently
+- updateMu is unexported on Zone struct — UPDATE handler (Plan 02) acquires it externally on live zone before atomic swap; mutation methods operate on clones (no self-locking needed)
+- ZoneConfig.AllowUpdate empty slice = deny all (D-15 secure-by-default) — mirrors AllowTransfer/AXFR pattern; Plan 02 will use NewSourceACL(allowUpdate) to build ACL
+- ZoneConfig.PersistUpdates *bool: nil/false = in-memory only (Plan 03 checks this before write-back)
 
 ## Session Continuity
 
-Next session: Phase 12 — Plan 02 (remaining AXFR work if any)
+Next session: Phase 13 — Plan 02 (UPDATE opcode handler)
 Blocking issues: None
