@@ -250,8 +250,12 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 
 	// 2. Aggressive NSEC synthesis (RFC 8198): answer from cached NSEC proofs
 	// without hitting the network when the name is provably non-existent.
-	if synth := r.cache.SynthesizeNXDOMAIN(question.Name, question.Qtype, question.Qclass, q.Id); synth != nil {
-		return synth, nil
+	// Guard on the resolver config flag rather than relying on the cache
+	// layer's nil-nsecCache check, to decouple policy from implementation.
+	if r.cfg.AggressiveNSEC {
+		if synth := r.cache.SynthesizeNXDOMAIN(question.Name, question.Qtype, question.Qclass, q.Id); synth != nil {
+			return synth, nil
+		}
 	}
 
 	// 3. Cache miss — perform iterative resolution.
