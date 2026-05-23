@@ -25,7 +25,10 @@ server:
     # Security features (cache poisoning resistance)
     enable_0x20: true            # 0x20 encoding (case randomization)
     enable_scrubbing: true       # Remove out-of-bailiwick records
-    enable_qname_min: true       # QNAME minimization (RFC 7816)
+    qname_minimization: true     # QNAME minimization (RFC 7816 / RFC 9156)
+    aggressive_nsec: true        # Aggressive NSEC caching (RFC 8198)
+    serve_stale: true            # Serve stale on upstream failure (RFC 8767)
+    stale_max_ttl: 24h           # Max stale record age (struct tag: stale_max_ttl, NOT stale_ttl)
     validate_dnssec: true        # DNSSEC validation (requires defensive.dnssec.validation)
 
   # DNS Cookies (RFC 7873) - Off-path attack protection

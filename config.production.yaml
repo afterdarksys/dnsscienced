@@ -19,7 +19,10 @@ server:
     retries: 2
     enable_0x20: true
     enable_scrubbing: true
-    enable_qname_min: true
+    qname_minimization: true     # QNAME minimization (RFC 7816 / RFC 9156)
+    aggressive_nsec: true        # Aggressive NSEC caching (RFC 8198)
+    serve_stale: true            # Serve stale on upstream failure (RFC 8767)
+    stale_max_ttl: 24h           # Max stale record age
 
   # DNS Cookies
   enable_cookies: true

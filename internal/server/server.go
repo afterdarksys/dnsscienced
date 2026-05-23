@@ -118,21 +118,22 @@ type DSYNCConfig struct {
 
 // DefaultConfig returns default server configuration
 func DefaultConfig() Config {
+	rcfg := resolver.DefaultConfig()
+	rcfg.CacheConfig = cache.Config{
+		ShardCount: 256,
+		MaxEntries: 100000,
+	}
+	rcfg.Workers = 1000
+	rcfg.QueryTimeout = 5 * time.Second
+	rcfg.MaxIterations = 20
+
 	return Config{
 		UDPAddr:      ":53",
 		TCPAddr:      ":53",
 		UDPListeners: runtime.NumCPU(),
 
 		EnableRecursive: true,
-		RecursiveConfig: resolver.Config{
-			CacheConfig: cache.Config{
-				ShardCount: 256,
-				MaxEntries: 100000,
-			},
-			Workers:       1000,
-			QueryTimeout:  5 * time.Second,
-			MaxIterations: 20,
-		},
+		RecursiveConfig: rcfg,
 
 		EnableAuthoritative: false,
 		Zones:               make(map[string]*zone.Zone),
