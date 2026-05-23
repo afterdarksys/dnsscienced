@@ -51,6 +51,7 @@ func NewResolver(upstream string) *Resolver {
 	cfg := DefaultResolverConfig()
 	if upstream != "" {
 		cfg.Upstream = upstream
+		cfg.Upstreams = []string{upstream}
 	}
 	return NewResolverWithConfig(cfg)
 }
