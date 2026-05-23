@@ -176,7 +176,14 @@ Plans:
   2. A cached NSEC/NSEC3 record that proves nonexistence causes the resolver to return NXDOMAIN without sending any upstream query
   3. When all upstream nameservers are unreachable, the resolver returns a cached record with its TTL extended up to the configured stale-max-ttl rather than returning SERVFAIL
   4. Serve-stale behavior is bounded: records older than stale-max-ttl are not served stale
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+**Wave 1**
+- [ ] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
 
 ### Phase 12: AXFR Server
 
@@ -188,7 +195,14 @@ Plans:
   2. An AXFR request signed with a known TSIG key is accepted and the transfer proceeds
   3. An AXFR request with no TSIG signature is rejected with REFUSED when the zone requires authentication
   4. An AXFR request from an IP not in the zone's allow_transfer CIDR list receives REFUSED regardless of TSIG
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+**Wave 1**
+- [ ] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
 **UI hint**: no
 
 ### Phase 13: Dynamic DNS Updates
@@ -201,7 +215,14 @@ Plans:
   2. A valid DNS UPDATE message deleting a record causes the record to disappear from subsequent queries without zone reload
   3. An UPDATE request signed with a known TSIG key is accepted; an unsigned UPDATE request is rejected with REFUSED
   4. An UPDATE request from an IP not in the zone's allow_update CIDR list receives REFUSED regardless of TSIG signature
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+**Wave 1**
+- [ ] 11-01-PLAN.md — Config extension, serve-stale bug fixes, NSEC3 cache storage (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 11-02-PLAN.md — QNAME minimization in resolveIterative() + comprehensive tests (Wave 2)
 
 - [ ] **Phase 10: Record Type Expansion** — Parse and serve HTTPS/SVCB, TLSA, SSHFP, NAPTR, SMIMEA, LOC from both parsers; .dzc round-trip; correct NOERROR for empty in-zone lookups
 - [ ] **Phase 11: Resolver Behaviors** — QNAME minimization, aggressive NSEC/NSEC3 caching, serve-stale with TTL extension
@@ -224,9 +245,9 @@ Plans:
 | 8. RFC 9859 DSYNC | v1.2 | 7/7 | Complete   | 2026-05-17 |
 | 9. v1.2 Gap Closure | v1.2 | 3/3 | Complete   | 2026-05-18 |
 | 10. Record Type Expansion | v1.3 | 3/3 | Complete   | 2026-05-21 |
-| 11. Resolver Behaviors | v1.3 | 0/? | Not started | - |
+| 11. Resolver Behaviors | v1.3 | 0/2 | Not started | - |
 | 12. AXFR Server | v1.3 | 0/? | Not started | - |
 | 13. Dynamic DNS Updates | v1.3 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-05-21 — Phase 10 planned (2 plans, 2 waves)*
+*Last updated: 2026-05-22 — Phase 11 planned (2 plans, 2 waves)*
