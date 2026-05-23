@@ -29,16 +29,15 @@ func buildCacheEntry(t *testing.T, msg *dns.Msg, expiresAt time.Time, origTTL ui
 	}
 }
 
-// newStaleCfg returns a Config with ServeStale enabled and the given StaleTTL.
-// Sets QNAMEMinimization=true and AggressiveNSEC=true to avoid the D-10 all-false
-// detection path (which would override ServeStale=false tests).
+// newStaleCfg returns a Config with ServeStale set to the given value.
+// Sets QNAMEMinimization=true and AggressiveNSEC=true so tests focus on
+// serve-stale behavior; Config{} means all-off per CR-02 semantics.
 func newStaleCfg(serveStale bool, staleTTL time.Duration) Config {
 	return Config{
 		CacheConfig: cache.Config{
 			ShardCount: 64,
 			MaxEntries: 1000,
 		},
-		// Explicit flags: avoid D-10 all-false guard that sets all three to true.
 		QNAMEMinimization: true,
 		AggressiveNSEC:    true,
 		ServeStale:        serveStale,
@@ -232,16 +231,27 @@ func TestQNAMEMinimization_ConfigFlag(t *testing.T) {
 	}
 }
 
-// TestQNAMEMinimization_DisabledByDefault verifies D-10: when all three
-// feature flags are zero (default Config{}), QNAMEMinimization is set to true.
+// TestQNAMEMinimization_DisabledByDefault verifies CR-02 semantics:
+// Config{} leaves QNAMEMinimization off (zero-value is explicit opt-out),
+// while DefaultConfig() enables it for RFC-compliant deployments.
 func TestQNAMEMinimization_DisabledByDefault(t *testing.T) {
-	r, err := NewRecursive(Config{})
+	// Config{} must NOT force-enable features — explicit false is honored.
+	rOff, err := NewRecursive(Config{})
 	if err != nil {
-		t.Fatalf("NewRecursive() error = %v", err)
+		t.Fatalf("NewRecursive(Config{}) error = %v", err)
 	}
-	defer r.Close()
+	defer rOff.Close()
+	if rOff.cfg.QNAMEMinimization {
+		t.Error("Config{} should leave QNAMEMinimization false; use DefaultConfig() for RFC defaults")
+	}
 
-	if !r.cfg.QNAMEMinimization {
-		t.Error("QNAMEMinimization should be true by default (D-10 all-false guard)")
+	// DefaultConfig() must enable all three features.
+	rOn, err := NewRecursive(DefaultConfig())
+	if err != nil {
+		t.Fatalf("NewRecursive(DefaultConfig()) error = %v", err)
+	}
+	defer rOn.Close()
+	if !rOn.cfg.QNAMEMinimization {
+		t.Error("DefaultConfig() should set QNAMEMinimization = true")
 	}
 }
