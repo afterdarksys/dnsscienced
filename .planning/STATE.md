@@ -3,33 +3,33 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-23T03:13:40.044Z"
-last_activity: 2026-05-23 -- Phase 11 planning complete
+last_updated: "2026-05-23T03:51:14.181Z"
+last_activity: 2026-05-23
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 8
-  completed_plans: 6
-  percent: 75
+  completed_plans: 7
+  percent: 88
 ---
 
 # State
 
 ## Current Position
 
-Phase: 10 (record-type-expansion) — EXECUTING
-Plan: 1 of 3
-Status: Ready to execute
-Last activity: 2026-05-23 -- Phase 11 planning complete
+Phase: 11 (resolver-behaviors) — EXECUTING
+Plan: 2 of 2
+Status: Plan 01 complete; ready for Plan 02
+Last activity: 2026-05-22 -- Phase 11 Plan 01 complete (RESOLVE-01, RESOLVE-03)
 
-Progress: ░░░░░░░░░░░░░░░░░░░░ 0% (0/4 phases)
+Progress: [█████████░] 88% (7/8 plans)
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** Operators can express any DNS firewall policy in Starlark and have it enforced at query time with zero restarts.
-**Current focus:** Phase 10 — record-type-expansion
+**Current focus:** Phase 11 — resolver-behaviors
 
 ## Phase Reference
 
@@ -166,7 +166,9 @@ See: .planning/PROJECT.md (updated 2026-05-21)
 - Phase 12 scope: AXFR is TCP-only per RFC 5936; reuse existing tsig.KeyRing for per-transfer TSIG auth; per-zone allow_transfer CIDR ACL mirrors the DSYNC SourceACL pattern
 - Phase 13 scope: UPDATE opcode (5) dispatch before query processing, mirrors NOTIFY dispatch pattern; zone mutation must be concurrent-safe; allow_update ACL per-zone in ZoneConfig
 
+- Phase 11 Plan 01 complete: resolver.Config extended with QNAMEMinimization/AggressiveNSEC/ServeStale/StaleTTL; D-10 all-false guard enables all three by default; D-11 wires into CacheConfig before construction; two serve-stale bugs fixed (IsExpired guard removed; stale fallback with TTL=0 rewrite); NSECCache extended with nsec3Record struct, NSEC3 storage/flush/synthesis via dns.NSEC3.Cover(); RESOLVE-01 and RESOLVE-03 marked complete; go build ./... passes
+
 ## Session Continuity
 
-Next session: `/gsd-plan-phase 10`
+Next session: Continue Phase 11 Plan 02 (QNAME minimization)
 Blocking issues: None
