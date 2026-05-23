@@ -152,8 +152,12 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 
 	// 4. Zone lookup. In UPDATE messages, Question[0].Name = zone FQDN (TypeSOA class).
-	zoneName := r.Question[0].Name
+	// CR-02: canonicalize to lowercase before map key lookup (RFC 4343 case-insensitivity).
+	zoneName := strings.ToLower(r.Question[0].Name)
+	// CR-01: RLock protects concurrent read of cfg.Zones map.
+	s.zonesMu.RLock()
 	z, ok := s.cfg.Zones[zoneName]
+	s.zonesMu.RUnlock()
 	if !ok {
 		sendRcode(dns.RcodeRefused)
 		return
@@ -242,9 +246,11 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 				}
 				// D-04: deleting all NS at apex would leave zone without nameservers — REFUSED.
 				if rrtype == dns.TypeNS && strings.EqualFold(owner, strings.ToLower(clone.Origin)) {
-					// Check if this would remove the LAST NS record.
-					existing := clone.GetRecords(owner, dns.TypeNS)
-					if len(existing) <= 1 {
+					// CR-03: check the LIVE zone (z) for the floor count, not the mid-mutation
+					// clone. Earlier update directives in this message may have added NS records
+					// to clone, inflating the count and bypassing this guard incorrectly.
+					liveNS := z.GetRecords(owner, dns.TypeNS)
+					if len(liveNS) <= 1 {
 						sendRcode(dns.RcodeRefused)
 						return
 					}
@@ -289,13 +295,30 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 
 	// 12. Atomic swap: replace the live zone with the validated, serial-incremented clone (D-05, DYNUP-04).
+	// CR-01: write lock protects concurrent write to cfg.Zones map.
+	s.zonesMu.Lock()
 	s.cfg.Zones[zoneName] = clone
+	s.zonesMu.Unlock()
 
 	// 13. updateMu released by defer above.
 
 	// 14. Reply NOERROR.
+	// CR-04: RFC 2845 §3.2 requires the response to be TSIG-signed when the request was
+	// TSIG-authenticated. Sign using the same key that authenticated the request.
 	m := new(dns.Msg)
 	m.SetReply(r)
+	if reqTsig := r.IsTsig(); reqTsig != nil && s.tsigKeyRing != nil {
+		keyName := reqTsig.Hdr.Name
+		secret, keyOK := s.tsigKeyRing.Secret(keyName)
+		if keyOK {
+			alg, _ := s.tsigKeyRing.Algorithm(keyName)
+			m.SetTsig(keyName, alg, 300, int64(reqTsig.TimeSigned)) //nolint:gosec
+			// TsigGenerate returns an error only on packing failure; non-fatal if it occurs.
+			_, _, _ = dns.TsigGenerate(m, secret, reqTsig.MAC, false)
+		}
+		// If the key is not found, the response is sent unsigned. This should not happen
+		// since the request was already verified (step 2), but is safe to ignore here.
+	}
 	w.WriteMsg(m) //nolint:errcheck
 
 	// 15. Persist to disk if configured (D-11, D-14).

@@ -160,6 +160,11 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg Config
 
+	// zonesMu protects concurrent reads and writes to cfg.Zones (CR-01).
+	// Acquire RLock for reads (lookups in handleAuthoritative, handleUpdate).
+	// Acquire Lock for writes (atomic swap in handleUpdate, AddZone, RemoveZone).
+	zonesMu sync.RWMutex
+
 	// Components
 	recursive    *resolver.Recursive
 	cookies      *cookie.Manager
@@ -857,10 +862,11 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	qname := question.Name
 	qtype := question.Qtype
 
-	// Find matching zone
+	// Find matching zone (RLock protects concurrent map read, CR-01)
 	var matchedZone *zone.Zone
 	matchedName := ""
 
+	s.zonesMu.RLock()
 	for zoneName, z := range s.cfg.Zones {
 		if dns.IsSubDomain(zoneName, qname) {
 			if len(zoneName) > len(matchedName) {
@@ -869,6 +875,7 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 			}
 		}
 	}
+	s.zonesMu.RUnlock()
 
 	if matchedZone == nil {
 		return nil, false
@@ -995,8 +1002,10 @@ func (s *Server) LoadZone(filename, format string) error {
 		return fmt.Errorf("parse zone %s: %w", filename, err)
 	}
 
-	// Add to server
+	// Add to server (write lock protects concurrent map access, CR-01)
+	s.zonesMu.Lock()
 	s.cfg.Zones[z.Origin] = z
+	s.zonesMu.Unlock()
 
 	fmt.Printf("Loaded zone: %s (%d records)\n", z.Name, z.GetStats().Records)
 
@@ -1013,22 +1022,31 @@ func (s *Server) AddZone(z *zone.Zone) error {
 		return fmt.Errorf("zone validation failed: %w", err)
 	}
 
+	s.zonesMu.Lock()
 	s.cfg.Zones[z.Origin] = z
+	s.zonesMu.Unlock()
 	return nil
 }
 
 // RemoveZone removes a zone from the server
 func (s *Server) RemoveZone(origin string) {
+	s.zonesMu.Lock()
 	delete(s.cfg.Zones, origin)
+	s.zonesMu.Unlock()
 }
 
 // GetZone returns a zone by origin
 func (s *Server) GetZone(origin string) *zone.Zone {
-	return s.cfg.Zones[origin]
+	s.zonesMu.RLock()
+	z := s.cfg.Zones[origin]
+	s.zonesMu.RUnlock()
+	return z
 }
 
 // GetZoneNames returns the origin strings for all configured zones.
 func (s *Server) GetZoneNames() []string {
+	s.zonesMu.RLock()
+	defer s.zonesMu.RUnlock()
 	names := make([]string, 0, len(s.cfg.Zones))
 	for origin := range s.cfg.Zones {
 		names = append(names, origin)
