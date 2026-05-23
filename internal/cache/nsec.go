@@ -20,8 +20,9 @@ import (
 // enabled (ValidationModeLogOnly or ValidationModeEnforced). Unsigned NSEC records
 // are never used for synthesis.
 type NSECCache struct {
-	mu      sync.RWMutex
-	records []*nsecRecord // kept in canonical order by Owner for binary search
+	mu           sync.RWMutex
+	records      []*nsecRecord  // NSEC records (canonical ordering)
+	nsec3records []*nsec3Record // NSEC3 records (hashed, RFC 5155)
 }
 
 // nsecRecord is one validated NSEC record stored for synthesis.
@@ -31,6 +32,19 @@ type nsecRecord struct {
 	TypeMap   []uint16  // types present at Owner
 	ExpiresAt time.Time
 	Zone      string // the zone this record covers
+}
+
+// nsec3Record is one validated NSEC3 record stored for RFC 8198 aggressive synthesis.
+type nsec3Record struct {
+	OwnerHash  string    // base32-encoded hashed owner name (uppercase, no zone suffix)
+	NextHash   string    // base32-encoded hashed next owner name (uppercase)
+	Zone       string    // lowercase FQDN of the zone this NSEC3 covers
+	Hash       uint8     // hash algorithm; only dns.SHA1 (1) is stored
+	Iterations uint16
+	Salt       string    // hex-encoded as stored in *dns.NSEC3.Salt
+	Flags      uint8
+	TypeMap    []uint16
+	ExpiresAt  time.Time
 }
 
 // NewNSECCache creates an empty NSEC cache.
@@ -76,6 +90,53 @@ func (c *NSECCache) Store(msg *dns.Msg, zone string) {
 			c.records = append(c.records, rec)
 		}
 	}
+
+	// Also store NSEC3 records (RFC 5155) for NSEC3-signed zones (D-04, D-06).
+	for _, rr := range msg.Ns {
+		nsec3, ok := rr.(*dns.NSEC3)
+		if !ok {
+			continue
+		}
+		// Skip non-SHA1 algorithms — miekg/dns only implements SHA-1 (Pitfall 4).
+		if nsec3.Hash != dns.SHA1 {
+			continue
+		}
+		// Skip opt-out NSEC3 records (bit 0 of Flags).
+		if nsec3.Flags&0x01 != 0 {
+			continue
+		}
+		// NSEC3 owner format: "<hash>.<zone>" — split at second label boundary.
+		owner := strings.ToUpper(nsec3.Hdr.Name)
+		labelIdx := dns.Split(owner)
+		if len(labelIdx) < 2 {
+			continue
+		}
+		ownerHash := owner[:labelIdx[1]-1]
+		ownerZone := strings.ToLower(dns.Fqdn(owner[labelIdx[1]:]))
+
+		rec3 := &nsec3Record{
+			OwnerHash:  ownerHash,
+			NextHash:   strings.ToUpper(nsec3.NextDomain),
+			Zone:       ownerZone,
+			Hash:       nsec3.Hash,
+			Iterations: nsec3.Iterations,
+			Salt:       nsec3.Salt,
+			Flags:      nsec3.Flags,
+			TypeMap:    nsec3.TypeBitMap,
+			ExpiresAt:  now.Add(time.Duration(nsec3.Hdr.Ttl) * time.Second),
+		}
+		replaced := false
+		for i, existing := range c.nsec3records {
+			if existing.OwnerHash == ownerHash && existing.Zone == ownerZone {
+				c.nsec3records[i] = rec3
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			c.nsec3records = append(c.nsec3records, rec3)
+		}
+	}
 }
 
 // SynthesizeNXDOMAIN checks whether qname is provably non-existent based on
@@ -110,7 +171,70 @@ func (c *NSECCache) SynthesizeNXDOMAIN(qname string, qtype uint16, qclass uint16
 		}
 	}
 
+	return c.synthesizeFromNSEC3(qname, qtype, qclass, queryID)
+}
+
+// synthesizeFromNSEC3 attempts NSEC3-based NXDOMAIN synthesis (RFC 8198 + RFC 5155).
+func (c *NSECCache) synthesizeFromNSEC3(qname string, qtype, qclass, queryID uint16) *dns.Msg {
+	qname = strings.ToLower(dns.Fqdn(qname))
+	now := time.Now()
+
+	// mu.RLock is already held by the caller (SynthesizeNXDOMAIN).
+	for _, rec := range c.nsec3records {
+		if rec.ExpiresAt.Before(now) {
+			continue
+		}
+		if !dns.IsSubDomain(rec.Zone, qname) {
+			continue
+		}
+		// Reconstruct minimal *dns.NSEC3 for the Cover() method.
+		n3 := &dns.NSEC3{
+			Hdr:        dns.RR_Header{Name: rec.OwnerHash + "." + rec.Zone},
+			Hash:       rec.Hash,
+			Flags:      rec.Flags,
+			Iterations: rec.Iterations,
+			Salt:       rec.Salt,
+			NextDomain: rec.NextHash,
+			TypeBitMap: rec.TypeMap,
+		}
+		if n3.Cover(qname) {
+			return buildSyntheticNXDOMAIN_NSEC3(qname, qtype, qclass, queryID, rec, n3)
+		}
+	}
 	return nil
+}
+
+func buildSyntheticNXDOMAIN_NSEC3(qname string, qtype, qclass, queryID uint16, rec *nsec3Record, n3 *dns.NSEC3) *dns.Msg {
+	m := new(dns.Msg)
+	m.Id = queryID
+	m.Response = true
+	m.Opcode = dns.OpcodeQuery
+	m.Authoritative = false
+	m.RecursionAvailable = true
+	m.Rcode = dns.RcodeNameError
+
+	m.Question = []dns.Question{{
+		Name:   qname,
+		Qtype:  qtype,
+		Qclass: qclass,
+	}}
+
+	nsec3RR := &dns.NSEC3{
+		Hdr: dns.RR_Header{
+			Name:   n3.Hdr.Name,
+			Rrtype: dns.TypeNSEC3,
+			Class:  dns.ClassINET,
+			Ttl:    uint32(time.Until(rec.ExpiresAt).Seconds()),
+		},
+		Hash:       rec.Hash,
+		Flags:      rec.Flags,
+		Iterations: rec.Iterations,
+		Salt:       rec.Salt,
+		NextDomain: rec.NextHash,
+		TypeBitMap: rec.TypeMap,
+	}
+	m.Ns = []dns.RR{nsec3RR}
+	return m
 }
 
 // Flush removes all expired NSEC records.
@@ -126,6 +250,14 @@ func (c *NSECCache) Flush() {
 		}
 	}
 	c.records = valid
+
+	valid3 := c.nsec3records[:0]
+	for _, rec := range c.nsec3records {
+		if rec.ExpiresAt.After(now) {
+			valid3 = append(valid3, rec)
+		}
+	}
+	c.nsec3records = valid3
 }
 
 // buildSyntheticNXDOMAIN constructs an NXDOMAIN response from a cached NSEC record.
