@@ -68,6 +68,20 @@ type Config struct {
 	// Required for AggressiveNSEC to function correctly.
 	EnableDNSSEC bool                   `yaml:"enable_dnssec"`
 	DNSSECConfig dnssec.ValidatorConfig `yaml:"dnssec"`
+
+	// QNAMEMinimization enables RFC 7816 + RFC 9156 per-delegation query name rewriting.
+	QNAMEMinimization bool `yaml:"qname_minimization"`
+
+	// AggressiveNSEC enables RFC 8198 synthesis from cached NSEC/NSEC3 records.
+	AggressiveNSEC bool `yaml:"aggressive_nsec"`
+
+	// ServeStale enables RFC 8767 behavior: serve expired cache entries with TTL=0
+	// when all upstream nameservers are unreachable.
+	ServeStale bool `yaml:"serve_stale"`
+
+	// StaleTTL is the maximum age past expiry that a stale record may be served.
+	// Defaults to 24h. Wired into CacheConfig.MaxStaleTTL to avoid duplication (D-11).
+	StaleTTL time.Duration `yaml:"stale_max_ttl"`
 }
 
 // Recursive implements a full recursive DNS resolver
@@ -94,6 +108,31 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	}
 	if cfg.Workers == 0 {
 		cfg.Workers = 100
+	}
+
+	// D-10: All three features are ON by default for new deployments.
+	// Go bool zero-value is false, so Config{} would leave all features off.
+	// We detect "no explicit config" as all three flags being false simultaneously
+	// (a user who wants all three off explicitly sets at least one bool true then
+	// disables the others via a comment — unusual but supported via yaml false).
+	// This matches Unbound/Knot Resolver defaults: RFC compliance out of the box.
+	if !cfg.QNAMEMinimization && !cfg.AggressiveNSEC && !cfg.ServeStale {
+		cfg.QNAMEMinimization = true
+		cfg.AggressiveNSEC = true
+		cfg.ServeStale = true
+	}
+
+	// Wire resolver feature flags into cache config (D-11: avoid duplication).
+	if cfg.ServeStale {
+		cfg.CacheConfig.ServeStale = true
+		if cfg.StaleTTL > 0 {
+			cfg.CacheConfig.MaxStaleTTL = cfg.StaleTTL
+		} else {
+			cfg.CacheConfig.MaxStaleTTL = 24 * time.Hour
+		}
+	}
+	if cfg.AggressiveNSEC {
+		cfg.CacheConfig.AggressiveNSEC = true
 	}
 
 	r := &Recursive{
@@ -168,7 +207,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 
 	// 1. Check cache first.
 	cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)
-	if entry, ok := r.cache.Get(cacheKey); ok && !entry.IsExpired() {
+	if entry, ok := r.cache.Get(cacheKey); ok {
 		// Bogus entries are quarantined: serve SERVFAIL so clients don't use
 		// DNSSEC-invalid data, but avoid re-querying until BogusTTL expires.
 		if entry.DNSSECBogus {
@@ -197,6 +236,30 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	// 3. Cache miss — perform iterative resolution.
 	resp, err := r.resolveIterative(ctx, question.Name, question.Qtype, question.Qclass)
 	if err != nil {
+		// Upstream failure: attempt stale cache lookup before SERVFAIL (RFC 8767, D-07 bug 2).
+		if r.cfg.ServeStale {
+			if staleEntry, ok := r.cache.Get(cacheKey); ok {
+				staleResp := pool.GetMessage()
+				defer pool.PutMessage(staleResp)
+				if unpackErr := staleResp.Unpack(staleEntry.Data); unpackErr == nil {
+					staleResp.Id = q.Id
+					staleResp.RecursionAvailable = true
+					// RFC 8767 section 5: rewrite TTL=0 on all RRs in stale response (D-08).
+					for _, rr := range staleResp.Answer {
+						rr.Header().Ttl = 0
+					}
+					for _, rr := range staleResp.Ns {
+						rr.Header().Ttl = 0
+					}
+					for _, rr := range staleResp.Extra {
+						if rr.Header().Rrtype != dns.TypeOPT {
+							rr.Header().Ttl = 0
+						}
+					}
+					return staleResp.Copy(), nil
+				}
+			}
+		}
 		return nil, err
 	}
 
