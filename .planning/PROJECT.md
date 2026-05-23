@@ -20,14 +20,14 @@ Operators can express any DNS firewall policy in Starlark and have it enforced a
 - AXFR server — serve zone transfers to secondaries (RFC 5936)
 - Dynamic DNS Updates (RFC 2136)
 
-## Current State: Phase 13 Complete (v1.3 in progress)
+## Current State: Phase 14 Complete — v1.3 milestone closed
 
-**Phase 13 complete:** 2026-05-23
-**Test suite:** 31 new Phase 13 tests (9 zone mutation + 22 UPDATE handler); all gates green including race detector
+**Phase 14 complete:** 2026-05-23
+**All tests passing** — full suite green including pre-existing TestFindGlue and TestResolver_Resolve fixes
 **Binary:** `dnsscienced-linux` (Go-only, no CGO)
 **Total Go:** ~87,000 LOC across 195 files
 
-Phase 13 delivered RFC 2136 dynamic DNS updates: zone mutation methods (`DeleteRecord`/`DeleteRRSet`/`DeleteName`), full `handleUpdate` with TSIG auth + IP ACL + prerequisite evaluation + atomic clone-and-swap + auto-serial-increment, and config wiring (`allow_update`/`persist_updates`). Next: Phase 14 v1.3 gap closure.
+Phase 14 closed all three v1.3 audit blockers: `server.DefaultConfig()` now calls `resolver.DefaultConfig()` (QNAME minimization, Aggressive NSEC, Serve Stale enabled in all config-file deployments); config YAML files use correct struct-tag keys; `TestGetTTL` fixed for RFC 2308 compliance. Phase 10 re-verified (passed), REQUIREMENTS.md all 18 v1.3 items `[x]`, both VALIDATION.md files Nyquist-compliant.
 
 v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API keys + audit logging), full RFC 9859 DSYNC implementation, and TSIG key management. All four v1.2 audit gaps closed.
 
@@ -56,9 +56,13 @@ v1.2 delivered production-complete admin API, hardened gRPC auth (mTLS + API key
 - ✓ RFC 9859 DSYNC fully implemented — record type 66, inbound/outbound NOTIFY, rate limiting, webhook, metrics — v1.2
 - ✓ v1.2 audit gaps closed — logger/RRL accessors, ConnRegistry wiring, ListZones, stream interceptor key ID — v1.2
 
-### Active
+### Validated in Phase 14
 
-*(Phase 12 AXFR server — in progress)*
+- ✓ RESOLVE-01: QNAME minimization enabled in all config-file deployments (server.DefaultConfig() calls resolver.DefaultConfig()) — Phase 14
+- ✓ RESOLVE-02: Aggressive NSEC/NSEC3 caching enabled by default in server config — Phase 14
+- ✓ RESOLVE-03: Serve-stale with correct stale_max_ttl YAML key enabled by default — Phase 14
+- ✓ RRTYPE-01/02: HTTPS/SVCB/TLSA record support re-verified; Phase 10 VERIFICATION.md updated to passed — Phase 14
+- ✓ Nyquist compliance: phases 10 and 11 VALIDATION.md files corrected and marked nyquist_compliant — Phase 14
 
 ### Validated in Phase 11
 
