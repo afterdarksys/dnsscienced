@@ -372,30 +372,35 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 			}
 		}
 
-		// Query one of the nameservers
-		resp, err := r.queryNameserver(ctx, nameservers[0], sendName, sendType, qclass)
-		if err != nil {
-			// Try next nameserver
-			if len(nameservers) > 1 {
-				nameservers = nameservers[1:]
+		// Try each nameserver until one responds; this keeps server failover
+		// within a single delegation separate from the iterative hop counter.
+		var resp *dns.Msg
+		var lastNSErr error
+		for i, ns := range nameservers {
+			var err error
+			resp, err = r.queryNameserver(ctx, ns, sendName, sendType, qclass)
+			if err != nil {
+				lastNSErr = err
+				if i == len(nameservers)-1 {
+					return nil, fmt.Errorf("all nameservers failed: %w", lastNSErr)
+				}
 				continue
 			}
-			return nil, fmt.Errorf("all nameservers failed: %w", err)
-		}
-
-		// QNAME minimization NODATA at intermediate hop (RFC 9156 section 4):
-		// if minimized and answer is empty + NOERROR + no NS records, disable
-		// minimization and re-issue full qname to this same nameserver.
-		if r.cfg.QNAMEMinimization && sendName != qname &&
-			len(resp.Answer) == 0 && resp.Rcode == dns.RcodeSuccess && len(resp.Ns) == 0 {
-			resp, err = r.queryNameserver(ctx, nameservers[0], qname, qtype, qclass)
-			if err != nil {
-				if len(nameservers) > 1 {
-					nameservers = nameservers[1:]
+			// QNAME minimization NODATA at intermediate hop (RFC 9156 section 4):
+			// if minimized and answer is empty + NOERROR + no NS records, disable
+			// minimization and re-issue full qname to this same nameserver.
+			if r.cfg.QNAMEMinimization && sendName != qname &&
+				len(resp.Answer) == 0 && resp.Rcode == dns.RcodeSuccess && len(resp.Ns) == 0 {
+				resp, err = r.queryNameserver(ctx, ns, qname, qtype, qclass)
+				if err != nil {
+					lastNSErr = err
+					if i == len(nameservers)-1 {
+						return nil, fmt.Errorf("all nameservers failed: %w", lastNSErr)
+					}
 					continue
 				}
-				return nil, fmt.Errorf("all nameservers failed: %w", err)
 			}
+			break // success
 		}
 
 		// Check if we got an answer
