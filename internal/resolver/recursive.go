@@ -225,6 +225,21 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 			if entry.DNSSECValidated {
 				resp.AuthenticatedData = true
 			}
+			// RFC 8767 section 5: stale entries must be served with TTL=0 so
+			// clients know the record is past its original expiry (D-08).
+			if entry.IsExpired() {
+				for _, rr := range resp.Answer {
+					rr.Header().Ttl = 0
+				}
+				for _, rr := range resp.Ns {
+					rr.Header().Ttl = 0
+				}
+				for _, rr := range resp.Extra {
+					if rr.Header().Rrtype != dns.TypeOPT {
+						rr.Header().Ttl = 0
+					}
+				}
+			}
 			return resp.Copy(), nil
 		}
 	}
