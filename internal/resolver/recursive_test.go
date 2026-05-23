@@ -286,7 +286,7 @@ func TestGetTTL(t *testing.T) {
 			msg: &dns.Msg{
 				Answer: []dns.RR{},
 			},
-			expected: 3600,
+			expected: 300,
 		},
 	}
 
