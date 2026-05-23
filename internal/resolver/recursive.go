@@ -257,7 +257,6 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 		if r.cfg.ServeStale {
 			if staleEntry, ok := r.cache.Get(cacheKey); ok {
 				staleResp := pool.GetMessage()
-				defer pool.PutMessage(staleResp)
 				if unpackErr := staleResp.Unpack(staleEntry.Data); unpackErr == nil {
 					staleResp.Id = q.Id
 					staleResp.RecursionAvailable = true
@@ -273,8 +272,11 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 							rr.Header().Ttl = 0
 						}
 					}
-					return staleResp.Copy(), nil
+					result := staleResp.Copy()
+					pool.PutMessage(staleResp)
+					return result, nil
 				}
+				pool.PutMessage(staleResp)
 			}
 		}
 		return nil, err
