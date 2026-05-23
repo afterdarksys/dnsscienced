@@ -522,9 +522,14 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	// RFC 5936: dispatch AXFR before pool.GetMessage() — AXFR streams multiple
-	// messages and must NOT use the pooled single-response path.
-	if len(r.Question) > 0 && r.Question[0].Qtype == dns.TypeAXFR {
+	// RFC 5936/1995: dispatch AXFR and IXFR before pool.GetMessage() — zone
+	// transfers stream multiple messages and must NOT use the pooled
+	// single-response path.  Both types are routed through handleAXFR so they
+	// receive the same TSIG-presence, TSIG-validity, and ACL guard chain.
+	// (IXFR without incremental state falls back to a full AXFR response, which
+	// handleAXFR already produces.)
+	if len(r.Question) > 0 &&
+		(r.Question[0].Qtype == dns.TypeAXFR || r.Question[0].Qtype == dns.TypeIXFR) {
 		if clientIP == nil {
 			m := new(dns.Msg)
 			m.SetReply(r)
