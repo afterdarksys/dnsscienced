@@ -81,7 +81,18 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		return
 	}
 
-	// 7. Multi-message streaming (D-09) via dns.Transfer.Out.
+	// 7. Nil SOA guard: LoadZone does not call Validate(), so a zone file with a
+	//    missing or unparseable SOA may arrive here with z.SOA == nil.  Sending a
+	//    nil concrete pointer as a dns.RR interface panics inside dns.Transfer.Out.
+	if z.SOA == nil {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Rcode = dns.RcodeServerFailure
+		w.WriteMsg(m) //nolint:errcheck
+		return
+	}
+
+	// 8. Multi-message streaming (D-09) via dns.Transfer.Out.
 	//    RFC 5936 §2.2: opening SOA, middle RRs, closing SOA.
 	ch := make(chan *dns.Envelope)
 	tr := new(dns.Transfer)
