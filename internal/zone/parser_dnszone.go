@@ -137,6 +137,24 @@ type RecordSection struct {
 	SMIMEA interface{} `yaml:"SMIMEA,omitempty"`
 	LOC    interface{} `yaml:"LOC,omitempty"`
 
+	// Additional record types supported by BIND
+	HINFO      interface{} `yaml:"HINFO,omitempty"`
+	CERT       interface{} `yaml:"CERT,omitempty"`
+	IPSECKEY   interface{} `yaml:"IPSECKEY,omitempty"`
+	OPENPGPKEY interface{} `yaml:"OPENPGPKEY,omitempty"`
+	URI        interface{} `yaml:"URI,omitempty"`
+	EUI48      interface{} `yaml:"EUI48,omitempty"`
+	EUI64      interface{} `yaml:"EUI64,omitempty"`
+	CDS        interface{} `yaml:"CDS,omitempty"`
+	CDNSKEY    interface{} `yaml:"CDNSKEY,omitempty"`
+	ZONEMD     interface{} `yaml:"ZONEMD,omitempty"`
+	CSYNC      interface{} `yaml:"CSYNC,omitempty"`
+	RP         interface{} `yaml:"RP,omitempty"`
+	AFSDB      interface{} `yaml:"AFSDB,omitempty"`
+	KX         interface{} `yaml:"KX,omitempty"`
+	DHCID      interface{} `yaml:"DHCID,omitempty"`
+	APL        interface{} `yaml:"APL,omitempty"`
+
 	// Generic type support (TYPE### syntax)
 	// Key is type code (e.g., "TYPE257" for CAA)
 	// Value is the rdata string
@@ -323,6 +341,33 @@ func ParseDNSZone(filename string, cfg Config) (*Zone, error) {
 		}
 		if err := parseLOCRecords(zone, fqdn, section.LOC, recordTTL); err != nil {
 			return nil, fmt.Errorf("parse LOC records for %s: %w", owner, err)
+		}
+
+		// Parse additional BIND-compatible record types (raw string format)
+		for _, rt := range []struct {
+			data interface{}
+			name string
+		}{
+			{section.HINFO, "HINFO"},
+			{section.CERT, "CERT"},
+			{section.IPSECKEY, "IPSECKEY"},
+			{section.OPENPGPKEY, "OPENPGPKEY"},
+			{section.URI, "URI"},
+			{section.EUI48, "EUI48"},
+			{section.EUI64, "EUI64"},
+			{section.CDS, "CDS"},
+			{section.CDNSKEY, "CDNSKEY"},
+			{section.ZONEMD, "ZONEMD"},
+			{section.CSYNC, "CSYNC"},
+			{section.RP, "RP"},
+			{section.AFSDB, "AFSDB"},
+			{section.KX, "KX"},
+			{section.DHCID, "DHCID"},
+			{section.APL, "APL"},
+		} {
+			if err := parseRawStringRecords(zone, fqdn, rt.data, recordTTL, rt.name); err != nil {
+				return nil, fmt.Errorf("parse %s records for %s: %w", rt.name, owner, err)
+			}
 		}
 
 		// Parse generic TYPE### records (defensive DNS feature)
@@ -756,7 +801,14 @@ func parseCAARecords(zone *Zone, owner string, data interface{}, ttl uint32) err
 
 	caaList := []CAARecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, "CAA")
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, "CAA")
+			}
+		}
 		for _, item := range v {
 			if caaMap, ok := item.(map[string]interface{}); ok {
 				caa := CAARecord{}
@@ -800,7 +852,14 @@ func parseTLSARecords(zone *Zone, owner string, data interface{}, ttl uint32) er
 
 	tlsaList := []TLSARecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, "TLSA")
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, "TLSA")
+			}
+		}
 		for _, item := range v {
 			if tlsaMap, ok := item.(map[string]interface{}); ok {
 				tlsa := TLSARecord{}
@@ -850,7 +909,14 @@ func parseSSHFPRecords(zone *Zone, owner string, data interface{}, ttl uint32) e
 
 	sshfpList := []SSHFPRecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, "SSHFP")
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, "SSHFP")
+			}
+		}
 		for i, item := range v {
 			sshfpMap, ok := item.(map[string]interface{})
 			if !ok {
@@ -897,7 +963,14 @@ func parseNAPTRRecords(zone *Zone, owner string, data interface{}, ttl uint32) e
 
 	naptrList := []NAPTRRecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, "NAPTR")
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, "NAPTR")
+			}
+		}
 		for i, item := range v {
 			naptrMap, ok := item.(map[string]interface{})
 			if !ok {
@@ -963,7 +1036,14 @@ func parseSMIMEARecords(zone *Zone, owner string, data interface{}, ttl uint32) 
 
 	smimeaList := []TLSARecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, "SMIMEA")
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, "SMIMEA")
+			}
+		}
 		for i, item := range v {
 			smimeaMap, ok := item.(map[string]interface{})
 			if !ok {
@@ -1050,7 +1130,14 @@ func parseSVCBHTTPRecords(zone *Zone, owner string, data interface{}, ttl uint32
 
 	recList := []HTTPSRecord{}
 	switch v := data.(type) {
+	case string:
+		return parseRawStringRecords(zone, owner, data, ttl, recType)
 	case []interface{}:
+		if len(v) > 0 {
+			if _, ok := v[0].(string); ok {
+				return parseRawStringRecords(zone, owner, data, ttl, recType)
+			}
+		}
 		for _, item := range v {
 			if recMap, ok := item.(map[string]interface{}); ok {
 				rec := HTTPSRecord{}
@@ -1103,6 +1190,44 @@ func parseSVCBHTTPRecords(zone *Zone, owner string, data interface{}, ttl uint32
 		if rr != nil {
 		    zone.AddRecord(rr)
         }
+	}
+	return nil
+}
+
+// parseRawStringRecords parses records expressed as raw rdata strings.
+// Each value is passed directly to dns.NewRR for parsing, supporting all types
+// that miekg/dns understands via their presentation format.
+// Accepts either a single string or a list of strings.
+func parseRawStringRecords(zone *Zone, owner string, data interface{}, ttl uint32, typeName string) error {
+	if data == nil {
+		return nil
+	}
+
+	values := []string{}
+	switch v := data.(type) {
+	case string:
+		values = append(values, v)
+	case []interface{}:
+		for i, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("%s record item %d: expected string, got %T", typeName, i, item)
+			}
+			values = append(values, s)
+		}
+	default:
+		return fmt.Errorf("invalid %s record format: expected string or list of strings", typeName)
+	}
+
+	for _, rdata := range values {
+		rrStr := fmt.Sprintf("%s %d IN %s %s", owner, ttl, typeName, rdata)
+		rr, err := dns.NewRR(rrStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse %s record %q: %w", typeName, rdata, err)
+		}
+		if rr != nil {
+			zone.AddRecord(rr)
+		}
 	}
 	return nil
 }
@@ -1299,6 +1424,31 @@ func parseIncludeFile(zone *Zone, filename string, defaultTTL uint32) error {
 		}
 		if err := parseLOCRecords(zone, fqdn, section.LOC, recordTTL); err != nil {
 			return fmt.Errorf("LOC records for %s: %w", owner, err)
+		}
+		for _, rt := range []struct {
+			data interface{}
+			name string
+		}{
+			{section.HINFO, "HINFO"},
+			{section.CERT, "CERT"},
+			{section.IPSECKEY, "IPSECKEY"},
+			{section.OPENPGPKEY, "OPENPGPKEY"},
+			{section.URI, "URI"},
+			{section.EUI48, "EUI48"},
+			{section.EUI64, "EUI64"},
+			{section.CDS, "CDS"},
+			{section.CDNSKEY, "CDNSKEY"},
+			{section.ZONEMD, "ZONEMD"},
+			{section.CSYNC, "CSYNC"},
+			{section.RP, "RP"},
+			{section.AFSDB, "AFSDB"},
+			{section.KX, "KX"},
+			{section.DHCID, "DHCID"},
+			{section.APL, "APL"},
+		} {
+			if err := parseRawStringRecords(zone, fqdn, rt.data, recordTTL, rt.name); err != nil {
+				return fmt.Errorf("%s records for %s: %w", rt.name, owner, err)
+			}
 		}
 		if err := parseGenericTypes(zone, fqdn, section.Generic, recordTTL); err != nil {
 			return fmt.Errorf("generic types for %s: %w", owner, err)

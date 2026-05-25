@@ -318,6 +318,26 @@ func ConvertBINDToDNSZone(bindFile, origin string, cfg Config) (string, error) {
 					sb.WriteString(fmt.Sprintf("        port: %d\n", srv.Port))
 					sb.WriteString(fmt.Sprintf("        target: %s\n", target))
 				}
+
+			default:
+				// Emit as TYPE### so parseGenericTypes can round-trip it.
+				// rr.String() produces tab-separated "name\tTTL\tclass\ttype\trdata".
+				typeKey := fmt.Sprintf("TYPE%d", rrtype)
+				rdataValues := make([]string, 0, len(records))
+				for _, rr := range records {
+					parts := strings.SplitN(rr.String(), "\t", 5)
+					if len(parts) == 5 {
+						rdataValues = append(rdataValues, parts[4])
+					}
+				}
+				if len(rdataValues) == 1 {
+					sb.WriteString(fmt.Sprintf("    %s: %q\n", typeKey, rdataValues[0]))
+				} else if len(rdataValues) > 1 {
+					sb.WriteString(fmt.Sprintf("    %s:\n", typeKey))
+					for _, rdata := range rdataValues {
+						sb.WriteString(fmt.Sprintf("      - %q\n", rdata))
+					}
+				}
 			}
 		}
 	}

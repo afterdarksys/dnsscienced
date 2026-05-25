@@ -19,6 +19,16 @@ func MarshalZoneFile(zf *DNSZoneFile) ([]byte, error) {
 	return data, nil
 }
 
+// rrRdata extracts the rdata portion from a miekg/dns RR string representation.
+// miekg uses tab-separated fields: "name\tTTL\tclass\ttype\trdata"
+func rrRdata(rr dns.RR) string {
+	parts := strings.SplitN(rr.String(), "\t", 5)
+	if len(parts) == 5 {
+		return parts[4]
+	}
+	return ""
+}
+
 // SerializeDNSZone serializes a *Zone back to valid .dnszone YAML format.
 // The result can be written to a .dnszone file and fed to dnsscienced-compile.
 func SerializeDNSZone(z *Zone) ([]byte, error) {
@@ -64,6 +74,8 @@ func SerializeDNSZone(z *Zone) ([]byte, error) {
 		txtRecords  []string
 		mxRecords   []MXRecord
 		srvRecords  []SRVRecord
+		// rawTypes collects rdata strings for all other record types by type code.
+		rawTypes map[uint16][]string
 	}
 	owners := make(map[string]*ownerData)
 
@@ -115,7 +127,13 @@ func SerializeDNSZone(z *Zone) ([]byte, error) {
 						Port:     int(v.Port),
 						Target:   v.Target,
 					})
-				// Unknown / unsupported types are silently skipped.
+				default:
+					// Collect all other types as raw rdata strings.
+					if od.rawTypes == nil {
+						od.rawTypes = make(map[uint16][]string)
+					}
+					rt := rr.Header().Rrtype
+					od.rawTypes[rt] = append(od.rawTypes[rt], rrRdata(rr))
 				}
 			}
 		}
@@ -204,6 +222,75 @@ func SerializeDNSZone(z *Zone) ([]byte, error) {
 				}
 			}
 			sec.SRV = iface
+		}
+
+		// Assign remaining record types to named fields or Generic TYPE### fallback.
+		for rt, rdatas := range od.rawTypes {
+			var fieldData interface{}
+			if len(rdatas) == 1 {
+				fieldData = rdatas[0]
+			} else {
+				iface := make([]interface{}, len(rdatas))
+				for i, v := range rdatas {
+					iface[i] = v
+				}
+				fieldData = iface
+			}
+			switch rt {
+			case dns.TypeCAA:
+				sec.CAA = fieldData
+			case dns.TypeTLSA:
+				sec.TLSA = fieldData
+			case dns.TypeSSHFP:
+				sec.SSHFP = fieldData
+			case dns.TypeNAPTR:
+				sec.NAPTR = fieldData
+			case dns.TypeSMIMEA:
+				sec.SMIMEA = fieldData
+			case dns.TypeLOC:
+				sec.LOC = fieldData
+			case dns.TypeHTTPS:
+				sec.HTTPS = fieldData
+			case dns.TypeSVCB:
+				sec.SVCB = fieldData
+			case dns.TypeHINFO:
+				sec.HINFO = fieldData
+			case dns.TypeCERT:
+				sec.CERT = fieldData
+			case dns.TypeIPSECKEY:
+				sec.IPSECKEY = fieldData
+			case dns.TypeOPENPGPKEY:
+				sec.OPENPGPKEY = fieldData
+			case dns.TypeURI:
+				sec.URI = fieldData
+			case dns.TypeEUI48:
+				sec.EUI48 = fieldData
+			case dns.TypeEUI64:
+				sec.EUI64 = fieldData
+			case dns.TypeCDS:
+				sec.CDS = fieldData
+			case dns.TypeCDNSKEY:
+				sec.CDNSKEY = fieldData
+			case dns.TypeZONEMD:
+				sec.ZONEMD = fieldData
+			case dns.TypeCSYNC:
+				sec.CSYNC = fieldData
+			case dns.TypeRP:
+				sec.RP = fieldData
+			case dns.TypeAFSDB:
+				sec.AFSDB = fieldData
+			case dns.TypeKX:
+				sec.KX = fieldData
+			case dns.TypeDHCID:
+				sec.DHCID = fieldData
+			default:
+				// Truly unknown type: emit as TYPE### for parseGenericTypes to consume.
+				typeKey := fmt.Sprintf("TYPE%d", rt)
+				if sec.Generic == nil {
+					sec.Generic = make(map[string]interface{})
+				}
+				sec.Generic[typeKey] = fieldData
+			}
 		}
 
 		zf.Records[relOwner] = sec
