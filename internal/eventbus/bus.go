@@ -12,7 +12,20 @@ const (
 	TopicCache  Topic = "cache"
 	TopicServer Topic = "server"
 	TopicDNSSEC Topic = "dnssec"
+	TopicQuery  Topic = "query"
 )
+
+// QueryEvent is published for every DNS query that completes the pipeline.
+type QueryEvent struct {
+	Domain       string // queried name (e.g. "example.com.")
+	QType        string // query type string (e.g. "A", "AAAA", "MX")
+	Verdict      string // "ALLOW", "BLOCK", "NXDOMAIN", "NOERROR", etc.
+	Zone         string // matched zone name, empty if none
+	ClientPrefix string // client IP prefix (first 3 octets for privacy)
+	Protocol     string // "udp" or "tcp"
+	LatencyUs    int64  // query processing latency in microseconds
+	Timestamp    int64  // Unix nanoseconds
+}
 
 type Event struct {
 	Topic Topic

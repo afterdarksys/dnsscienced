@@ -9,10 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"strings"
+
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/pool"
@@ -179,6 +182,9 @@ type Server struct {
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
 	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
+
+	// Event bus for real-time query streaming
+	bus *eventbus.Bus
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
@@ -530,6 +536,17 @@ func (s *Server) GetDSYNCNotifier() *dsync.DSYNCNotifier {
 	return s.dsyncNotifier
 }
 
+// SetBus attaches an event bus for real-time query streaming.
+// Must be called before Serve().
+func (s *Server) SetBus(b *eventbus.Bus) {
+	s.bus = b
+}
+
+// GetEventBus returns the server's event bus (may be nil if not configured).
+func (s *Server) GetEventBus() *eventbus.Bus {
+	return s.bus
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
@@ -605,6 +622,44 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	// Set up query event emission. emitQuery publishes a QueryEvent to the bus
+	// (no-op when bus is nil). Called before each w.WriteMsg() in the normal path.
+	queryStart := time.Now()
+	queryProto := "udp"
+	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+		queryProto = "tcp"
+	}
+	queryDomain := ""
+	queryQType := ""
+	if len(r.Question) > 0 {
+		queryDomain = r.Question[0].Name
+		queryQType = dns.TypeToString[r.Question[0].Qtype]
+	}
+	emitQuery := func(rcode int, zoneName string) {
+		if s.bus == nil {
+			return
+		}
+		prefix := ""
+		if clientIP != nil {
+			octets := strings.Split(clientIP.String(), ".")
+			if len(octets) >= 3 {
+				prefix = strings.Join(octets[:3], ".") + ".0"
+			} else {
+				prefix = clientIP.String()
+			}
+		}
+		s.bus.Publish(s.ctx, eventbus.TopicQuery, eventbus.QueryEvent{
+			Domain:       queryDomain,
+			QType:        queryQType,
+			Verdict:      dns.RcodeToString[rcode],
+			Zone:         zoneName,
+			ClientPrefix: prefix,
+			Protocol:     queryProto,
+			LatencyUs:    time.Since(queryStart).Microseconds(),
+			Timestamp:    time.Now().UnixNano(),
+		})
+	}
+
 	// Check blackhole/ACL first
 	if s.defensive != nil {
 		if block, action := s.defensive.CheckBlackhole(clientIP); block {
@@ -617,6 +672,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				defer pool.PutMessage(m)
 				m.SetReply(r)
 				m.Rcode = dns.RcodeRefused
+				emitQuery(m.Rcode, "")
 				w.WriteMsg(m)
 				return
 			}
@@ -641,6 +697,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if len(r.Question) == 0 {
 		m.Rcode = dns.RcodeFormatError
 		s.errors.Add(1)
+		emitQuery(m.Rcode, "")
 		w.WriteMsg(m)
 		return
 	}
@@ -670,6 +727,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.nxdomain.Add(1)
 			}
 
+			emitQuery(blockedResp.Rcode, "")
 			w.WriteMsg(blockedResp)
 			return
 		}
@@ -691,6 +749,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				if resp.Rcode == dns.RcodeNameError {
 					s.nxdomain.Add(1)
 				}
+				emitQuery(resp.Rcode, "")
 				w.WriteMsg(resp)
 				return
 			}
@@ -703,6 +762,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			if resp.Rcode == dns.RcodeNameError {
 				s.nxdomain.Add(1)
 			}
+			emitQuery(resp.Rcode, "")
 			w.WriteMsg(resp)
 			return
 		}
@@ -751,6 +811,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			s.addCookieToResponse(m, clientCookie, newServerCookie)
 
 			s.errors.Add(1)
+			emitQuery(m.Rcode, "")
 			w.WriteMsg(m)
 			return
 		}
@@ -799,6 +860,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, m.Rcode)
 			}
 
+			emitQuery(m.Rcode, "")
 			w.WriteMsg(m)
 			return
 		}
@@ -816,6 +878,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.defensive.LogQuery("errors", clientIP, question.Name, question.Qtype, dns.RcodeServerFailure)
 			}
 
+			emitQuery(m.Rcode, "")
 			w.WriteMsg(m)
 			return
 		}
@@ -843,6 +906,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, resp.Rcode)
 		}
 
+		emitQuery(resp.Rcode, "")
 		w.WriteMsg(resp)
 		return
 	}
@@ -850,6 +914,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// No handlers available
 	m.Rcode = dns.RcodeRefused
 	s.errors.Add(1)
+	emitQuery(m.Rcode, "")
 	w.WriteMsg(m)
 }
 

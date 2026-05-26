@@ -52,6 +52,9 @@ service AdminService {
   rpc AddTsigKey(AdminAddTsigKeyRequest) returns (AdminAddTsigKeyResponse);
   rpc RemoveTsigKey(AdminRemoveTsigKeyRequest) returns (AdminRemoveTsigKeyResponse);
   rpc ListTsigKeys(google.protobuf.Empty) returns (AdminListTsigKeysResponse);
+
+  // Real-time query stream
+  rpc WatchQueryEvents(WatchQueryEventsRequest) returns (stream QueryEventMessage);
 }
 
 // Cache operations
@@ -381,6 +384,23 @@ message TsigKeyInfo {
   string name = 1;      // Key name (FQDN)
   string algorithm = 2; // Algorithm in use
   // NOTE: secret is intentionally NOT returned for security
+}
+
+// Real-time query stream
+
+message WatchQueryEventsRequest {
+  string zone_filter = 1;  // optional: only stream events for this zone; empty = all zones
+}
+
+message QueryEventMessage {
+  string domain        = 1;  // queried name (e.g. "example.com.")
+  string qtype         = 2;  // query type string (e.g. "A", "AAAA", "MX")
+  string verdict       = 3;  // "NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED", etc.
+  string zone          = 4;  // matched zone name, empty if none
+  string client_prefix = 5;  // first 3 octets of client IP (privacy-safe)
+  string protocol      = 6;  // "udp" or "tcp"
+  int64  latency_us    = 7;  // query processing latency in microseconds
+  google.protobuf.Timestamp timestamp = 8;
 }
 
 // FirewallAdminService exposes firewall management operations over gRPC.

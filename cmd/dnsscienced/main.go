@@ -20,6 +20,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
+	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
@@ -255,6 +256,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Attach event bus for real-time query streaming (256-event buffer).
+	queryBus := eventbus.New(256)
+	srv.SetBus(queryBus)
+
 	// Load zone file if specified via CLI flag
 	if *zoneFile != "" {
 		fmt.Printf("Loading zone: %s (format: %s)\n", *zoneFile, *zoneFormat)
@@ -323,7 +328,7 @@ func main() {
 		var adminSvc *admin.Service
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger)
+				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger, queryBus)
 			},
 			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
 			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},

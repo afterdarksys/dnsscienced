@@ -12,6 +12,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/dsync"
 	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
@@ -49,7 +50,8 @@ type SrvIface = services.SrvAdapter
 // connRegistry is always nil here; use SetConnRegistry post-construction instead.
 // dsyncNotifier is the DSYNC outbound notifier (nil when DSYNC is disabled in config).
 // logger is the admin audit logger for SetQueryLogging RPC wiring.
-func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry, dsyncNotifier *dsync.DSYNCNotifier, logger *logging.Logger) *admin.Service {
+// bus is the event bus for real-time query streaming (nil disables WatchQueryEvents).
+func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin string, connRegistry *grpcserver.ConnRegistry, dsyncNotifier *dsync.DSYNCNotifier, logger *logging.Logger, bus *eventbus.Bus) *admin.Service {
 	// Engine-backed managers.
 	resolver := engine.NewResolver("")
 	dnssec := &mock.DNSSECMgr{}
@@ -86,6 +88,7 @@ func RegisterAll(s *grpc.Server, srv SrvIface, zonesDir string, compileBin strin
 		srv.GetRRL(),          // wired from live server (ADMIN-RRL-02)
 		srv.GetTsigKeyRing(), // may be nil if no TSIG keys configured
 		connRegistry,          // always nil here; wired post-construction via SetConnRegistry (ADMIN-CONN-01)
+		bus,                   // event bus for WatchQueryEvents streaming RPC
 	)
 	pb.RegisterAdminServiceServer(s, adminSvc)
 

@@ -14,7 +14,7 @@ import (
 // makeServiceWithRegistry creates a minimal Service with a wired ConnRegistry for testing.
 func makeServiceWithRegistry() (*admin.Service, *grpcserver.ConnRegistry) {
 	reg := grpcserver.NewConnRegistry()
-	svc := admin.NewService(nil, nil, nil, nil, nil, nil, "", "", nil, nil, reg)
+	svc := admin.NewService(nil, nil, nil, nil, nil, nil, "", "", nil, nil, reg, nil)
 	return svc, reg
 }
 

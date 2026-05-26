@@ -21,6 +21,7 @@ import (
 
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/health"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/reload"
@@ -70,6 +71,7 @@ type Service struct {
 	rrlLimiter  *rrl.Limiter          // may be nil; nil-guarded at call sites
 	tsigKeyRing *tsig.KeyRing         // may be nil; set from server's key ring
 	connRegistry *grpcserver.ConnRegistry // may be nil; wired in Plan 04 (conn tracking)
+	bus          *eventbus.Bus            // may be nil; provides real-time query stream
 }
 
 // NewService creates a new admin service
@@ -83,8 +85,9 @@ func NewService(
 	zonesDir string,
 	compileBin string,
 	rrlLimiter *rrl.Limiter,
-	tsigKeyRing *tsig.KeyRing,         // may be nil
+	tsigKeyRing *tsig.KeyRing,             // may be nil
 	connRegistry *grpcserver.ConnRegistry, // may be nil; wired in Plan 04
+	bus *eventbus.Bus,                     // may be nil; enables WatchQueryEvents
 ) *Service {
 	return &Service{
 		cache:        cache,
@@ -99,6 +102,7 @@ func NewService(
 		rrlLimiter:   rrlLimiter,
 		tsigKeyRing:  tsigKeyRing,
 		connRegistry: connRegistry,
+		bus:          bus,
 	}
 }
 
@@ -1133,4 +1137,48 @@ func (s *Service) flushExpiredEntries() uint64 {
 	}
 
 	return uint64(len(toDelete))
+}
+
+// WatchQueryEvents streams real-time DNS query events to the caller.
+// The stream runs until the client disconnects or the server shuts down.
+// An optional zone_filter on the request restricts events to a specific zone.
+func (s *Service) WatchQueryEvents(req *pb.WatchQueryEventsRequest, stream pb.AdminService_WatchQueryEventsServer) error {
+	if s.bus == nil {
+		return status.Error(codes.Unavailable, "query event bus not configured")
+	}
+
+	sub := s.bus.Subscribe(stream.Context(), eventbus.TopicQuery)
+	defer sub.Close()
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case ev, ok := <-sub.Ch:
+			if !ok {
+				return nil
+			}
+			qe, ok := ev.Data.(eventbus.QueryEvent)
+			if !ok {
+				continue
+			}
+			// Apply zone filter when set
+			if req.ZoneFilter != "" && qe.Zone != req.ZoneFilter {
+				continue
+			}
+			msg := &pb.QueryEventMessage{
+				Domain:       qe.Domain,
+				Qtype:        qe.QType,
+				Verdict:      qe.Verdict,
+				Zone:         qe.Zone,
+				ClientPrefix: qe.ClientPrefix,
+				Protocol:     qe.Protocol,
+				LatencyUs:    qe.LatencyUs,
+				Timestamp:    timestamppb.New(time.Unix(0, qe.Timestamp)),
+			}
+			if err := stream.Send(msg); err != nil {
+				return err
+			}
+		}
+	}
 }
