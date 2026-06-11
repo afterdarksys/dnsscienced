@@ -10,6 +10,11 @@ import (
 	"go.starlark.net/starlarkstruct"
 )
 
+// maxExecutionSteps bounds the number of Starlark interpreter steps a single
+// script execution may consume before it is aborted. This is the CPU backstop
+// against runaway loops; tune via the engine if policies need more headroom.
+const maxExecutionSteps = 10_000_000
+
 // Engine manages ThreatScript execution for DNS-level automation
 type Engine struct {
 	scripts     map[string]*Script
@@ -147,7 +152,14 @@ func (e *Engine) execute(script *Script, ctx *ExecutionContext) (*ExecutionResul
 		Name: script.Name,
 	}
 
-	// TODO: Implement memory limits via custom allocator
+	// Bound CPU per execution: Starlark counts interpreter steps and aborts once
+	// the budget is exhausted. This is the hard backstop against a runaway loop
+	// that the wall-clock timeout below cannot enforce on its own (Init does not
+	// observe context cancellation by itself).
+	thread.SetMaxExecutionSteps(maxExecutionSteps)
+
+	// TODO: memory limits via a custom allocator. Until then, the step budget
+	// above plus the timeout-driven thread.Cancel below bound runaway scripts.
 
 	// Prepare globals with modules
 	globals := starlark.StringDict{}
@@ -176,18 +188,19 @@ func (e *Engine) execute(script *Script, ctx *ExecutionContext) (*ExecutionResul
 		)
 	}
 
-	// Execute in goroutine with timeout
-	done := make(chan struct{})
-	var execErr error
+	// Execute in goroutine with timeout. The buffered channel lets the goroutine
+	// send and exit even if the select below already took the timeout branch,
+	// preventing a goroutine leak under sustained timeouts.
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		_, execErr = script.Compiled.Init(thread, globals)
+		_, err := script.Compiled.Init(thread, globals)
+		done <- err
 	}()
 
 	// Wait for completion or timeout
 	select {
-	case <-done:
+	case execErr := <-done:
 		if execErr != nil {
 			result.Error = execErr
 			result.Success = false
@@ -196,6 +209,10 @@ func (e *Engine) execute(script *Script, ctx *ExecutionContext) (*ExecutionResul
 			result.Success = true
 		}
 	case <-execCtx.Done():
+		// Cancel the running interpreter so the goroutine actually unwinds instead
+		// of running a runaway loop forever, then drain it in the background.
+		thread.Cancel("timeout")
+		go func() { <-done }()
 		result.Error = fmt.Errorf("script execution timeout")
 		result.Success = false
 		script.ErrorCount++
