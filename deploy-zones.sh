@@ -31,6 +31,22 @@ else
     ZONE_FILES=("$ZONES_DIR"/*.dnszone)
 fi
 
+# --- zone-guard: refuse to deploy records pointing at decommissioned hosts ---
+# Verified unreachable 2026-06-12 (retired Oracle Cloud boxes). Add IPs here as
+# hosts are decommissioned; remove one only if that host is genuinely revived.
+DEAD_IPS=("132.226.54.153" "129.80.158.147")
+guard_failed=0
+for zone_file in "${ZONE_FILES[@]}"; do
+    for dead in "${DEAD_IPS[@]}"; do
+        if grep -qF "$dead" "$zone_file" 2>/dev/null; then
+            warn "$(basename "$zone_file") references dead IP $dead:"
+            grep -nF "$dead" "$zone_file" | sed 's/^/        /'
+            guard_failed=1
+        fi
+    done
+done
+[ "$guard_failed" = "1" ] && error "zone-guard: refusing to deploy zone(s) pointing at decommissioned hosts. Repoint those records to a live host (or remove them) first."
+
 log "Running TXT doctor on ${#ZONE_FILES[@]} zone(s)..."
 doctor_failed=()
 for zone_file in "${ZONE_FILES[@]}"; do
