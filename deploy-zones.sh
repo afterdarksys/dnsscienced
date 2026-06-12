@@ -34,7 +34,7 @@ fi
 # --- zone-guard: refuse to deploy records pointing at decommissioned hosts ---
 # Verified unreachable 2026-06-12 (retired Oracle Cloud boxes). Add IPs here as
 # hosts are decommissioned; remove one only if that host is genuinely revived.
-DEAD_IPS=("132.226.54.153" "129.80.158.147")
+DEAD_IPS=("132.226.54.153" "129.80.158.147" "129.153.158.177")
 guard_failed=0
 for zone_file in "${ZONE_FILES[@]}"; do
     for dead in "${DEAD_IPS[@]}"; do
