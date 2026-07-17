@@ -44,6 +44,25 @@ func TestNewRecursive(t *testing.T) {
 	}
 }
 
+// TestDefaultConfig_CacheMaxTTL guards against cache-poisoning via unbounded
+// TTL: DefaultConfig() must populate CacheConfig.MaxTTL so applyTTLPolicy
+// actually clamps oversized TTLs from malicious/misconfigured authoritative
+// servers. Regression test for the case where CacheConfig was left zero-value
+// and no ceiling was ever applied.
+func TestDefaultConfig_CacheMaxTTL(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.CacheConfig.MaxTTL <= 0 {
+		t.Fatalf("DefaultConfig().CacheConfig.MaxTTL = %v, want a positive ceiling", cfg.CacheConfig.MaxTTL)
+	}
+	if cfg.CacheConfig.MaxTTL != 24*time.Hour {
+		t.Errorf("DefaultConfig().CacheConfig.MaxTTL = %v, want 24h (Unbound cache-max-ttl default)", cfg.CacheConfig.MaxTTL)
+	}
+	if cfg.CacheConfig.MinTTL != 0 {
+		t.Errorf("DefaultConfig().CacheConfig.MinTTL = %v, want 0 (no floor)", cfg.CacheConfig.MinTTL)
+	}
+}
+
 func TestNewRecursive_WithDefaults(t *testing.T) {
 	cfg := Config{}
 	r, err := NewRecursive(cfg)

@@ -125,6 +125,15 @@ func DefaultConfig() Config {
 		StaleTTL:          24 * time.Hour,
 		Enable0x20:        true,
 		EnableScrubbing:   true,
+		CacheConfig: cache.Config{
+			// MinTTL 0 means "no floor" (matches applyTTLPolicy's `> 0` gate).
+			// MaxTTL caps positive-response TTLs at 1 day (Unbound cache-max-ttl
+			// default) so a malicious/misconfigured authoritative server cannot
+			// pin a poisoned record in cache indefinitely via an oversized TTL
+			// (e.g. TTL=4294967295 -> ~136 years without this ceiling).
+			MinTTL: 0,
+			MaxTTL: 86400 * time.Second,
+		},
 	}
 }
 
