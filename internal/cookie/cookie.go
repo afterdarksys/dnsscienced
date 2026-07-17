@@ -30,16 +30,30 @@ var (
 )
 
 const (
-	// Cookie sizes per RFC 7873
-	clientCookieSize = 8  // 64 bits
-	serverCookieSize = 8  // 64 bits (can be 8-32 bytes, we use minimum)
-	cookieTotalSize  = 16 // client + server
+	// Cookie sizes per RFC 7873 / RFC 9018
+	clientCookieSize = 8 // 64 bits
+
+	// RFC 9018 §5 server-cookie layout (16 bytes):
+	//   byte 0:      Version (1)
+	//   bytes 1-3:   Reserved (zero)
+	//   bytes 4-7:   Timestamp (uint32 Unix seconds, big-endian)
+	//   bytes 8-15:  Hash (MAC over Client-Cookie || Version || Reserved ||
+	//                Timestamp || Client-IP, keyed by the server secret)
+	serverCookieMetaSize = 8                                      // version + reserved + timestamp
+	serverCookieHashSize = 8                                      // MAC output (SipHash-2-4)
+	serverCookieSize     = serverCookieMetaSize + serverCookieHashSize // 16 bytes
+	cookieTotalSize      = clientCookieSize + serverCookieSize    // 24 bytes
 
 	// Version field
 	cookieVersion = 1
 
 	// Server cookie validity period (per BIND 9 default)
 	serverCookieValidFor = 1 * time.Hour
+
+	// Allowed clock skew for cookies whose embedded timestamp is in the
+	// future relative to this server (accommodates modest clock drift in a
+	// cluster). Cookies further ahead than this are rejected.
+	serverCookieMaxSkew = 5 * time.Minute
 
 	// Secret rotation interval
 	secretRotationInterval = 24 * time.Hour
@@ -61,6 +75,10 @@ type Manager struct {
 	// Secret for cookie-secret sharing across cluster
 	clusterSecret [16]byte
 	useCluster    bool
+
+	// now is a seam over time.Now so tests can control the clock used for
+	// timestamp generation and freshness validation. Defaults to time.Now.
+	now func() time.Time
 }
 
 // Config holds cookie manager configuration
@@ -81,6 +99,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	m := &Manager{
 		enabled:      cfg.Enabled,
 		requireValid: cfg.RequireValid,
+		now:          time.Now,
 	}
 
 	if cfg.ClusterSecret != nil && len(cfg.ClusterSecret) >= 16 {
@@ -159,80 +178,79 @@ func GenerateClientCookie(clientIP, serverIP []byte) [8]byte {
 	return cookie
 }
 
-// GenerateServerCookie generates an 8-byte server cookie
-// Server cookie = SipHash-2-4(secret, client-cookie || client-IP || timestamp)
-// This follows RFC 9018 and BIND 9's implementation
-func (m *Manager) GenerateServerCookie(clientCookie [8]byte, clientIP []byte) ([8]byte, error) {
+// GenerateServerCookie generates a 16-byte server cookie per RFC 9018 §5.
+// The timestamp is embedded in bytes 4-7 and the MAC (bytes 8-15) is computed
+// over the client cookie, the fixed fields (version, reserved, timestamp) and
+// the client IP, keyed by the current server secret.
+func (m *Manager) GenerateServerCookie(clientCookie [8]byte, clientIP []byte) ([serverCookieSize]byte, error) {
 	m.mu.RLock()
 	secret := m.currentSecret
 	m.mu.RUnlock()
 
-	var serverCookie [8]byte
-
-	// Construct input: client-cookie || client-IP || version || timestamp
-	timestamp := uint32(time.Now().Unix())
-
-	h := siphash.New(secret[:])
-	h.Write(clientCookie[:])
-	h.Write(clientIP)
-	h.Write([]byte{cookieVersion, 0, 0, 0}) // version + reserved
-	binary.Write(h, binary.BigEndian, timestamp)
-
-	binary.LittleEndian.PutUint64(serverCookie[:], h.Sum64())
-	return serverCookie, nil
+	timestamp := uint32(m.now().Unix())
+	return computeServerCookie(secret, clientCookie, clientIP, timestamp), nil
 }
 
-// ValidateServerCookie validates a server cookie
-// Returns true if cookie is valid and fresh
-func (m *Manager) ValidateServerCookie(clientCookie [8]byte, serverCookie [8]byte, clientIP []byte) error {
+// ValidateServerCookie validates a 16-byte server cookie. It reads the
+// timestamp embedded in the cookie (NOT the current wall-clock), recomputes the
+// MAC using that timestamp, constant-time compares it, and enforces the
+// freshness window. Both the current and previous secret are tried so cookies
+// minted just before a secret rotation still validate.
+func (m *Manager) ValidateServerCookie(clientCookie [8]byte, serverCookie [serverCookieSize]byte, clientIP []byte) error {
 	if !m.enabled {
 		return nil // Cookies disabled
 	}
 
-	// Try with current secret
-	expected, err := m.computeServerCookie(m.currentSecret, clientCookie, clientIP, time.Now())
-	if err != nil {
-		return err
-	}
+	// Read the embedded timestamp (bytes 4-7, big-endian).
+	timestamp := binary.BigEndian.Uint32(serverCookie[4:serverCookieMetaSize])
 
-	if subtle_compare(serverCookie[:], expected[:]) {
-		return nil // Valid with current secret
-	}
-
-	// Try with previous secret (for rotation period)
 	m.mu.RLock()
+	curSecret := m.currentSecret
 	prevSecret := m.previousSecret
 	m.mu.RUnlock()
 
-	expected, err = m.computeServerCookie(prevSecret, clientCookie, clientIP, time.Now())
-	if err != nil {
-		return err
+	// Recompute the MAC using the EMBEDDED timestamp and constant-time compare
+	// the hash portion only. Try current secret first, then previous.
+	expected := computeServerCookie(curSecret, clientCookie, clientIP, timestamp)
+	valid := subtle_compare(serverCookie[serverCookieMetaSize:], expected[serverCookieMetaSize:])
+	if !valid {
+		expectedPrev := computeServerCookie(prevSecret, clientCookie, clientIP, timestamp)
+		valid = subtle_compare(serverCookie[serverCookieMetaSize:], expectedPrev[serverCookieMetaSize:])
+	}
+	if !valid {
+		return ErrInvalidServerCookie
 	}
 
-	if subtle_compare(serverCookie[:], expected[:]) {
-		return nil // Valid with previous secret
+	// MAC is authentic (so the timestamp is trustworthy). Enforce freshness.
+	age := m.now().Unix() - int64(timestamp)
+	if age > int64(serverCookieValidFor/time.Second) {
+		return ErrExpiredCookie // older than the validity window
+	}
+	if age < -int64(serverCookieMaxSkew/time.Second) {
+		return ErrExpiredCookie // timestamp too far in the future
 	}
 
-	// Check if cookie is too old
-	// We need to extract timestamp and verify
-	// This is a simplified check - full implementation would parse cookie
-	return ErrInvalidServerCookie
+	return nil
 }
 
-// computeServerCookie computes what the server cookie should be
-func (m *Manager) computeServerCookie(secret [16]byte, clientCookie [8]byte, clientIP []byte, t time.Time) ([8]byte, error) {
-	var serverCookie [8]byte
+// computeServerCookie builds the full 16-byte RFC 9018 server cookie for the
+// given secret, client cookie, client IP and timestamp.
+func computeServerCookie(secret [16]byte, clientCookie [8]byte, clientIP []byte, timestamp uint32) [serverCookieSize]byte {
+	var serverCookie [serverCookieSize]byte
 
-	timestamp := uint32(t.Unix())
+	// Fixed fields: version || reserved(3) || timestamp (bytes 0-7).
+	serverCookie[0] = cookieVersion
+	// bytes 1-3 remain zero (reserved)
+	binary.BigEndian.PutUint32(serverCookie[4:serverCookieMetaSize], timestamp)
 
+	// MAC over Client-Cookie || Version || Reserved || Timestamp || Client-IP.
 	h := siphash.New(secret[:])
 	h.Write(clientCookie[:])
+	h.Write(serverCookie[:serverCookieMetaSize])
 	h.Write(clientIP)
-	h.Write([]byte{cookieVersion, 0, 0, 0})
-	binary.Write(h, binary.BigEndian, timestamp)
 
-	binary.LittleEndian.PutUint64(serverCookie[:], h.Sum64())
-	return serverCookie, nil
+	binary.LittleEndian.PutUint64(serverCookie[serverCookieMetaSize:], h.Sum64())
+	return serverCookie
 }
 
 // ParseCookie extracts client and server cookies from EDNS0 COOKIE option
@@ -296,7 +314,7 @@ func (m *Manager) ValidateQueryCookie(clientCookie [8]byte, serverCookie []byte,
 		return false, nil // Accept but don't require
 	}
 
-	var sc [8]byte
+	var sc [serverCookieSize]byte
 	copy(sc[:], serverCookie)
 
 	err := m.ValidateServerCookie(clientCookie, sc, clientIP)
