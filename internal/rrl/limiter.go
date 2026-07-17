@@ -256,8 +256,39 @@ func getLimitForCategory(cfg Config, category int) int {
 	}
 }
 
+// imputedQname is the constant sentinel substituted for the real query name
+// when bucketing categories whose qname is attacker-controlled (see
+// imputeQname). Mirrors BIND RRL's "imputed name" behavior.
+var imputedQname = []byte(".")
+
+// imputeQname reports whether bucketHash should substitute imputedQname for
+// the real qname instead of hashing the attacker-supplied name directly.
+//
+// NXDOMAIN, NODATA, and error responses are exactly the categories a
+// random-subdomain / NXDOMAIN "water torture" flood abuses: the attacker
+// queries a fresh, unique, garbage label (rand1.victim.com, rand2.victim.com,
+// ...) for every packet. If the qname were part of the bucket key, each
+// unique label would LoadOrStore a brand-new bucket with a full token
+// allowance, so RRL would never trip against exactly the attack it exists to
+// stop — and the bucket map would grow unbounded (memory-exhaustion DoS).
+// Imputing a constant name collapses all such responses toward one victim
+// (per client-prefix/qtype/category) onto a single shared bucket.
+//
+// Positive answers (CategoryResponse) and referrals (CategoryReferral) keep
+// the real qname: those names are not attacker-chosen garbage, and legitimate
+// distinct queries should not share a rate-limit bucket.
+func imputeQname(category int) bool {
+	switch category {
+	case CategoryNXDOMAIN, CategoryNodata, CategoryError:
+		return true
+	default:
+		return false
+	}
+}
+
 // bucketHash creates a hash for bucket identification
-// Hash includes: client prefix + qname + qtype + category
+// Hash includes: client prefix + qname (imputed for attacker-controlled
+// categories, see imputeQname) + qtype + category
 func bucketHash(cfg Config, ip net.IP, qname string, qtype uint16, category int) uint64 {
 	h := fnv.New64a()
 
@@ -265,8 +296,14 @@ func bucketHash(cfg Config, ip net.IP, qname string, qtype uint16, category int)
 	prefix := getPrefix(cfg, ip)
 	h.Write(prefix)
 
-	// Write query name
-	h.Write([]byte(qname))
+	// Write query name — imputed to a constant sentinel for NXDOMAIN/NODATA/
+	// error categories so random-subdomain floods can't mint a fresh bucket
+	// (and fresh allowance) per unique attacker-chosen label.
+	if imputeQname(category) {
+		h.Write(imputedQname)
+	} else {
+		h.Write([]byte(qname))
+	}
 
 	// Write query type and category
 	var buf [4]byte

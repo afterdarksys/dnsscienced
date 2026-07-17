@@ -1,6 +1,7 @@
 package rrl
 
 import (
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -245,6 +246,91 @@ func TestGetStats(t *testing.T) {
 	}
 	if stats.DropRate < 0 || stats.DropRate > 1 {
 		t.Errorf("dropRate = %.2f, should be between 0 and 1", stats.DropRate)
+	}
+}
+
+// TestCheck_NXDOMAINWaterTorture proves the fix for the random-subdomain /
+// NXDOMAIN "water torture" flood: before imputing the qname for NXDOMAIN
+// (and NODATA/error) categories, each unique random label
+// (randNNNN.victim.com) got its own fresh bucket with a full token
+// allowance, so RRL never tripped. After the fix, all such responses from
+// one client prefix collapse onto a single shared bucket and the limiter
+// trips well before 1000 distinct queries are allowed.
+func TestCheck_NXDOMAINWaterTorture(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.NXDOMAINsPerSecond = 5
+	cfg.Window = 15 // 5*15 = 75 token allowance for the (shared) bucket
+	limiter := NewLimiter(cfg)
+	defer limiter.Close()
+
+	clientIP := net.ParseIP("192.0.2.1")
+
+	const numQueries = 1000
+	var allowed, limited int
+	for i := 0; i < numQueries; i++ {
+		qname := fmt.Sprintf("rand%d.victim.com", i)
+		action := limiter.Check(clientIP, qname, 1, CategoryNXDOMAIN)
+		if action == ActionAllow {
+			allowed++
+		} else {
+			limited++
+		}
+	}
+
+	if limited == 0 {
+		t.Fatalf("water-torture flood of %d distinct NXDOMAIN qnames was never rate limited (allowed=%d, limited=%d) — bucketHash is still keying on qname",
+			numQueries, allowed, limited)
+	}
+
+	// Allowance is bounded by the shared bucket's max tokens
+	// (limit * window); everything past that should be limited.
+	maxTokens := cfg.NXDOMAINsPerSecond * cfg.Window
+	if allowed > maxTokens {
+		t.Errorf("allowed %d queries, want <= %d (shared-bucket token cap) — distinct qnames are still minting separate buckets",
+			allowed, maxTokens)
+	}
+
+	// Confirm all 1000 distinct qnames actually converged on one bucket hash.
+	hash := bucketHash(cfg, clientIP, "rand0.victim.com", 1, CategoryNXDOMAIN)
+	for i := 1; i < numQueries; i++ {
+		qname := fmt.Sprintf("rand%d.victim.com", i)
+		if got := bucketHash(cfg, clientIP, qname, 1, CategoryNXDOMAIN); got != hash {
+			t.Fatalf("qname %q produced a distinct bucket hash %d (want %d) — NXDOMAIN qnames are not being imputed",
+				qname, got, hash)
+		}
+	}
+}
+
+// TestCheck_PositiveAnswersBucketPerName proves legitimate positive-answer
+// (CategoryResponse) traffic still buckets per distinct qname, so unrelated
+// legitimate queries don't share a rate-limit budget.
+func TestCheck_PositiveAnswersBucketPerName(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ResponsesPerSecond = 1
+	cfg.Window = 1
+	limiter := NewLimiter(cfg)
+	defer limiter.Close()
+
+	clientIP := net.ParseIP("192.0.2.1")
+
+	// Exhaust the single token for "a.example.com".
+	action := limiter.Check(clientIP, "a.example.com", 1, CategoryResponse)
+	if action != ActionAllow {
+		t.Fatalf("first query for a.example.com: action = %v, want ActionAllow", action)
+	}
+
+	// A distinct, legitimate qname must still get its own fresh allowance.
+	action = limiter.Check(clientIP, "b.example.com", 1, CategoryResponse)
+	if action != ActionAllow {
+		t.Errorf("query for a different legitimate qname (b.example.com) was rate limited (%v); positive answers must still bucket per-qname", action)
+	}
+
+	// Also verify at the hash level: distinct qnames -> distinct hashes for
+	// CategoryResponse.
+	h1 := bucketHash(cfg, clientIP, "a.example.com", 1, CategoryResponse)
+	h2 := bucketHash(cfg, clientIP, "b.example.com", 1, CategoryResponse)
+	if h1 == h2 {
+		t.Error("bucketHash collapsed two distinct positive-answer qnames onto the same bucket")
 	}
 }
 
