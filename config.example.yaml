@@ -80,6 +80,13 @@ server:
     aggressive_nsec: true        # Aggressive NSEC caching (RFC 8198)
     serve_stale: true            # Serve stale on upstream failure (RFC 8767)
     stale_max_ttl: 24h           # Max stale record age (struct tag: stale_max_ttl, NOT stale_ttl)
+    enable_dnssec: true
+    dnssec:
+      trust_anchor_file: "/etc/dnsscienced/root.key" # Initial out-of-band KSK
+      auto_trust_anchor: true                        # RFC 5011 maintenance
+      trust_anchor_state_file: "/var/lib/dnsscienced/managed-keys.json"
+      # Optional upper bound; RFC 5011 TTL/signature timers can refresh sooner:
+      trust_anchor_update: 168h
 
   # DNS Cookies (RFC 7873) - Off-path attack protection
   enable_cookies: true
@@ -271,7 +278,7 @@ defensive:
     # Validation mode
     validation: true                    # Enable DNSSEC validation
     validation_mode: "strict"           # "strict", "permissive", or "log-only"
-    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf  # RFC 5011 format
+    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf
     root_key_file: /etc/dnsscienced/root.key                # Root KSK for bootstrapping
 
     # Troubleshooting and compatibility
@@ -296,7 +303,7 @@ defensive:
     cache_ttl: 3600s                    # TTL for DNSSEC cache entries (1 hour)
 
     # Key management
-    auto_trust_anchor: true             # RFC 5011 automatic trust anchor update
+    auto_trust_anchor: true             # Legacy defensive setting; use server.recursive.dnssec
     trust_anchor_update: 168h           # Check for updates weekly (7 days)
 
     # Algorithm support

@@ -3,6 +3,8 @@ package resolver
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +150,25 @@ func TestNewRecursive_DNSSECRequiresTrustAnchor(t *testing.T) {
 	_, err := NewRecursive(Config{EnableDNSSEC: true})
 	if err == nil || !strings.Contains(err.Error(), "trust_anchor_file") {
 		t.Fatalf("NewRecursive error=%v, want missing trust anchor error", err)
+	}
+}
+
+func TestNewRecursive_RFC5011RequiresStateFile(t *testing.T) {
+	anchorPath := filepath.Join(t.TempDir(), "root.key")
+	if err := os.WriteFile(
+		anchorPath,
+		[]byte(". 300 IN DNSKEY 257 3 8 AwEAAQ==\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.EnableDNSSEC = true
+	cfg.DNSSECConfig.TrustAnchorFile = anchorPath
+	cfg.DNSSECConfig.AutoTrustAnchor = true
+	_, err := NewRecursive(cfg)
+	if err == nil || !strings.Contains(err.Error(), "trust_anchor_state_file") {
+		t.Fatalf("NewRecursive error=%v, want missing RFC 5011 state path", err)
 	}
 }
 

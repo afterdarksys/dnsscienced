@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -53,6 +54,8 @@ type Validator struct {
 
 	// Trust anchors (root keys)
 	trustAnchors []dns.DNSKEY
+	anchorsMu    sync.RWMutex
+	rfc5011      *rfc5011Manager
 
 	// Negative trust anchors (domains to skip validation)
 	negativeTrustAnchors map[string]bool
@@ -66,7 +69,10 @@ type Validator struct {
 
 // ValidatorConfig holds DNSSEC validator configuration
 type ValidatorConfig struct {
-	TrustAnchorFile string `yaml:"trust_anchor_file"`
+	TrustAnchorFile      string        `yaml:"trust_anchor_file"`
+	AutoTrustAnchor      bool          `yaml:"auto_trust_anchor"`
+	TrustAnchorStateFile string        `yaml:"trust_anchor_state_file"`
+	TrustAnchorUpdate    time.Duration `yaml:"trust_anchor_update"`
 	// Chain validation settings
 	MaxChainDepth int  // Maximum chain depth (default: 20)
 	DSLookup      bool // Query parent zones for DS records
@@ -148,12 +154,24 @@ func NewValidator(config ValidatorConfig, resolver DNSResolver) (*Validator, err
 			return nil, fmt.Errorf("load trust anchors: %w", err)
 		}
 	}
+	if config.AutoTrustAnchor {
+		if config.TrustAnchorStateFile == "" {
+			return nil, fmt.Errorf("trust_anchor_state_file is required when auto_trust_anchor is enabled")
+		}
+		manager, err := newRFC5011Manager(v, config.TrustAnchorStateFile)
+		if err != nil {
+			return nil, fmt.Errorf("initialize RFC 5011 state: %w", err)
+		}
+		v.rfc5011 = manager
+	}
 
 	return v, nil
 }
 
 // AddTrustAnchor adds a trust anchor (typically root KSK)
 func (v *Validator) AddTrustAnchor(key dns.DNSKEY) {
+	v.anchorsMu.Lock()
+	defer v.anchorsMu.Unlock()
 	v.trustAnchors = append(v.trustAnchors, key)
 }
 
@@ -162,7 +180,7 @@ func (v *Validator) AddNegativeTrustAnchor(domain string) {
 	v.negativeTrustAnchors[strings.ToLower(dns.Fqdn(domain))] = true
 }
 
-// LoadTrustAnchorsFromFile loads trust anchors from a file (RFC 5011 format)
+// LoadTrustAnchorsFromFile loads DNSKEY trust anchors in DNS master-file form.
 func (v *Validator) LoadTrustAnchorsFromFile(filename string) error {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -194,8 +212,30 @@ func (v *Validator) LoadTrustAnchorsFromFile(filename string) error {
 	if len(anchors) == 0 {
 		return fmt.Errorf("trust anchor file contains no DNSKEY records")
 	}
+	v.anchorsMu.Lock()
 	v.trustAnchors = append(v.trustAnchors, anchors...)
+	v.anchorsMu.Unlock()
 	return nil
+}
+
+// Start begins RFC 5011 active refresh when automatic trust-anchor maintenance
+// is enabled. It is safe to call for validators using static anchors.
+func (v *Validator) Start(ctx context.Context) {
+	if v.rfc5011 != nil {
+		v.rfc5011.start(ctx, v.resolver, v.config.TrustAnchorUpdate)
+	}
+}
+
+func (v *Validator) anchorSnapshot() []dns.DNSKEY {
+	v.anchorsMu.RLock()
+	defer v.anchorsMu.RUnlock()
+	return append([]dns.DNSKEY(nil), v.trustAnchors...)
+}
+
+func (v *Validator) replaceTrustAnchors(anchors []dns.DNSKEY) {
+	v.anchorsMu.Lock()
+	v.trustAnchors = append(v.trustAnchors[:0], anchors...)
+	v.anchorsMu.Unlock()
 }
 
 // Validate performs DNSSEC validation on a DNS response
@@ -230,7 +270,8 @@ func (v *Validator) Validate(ctx context.Context, msg *dns.Msg, qname string, qt
 	// cannot cryptographically anchor, so return Indeterminate instead of
 	// letting validateResponse mark the result Secure against attacker-
 	// supplied wire keys.
-	if len(v.trustAnchors) == 0 {
+	anchors := v.anchorSnapshot()
+	if len(anchors) == 0 {
 		return &ValidationResult{
 			Indeterminate: true,
 			ErrorMessage:  "no trust anchors configured; unable to validate (AD not asserted)",
@@ -574,6 +615,7 @@ func anyNSEC3Covers(records []*dns.NSEC3, name string) bool {
 // buildTrustChain builds the DNSSEC chain of trust from root to target zone
 func (v *Validator) buildTrustChain(ctx context.Context, qname string, result *ValidationResult) error {
 	signerZone := dns.Fqdn(strings.ToLower(result.Signatures[0].SignerName))
+	anchors := v.anchorSnapshot()
 	rootMsg, err := v.resolver.Query(ctx, ".", dns.TypeDNSKEY)
 	if err != nil {
 		return fmt.Errorf("root DNSKEY lookup: %w", err)
@@ -581,7 +623,7 @@ func (v *Validator) buildTrustChain(ctx context.Context, qname string, result *V
 	currentKeys := extractDNSKEYs(rootMsg, ".", v.config.DisabledAlgorithms)
 	rootRRset := dnskeysToRRs(currentKeys)
 	rootSigs := extractSignaturesFor(rootMsg, ".", dns.TypeDNSKEY)
-	anchor := matchingTrustAnchor(v.trustAnchors, currentKeys)
+	anchor := matchingTrustAnchor(anchors, currentKeys)
 	if anchor == nil {
 		return fmt.Errorf("root DNSKEY RRset does not contain a configured trust anchor")
 	}

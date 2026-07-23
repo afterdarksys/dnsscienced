@@ -56,8 +56,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Validate DNSSEC positive answers and authenticated denial with NSEC/NSEC3.
 - [x] Enforce DNSSEC algorithm policy and NSEC3 iteration limits.
 - [x] Load configured static DNSSEC trust anchors.
-- [ ] Implement RFC 5011 automatic trust-anchor maintenance and durable key-rollover
-  state; configuration fields alone do not count as support.
+- [x] Implement RFC 5011 automatic trust-anchor maintenance with authenticated
+  DNSKEY refresh, add/remove hold-down state, immediate self-signed revocation,
+  permanent removed-key tombstones, RFC-derived refresh/retry timing, and
+  atomic durable state required at startup.
 - [x] Emit Extended DNS Errors for implemented validation and policy failures.
 - [x] Apply QNAME minimization in the recursive resolver.
 - [x] Authenticate DNS UPDATE and zone-transfer requests with TSIG, including

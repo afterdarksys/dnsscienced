@@ -11,9 +11,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   1. DNSSEC Validation (Critical Gap)
 
-  Status: **Partial** — signature/denial validation, algorithm policy, static
-  trust anchors, and NSEC3 limits are implemented; RFC 5011 durable rollover is
-  still pending.
+  Status: **Implemented** — signature/denial validation, algorithm policy,
+  static trust-anchor bootstrap, RFC 5011 durable rollover, and NSEC3 limits
+  are implemented.
 
   - Full DNSSEC signature verification
   - Algorithm downgrade protection
