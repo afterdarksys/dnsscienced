@@ -61,70 +61,61 @@ func PutMessage(msg *dns.Msg) {
 // SmallBufferPool for UDP queries (512 bytes)
 var SmallBufferPool = sync.Pool{
 	New: func() interface{} {
-		buf := make([]byte, SmallBufferSize)
-		return &buf
+		return new([SmallBufferSize]byte)
 	},
 }
 
 // GetSmallBuffer gets a 512-byte buffer
 func GetSmallBuffer() []byte {
-	bufPtr := SmallBufferPool.Get().(*[]byte)
-	return (*bufPtr)[:SmallBufferSize]
+	return SmallBufferPool.Get().(*[SmallBufferSize]byte)[:]
 }
 
 // PutSmallBuffer returns a buffer to the pool
 func PutSmallBuffer(buf []byte) {
-	if cap(buf) < SmallBufferSize {
-		return // Don't pool undersized buffers
+	if cap(buf) != SmallBufferSize {
+		return // Keep size classes isolated.
 	}
-	buf = buf[:cap(buf)] // Reset length to capacity
-	SmallBufferPool.Put(&buf)
+	SmallBufferPool.Put((*[SmallBufferSize]byte)(buf[:SmallBufferSize]))
 }
 
 // MediumBufferPool for EDNS0 responses (4096 bytes)
 var MediumBufferPool = sync.Pool{
 	New: func() interface{} {
-		buf := make([]byte, MediumBufferSize)
-		return &buf
+		return new([MediumBufferSize]byte)
 	},
 }
 
 // GetMediumBuffer gets a 4096-byte buffer
 func GetMediumBuffer() []byte {
-	bufPtr := MediumBufferPool.Get().(*[]byte)
-	return (*bufPtr)[:MediumBufferSize]
+	return MediumBufferPool.Get().(*[MediumBufferSize]byte)[:]
 }
 
 // PutMediumBuffer returns a buffer to the pool
 func PutMediumBuffer(buf []byte) {
-	if cap(buf) < MediumBufferSize {
+	if cap(buf) != MediumBufferSize {
 		return
 	}
-	buf = buf[:cap(buf)]
-	MediumBufferPool.Put(&buf)
+	MediumBufferPool.Put((*[MediumBufferSize]byte)(buf[:MediumBufferSize]))
 }
 
 // LargeBufferPool for large responses (65535 bytes)
 var LargeBufferPool = sync.Pool{
 	New: func() interface{} {
-		buf := make([]byte, LargeBufferSize)
-		return &buf
+		return new([LargeBufferSize]byte)
 	},
 }
 
 // GetLargeBuffer gets a 65535-byte buffer
 func GetLargeBuffer() []byte {
-	bufPtr := LargeBufferPool.Get().(*[]byte)
-	return (*bufPtr)[:LargeBufferSize]
+	return LargeBufferPool.Get().(*[LargeBufferSize]byte)[:]
 }
 
 // PutLargeBuffer returns a buffer to the pool
 func PutLargeBuffer(buf []byte) {
-	if cap(buf) < LargeBufferSize {
+	if cap(buf) != LargeBufferSize {
 		return
 	}
-	buf = buf[:cap(buf)]
-	LargeBufferPool.Put(&buf)
+	LargeBufferPool.Put((*[LargeBufferSize]byte)(buf[:LargeBufferSize]))
 }
 
 // GetBuffer intelligently selects the right buffer size
@@ -139,6 +130,20 @@ func GetBuffer(size int) []byte {
 	}
 }
 
+// GetPackBuffer returns a size-class buffer suitable for Msg.PackBuffer.
+// Compressed messages are given at least the medium class because miekg/dns
+// computes compression into a temporary map after selecting the destination
+// buffer, and the uncompressed working size can exceed Msg.Len().
+func GetPackBuffer(msg *dns.Msg) []byte {
+	// Reserve two leading bytes as well so framed transports can pass buf[2:]
+	// without losing the one-byte PackBuffer sizing margin.
+	size := msg.Len() + 3
+	if msg.Compress && size < MediumBufferSize {
+		size = MediumBufferSize
+	}
+	return GetBuffer(size)
+}
+
 // PutBuffer returns a buffer to the appropriate pool
 func PutBuffer(buf []byte) {
 	capacity := cap(buf)
@@ -149,7 +154,7 @@ func PutBuffer(buf []byte) {
 		PutMediumBuffer(buf)
 	case capacity == LargeBufferSize:
 		PutLargeBuffer(buf)
-	// else: don't pool weird sizes
+		// else: don't pool weird sizes
 	}
 }
 
@@ -157,22 +162,19 @@ func PutBuffer(buf []byte) {
 // Useful for bulk zone transfers or logging
 var WriterPool = sync.Pool{
 	New: func() interface{} {
-		// Return a []byte that can be used as a write buffer
-		buf := make([]byte, 8192)
-		return &buf
+		return new([8192]byte)
 	},
 }
 
 // GetWriterBuffer gets an 8KB writer buffer
 func GetWriterBuffer() []byte {
-	bufPtr := WriterPool.Get().(*[]byte)
-	return *bufPtr
+	return WriterPool.Get().(*[8192]byte)[:]
 }
 
 // PutWriterBuffer returns writer buffer to pool
 func PutWriterBuffer(buf []byte) {
-	if cap(buf) >= 8192 {
-		WriterPool.Put(&buf)
+	if cap(buf) == 8192 {
+		WriterPool.Put((*[8192]byte)(buf[:8192]))
 	}
 }
 
@@ -198,22 +200,25 @@ func ResetPools() {
 
 	SmallBufferPool = sync.Pool{
 		New: func() interface{} {
-			buf := make([]byte, SmallBufferSize)
-			return &buf
+			return new([SmallBufferSize]byte)
 		},
 	}
 
 	MediumBufferPool = sync.Pool{
 		New: func() interface{} {
-			buf := make([]byte, MediumBufferSize)
-			return &buf
+			return new([MediumBufferSize]byte)
 		},
 	}
 
 	LargeBufferPool = sync.Pool{
 		New: func() interface{} {
-			buf := make([]byte, LargeBufferSize)
-			return &buf
+			return new([LargeBufferSize]byte)
+		},
+	}
+
+	WriterPool = sync.Pool{
+		New: func() interface{} {
+			return new([8192]byte)
 		},
 	}
 }

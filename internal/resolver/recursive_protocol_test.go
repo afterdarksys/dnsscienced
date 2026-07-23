@@ -262,6 +262,242 @@ func TestResolveRejectsWhenWorkerQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestQueryNameserversHedgesSlowAuthority(t *testing.T) {
+	slowStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
+	defer close(releaseSlow)
+	var slowQueries atomic.Int32
+	slowAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		slowQueries.Add(1)
+		select {
+		case <-slowStarted:
+		default:
+			close(slowStarted)
+		}
+		<-releaseSlow
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.30"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+
+	var fastQueries atomic.Int32
+	fastAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		fastQueries.Add(1)
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.31"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+
+	r, err := NewRecursive(Config{
+		QueryTimeout:          time.Second,
+		NameserverParallelism: 2,
+		NameserverHedgeDelay:  10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	start := time.Now()
+	resp, respondingNS, err := r.queryNameservers(
+		context.Background(),
+		[]string{slowAddr, fastAddr},
+		"hedge.example.",
+		dns.TypeA,
+		dns.ClassINET,
+	)
+	if err != nil {
+		t.Fatalf("queryNameservers: %v", err)
+	}
+	if respondingNS != fastAddr || resp.Answer[0].(*dns.A).A.String() != "198.51.100.31" {
+		t.Fatalf("response from %q: %v, want fast authority", respondingNS, resp.Answer)
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("hedged response took %v, want under 250ms", elapsed)
+	}
+	if slowQueries.Load() != 1 || fastQueries.Load() != 1 {
+		t.Fatalf("slow queries=%d fast queries=%d, want one each", slowQueries.Load(), fastQueries.Load())
+	}
+}
+
+func TestQueryNameserversImmediatelyReplacesFailedAuthority(t *testing.T) {
+	failedAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetRcode(req, dns.RcodeServerFailure)
+		_ = w.WriteMsg(resp)
+	}))
+	goodAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.33"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+
+	r, err := NewRecursive(Config{
+		QueryTimeout:          time.Second,
+		NameserverParallelism: 2,
+		NameserverHedgeDelay:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	start := time.Now()
+	_, respondingNS, err := r.queryNameservers(
+		context.Background(),
+		[]string{failedAddr, goodAddr},
+		"failover.example.",
+		dns.TypeA,
+		dns.ClassINET,
+	)
+	if err != nil {
+		t.Fatalf("queryNameservers: %v", err)
+	}
+	if respondingNS != goodAddr {
+		t.Fatalf("responding authority = %q, want %q", respondingNS, goodAddr)
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("failed-authority replacement took %v, want immediate failover", elapsed)
+	}
+}
+
+func TestQueryNameserversBoundsConcurrentFanout(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var started atomic.Int32
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			previous := maximum.Load()
+			if current <= previous || maximum.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		started.Add(1)
+		<-release
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.32"),
+		}}
+		_ = w.WriteMsg(resp)
+	})
+	addresses := []string{
+		startDualProtocolDNSServer(t, handler),
+		startDualProtocolDNSServer(t, handler),
+		startDualProtocolDNSServer(t, handler),
+	}
+
+	r, err := NewRecursive(Config{
+		QueryTimeout:          time.Second,
+		NameserverParallelism: 2,
+		NameserverHedgeDelay:  5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, queryErr := r.queryNameservers(
+			context.Background(),
+			addresses,
+			"bounded.example.",
+			dns.TypeA,
+			dns.ClassINET,
+		)
+		done <- queryErr
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for started.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("two hedged queries did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := started.Load(); got != 2 {
+		t.Fatalf("started queries = %d, want bounded fanout of 2", got)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent queries = %d, want 2", got)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("queryNameservers: %v", err)
+	}
+}
+
+func TestQueryNameserversCancellationStopsHedges(t *testing.T) {
+	firstStarted := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	firstAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		close(firstStarted)
+		<-release
+	}))
+	var secondQueries atomic.Int32
+	secondAddr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		secondQueries.Add(1)
+	}))
+
+	r, err := NewRecursive(Config{
+		QueryTimeout:          time.Second,
+		NameserverParallelism: 2,
+		NameserverHedgeDelay:  200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, queryErr := r.queryNameservers(
+			ctx,
+			[]string{firstAddr, secondAddr},
+			"cancel.example.",
+			dns.TypeA,
+			dns.ClassINET,
+		)
+		done <- queryErr
+	}()
+	<-firstStarted
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("queryNameservers error = %v, want context.Canceled", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := secondQueries.Load(); got != 0 {
+		t.Fatalf("second authority queries = %d after cancellation, want 0", got)
+	}
+}
+
 func TestPrefetchRefreshesLiveCacheEntry(t *testing.T) {
 	var queries atomic.Int32
 	refreshed := make(chan struct{})

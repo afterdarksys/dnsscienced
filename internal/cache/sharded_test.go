@@ -127,6 +127,134 @@ func TestValidationModes(t *testing.T) {
 	})
 }
 
+func BenchmarkSetAtCapacity(b *testing.B) {
+	const capacity = 4096
+	c := NewShardedCache(Config{ShardCount: 1, MaxEntries: capacity})
+	defer c.Close()
+
+	expiresAt := time.Now().Add(time.Hour)
+	for i := range capacity {
+		c.Set(uint64(i), &Entry{ExpiresAt: expiresAt})
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		c.Set(uint64(capacity+i), &Entry{ExpiresAt: expiresAt.Add(time.Duration(i))})
+	}
+}
+
+func TestSetReplacementAtCapacityDoesNotEvictAnotherKey(t *testing.T) {
+	c := NewShardedCache(Config{ShardCount: 1, MaxEntries: 2})
+	defer c.Close()
+
+	expiresAt := time.Now().Add(time.Hour)
+	c.Set(1, &Entry{Data: []byte("one"), ExpiresAt: expiresAt})
+	c.Set(2, &Entry{Data: []byte("two"), ExpiresAt: expiresAt})
+	replacement := &Entry{Data: []byte("replacement"), ExpiresAt: expiresAt}
+	c.Set(2, replacement)
+
+	if _, ok := c.Get(1); !ok {
+		t.Fatal("replacement evicted an unrelated key")
+	}
+	got, ok := c.Get(2)
+	if !ok || got != replacement {
+		t.Fatal("replacement was not stored")
+	}
+	if got := c.GetStats().Evictions; got != 0 {
+		t.Fatalf("evictions = %d, want 0", got)
+	}
+}
+
+func TestSetEvictsEarliestExpiry(t *testing.T) {
+	c := NewShardedCache(Config{ShardCount: 1, MaxEntries: 2})
+	defer c.Close()
+
+	now := time.Now()
+	c.Set(1, &Entry{ExpiresAt: now.Add(2 * time.Hour)})
+	c.Set(2, &Entry{ExpiresAt: now.Add(time.Hour)})
+	c.Set(3, &Entry{ExpiresAt: now.Add(3 * time.Hour)})
+
+	if _, ok := c.Get(2); ok {
+		t.Fatal("earliest-expiring key was not evicted")
+	}
+	if _, ok := c.Get(1); !ok {
+		t.Fatal("later-expiring key was evicted")
+	}
+	if _, ok := c.Get(3); !ok {
+		t.Fatal("new key was not stored")
+	}
+}
+
+func TestSetEvictsUntilMemoryBoundIsSatisfied(t *testing.T) {
+	c := NewShardedCache(Config{
+		ShardCount:  1,
+		MaxEntries:  10,
+		MaxMemoryMB: 1,
+	})
+	defer c.Close()
+
+	now := time.Now()
+	for i := uint64(1); i <= 3; i++ {
+		c.Set(i, &Entry{
+			Data:      make([]byte, 250*1024),
+			ExpiresAt: now.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	c.Set(4, &Entry{
+		Data:      make([]byte, 600*1024),
+		ExpiresAt: now.Add(4 * time.Hour),
+	})
+
+	stats := c.GetStats()
+	if stats.MemoryBytes > 1024*1024 {
+		t.Fatalf("memory = %d, exceeds 1 MiB shard limit", stats.MemoryBytes)
+	}
+	if stats.Evictions != 2 {
+		t.Fatalf("evictions = %d, want 2", stats.Evictions)
+	}
+	if stats.Size != 2 {
+		t.Fatalf("size = %d, want 2", stats.Size)
+	}
+}
+
+func TestOversizedReplacementPreservesExistingEntry(t *testing.T) {
+	c := NewShardedCache(Config{
+		ShardCount:  1,
+		MaxEntries:  10,
+		MaxMemoryMB: 1,
+	})
+	defer c.Close()
+
+	existing := &Entry{Data: []byte("small"), ExpiresAt: time.Now().Add(time.Hour)}
+	c.Set(1, existing)
+	c.Set(1, &Entry{Data: make([]byte, 2*1024*1024), ExpiresAt: time.Now().Add(time.Hour)})
+
+	got, ok := c.Get(1)
+	if !ok || got != existing {
+		t.Fatal("oversized replacement removed the existing cache entry")
+	}
+}
+
+func TestPerformCleanupUsesExpiryQueue(t *testing.T) {
+	c := NewShardedCache(Config{ShardCount: 1, MaxEntries: 10})
+	defer c.Close()
+
+	c.Set(1, &Entry{ExpiresAt: time.Now().Add(-time.Second)})
+	c.Set(2, &Entry{ExpiresAt: time.Now().Add(time.Hour)})
+	c.performCleanup()
+
+	if _, ok := c.Get(1); ok {
+		t.Fatal("expired entry survived cleanup")
+	}
+	if _, ok := c.Get(2); !ok {
+		t.Fatal("live entry was removed during cleanup")
+	}
+	if got := c.GetStats().Expirations; got != 1 {
+		t.Fatalf("expirations = %d, want 1", got)
+	}
+}
+
 // TestApplyTTLPolicy_ClampsUnboundedTTL guards against cache-poisoning via a
 // malicious/misconfigured authoritative server returning an oversized TTL
 // (e.g. TTL=4294967295, ~136 years). Without a MaxTTL ceiling, that value

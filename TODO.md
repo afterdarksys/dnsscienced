@@ -10,6 +10,27 @@ Legend:
 - `[ ]` is missing, only partially implemented, configuration-only, or belongs to
   another repository.
 
+## Governing product goal
+
+Build a Linux-native, security-first, ultra-fast, carrier-grade DNS platform
+capable of replacing BIND and NSD in defined authoritative, secondary,
+validating-recursive, forwarding, policy, local-root, and eventually public
+root-authoritative deployments.
+
+- [x] Define explicit role boundaries, data-plane tiers, correctness gates,
+  Linux performance gates, and the distinction between loading `.` and operating
+  a standards-conformant public root service.
+- [ ] Add validated role profiles that reject unsafe combinations and default
+  authoritative/root listeners to recursion disabled.
+- [ ] Build differential protocol suites against current BIND and NSD releases.
+- [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate
+  local-root suite for RFC 8806.
+- [ ] Define and continuously test carrier-grade overload SLOs for sustained QPS,
+  p99/p99.9 latency, packet loss, TCP fallback, bounded memory, and recovery.
+
+See [Carrier-Grade Multi-Role Architecture and Release
+Gates](docs/CARRIER_GRADE_ROLES.md).
+
 ## Completed DNS cache and threat-intelligence work
 
 - [x] Add threat score, categories, reputation, first/last seen, and source fields
@@ -74,17 +95,34 @@ Legend:
   independent client transaction IDs and cancellation.
 - [x] Route recursive cache misses through an operational bounded worker pool and
   expose truthful queue, saturation, and rejection metrics.
-- [ ] Add safe parallel or hedged nameserver queries with cancellation and bounded
+- [x] Add safe parallel or hedged nameserver queries with cancellation and bounded
   fan-out.
-- [ ] Wire the existing byte-buffer pools or an equivalent allocation strategy
+- [x] Wire the existing byte-buffer pools or an equivalent allocation strategy
   into measured production network paths; retain only changes that benchmarks
   show reduce allocations.
-- [ ] Replace linear eviction work under cache-shard locks with a measured
+- [ ] Bring the experimental assembly-parser UDP server to feature and security
+  parity before considering it for production; the primary UDP path remains the
+  audited `miekg/dns` server.
+- [x] Add a fixed-stride, recvmmsg-compatible batch header API with reusable output
+  storage and measured zero-allocation steady-state parsing. Benchmarking showed
+  scalar Go is faster than cgo even after amortizing the transition, so production
+  header rejection stays in Go.
+- [x] Make the x86 SIMD header parser read exactly the 12-byte DNS header, use
+  baseline SSE2 instead of assuming optional CPU features, and repair the assembly
+  response-header builder's corrupted output pointer.
+- [x] Add a bounded Linux-only recvmmsg/sendmmsg transport primitive with reusable
+  packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
+- [ ] Integrate Linux batching into a feature-parity listener only after complete
+  receive-parse-route-send load tests improve throughput and tail latency.
+- [ ] Evaluate XDP/eBPF as a separately deployable cache-hit fast path with explicit
+  security-policy parity, cache-coherency, privilege, observability, and portable
+  fallback requirements; do not couple it to the portable resolver by default.
+- [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
-- [ ] Add validated runtime controls and documentation for listener count, resolver
+- [x] Add validated runtime controls and documentation for listener count, resolver
   concurrency, queue size, cache size/shards, and Go memory/GC limits.
-- [ ] Decide and document CPU-affinity support. Prefer service-manager/container
+- [x] Decide and document CPU-affinity support. Prefer service-manager/container
   affinity unless measurements justify per-worker OS-thread pinning.
 - [ ] Add explicit forwarding/upstream modes so operators can choose direct
   iterative resolution, public recursive resolvers, or conditional forwarders
@@ -100,8 +138,8 @@ safe automatic provisioning for authoritative server fleets.
 - [x] Serve authoritative zones and support atomic zone add/remove operations.
 - [x] Authenticate AXFR and DNS UPDATE with TSIG.
 - [x] Serve AXFR and accept IXFR requests with documented AXFR fallback.
-- [ ] Implement true IXFR delta generation and consumption.
-- [ ] Implement ordinary SOA NOTIFY-driven secondary refresh; DSYNC NOTIFY support
+- [x] Implement true IXFR delta generation and consumption.
+- [x] Implement ordinary SOA NOTIFY-driven secondary refresh; DSYNC NOTIFY support
   does not satisfy this prerequisite.
 
 ### Catalog data model and validation

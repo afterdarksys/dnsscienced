@@ -71,7 +71,7 @@ func TestLoadZonesFromDirLoadsStandaloneDNSZone(t *testing.T) {
 	}
 }
 
-func TestConfiguredZonesRejectUnsupportedRoles(t *testing.T) {
+func TestConfiguredZonesDefersSecondaryToTransferManager(t *testing.T) {
 	cfg := server.DefaultConfig()
 	cfg.UDPListeners = 1
 	srv, err := server.New(cfg)
@@ -79,8 +79,32 @@ func TestConfiguredZonesRejectUnsupportedRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer srv.Stop()
-	_, err = loadConfiguredZones(srv, []config.ZoneConfig{{Name: "secondary.test", Type: "secondary", Masters: []string{"192.0.2.1"}}})
-	if err == nil || !strings.Contains(err.Error(), "not implemented") {
-		t.Fatalf("error = %v, want explicit unsupported-role failure", err)
+	loaded, err := loadConfiguredZones(srv, []config.ZoneConfig{{Name: "secondary.test", Type: "secondary", Masters: []string{"192.0.2.1"}}})
+	if err != nil || loaded != 0 {
+		t.Fatalf("loaded=%d error=%v, want secondary deferred without error", loaded, err)
+	}
+}
+
+func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "xfer.example.",
+			Algorithm: "hmac-sha256",
+			Secret:    "c2VjcmV0",
+		}},
+		Zones: []config.ZoneConfig{{
+			Name:            "secondary.test",
+			Type:            "secondary",
+			Masters:         []string{"192.0.2.1"},
+			TransferTSIGKey: "xfer.example",
+		}},
+	}
+
+	got, err := buildSecondaryConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TransferKey == nil || got[0].TransferKey.Secret != "c2VjcmV0" {
+		t.Fatalf("secondary configs = %+v", got)
 	}
 }

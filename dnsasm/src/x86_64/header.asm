@@ -1,7 +1,7 @@
 ; DNSASM - Ultra-Fast DNS Packet Processor
 ; x86_64 NASM Assembly - Header Parsing
 ;
-; This module parses DNS headers in ~5 cycles using SSE2 for the 12-byte read.
+; This module parses DNS headers using baseline x86_64 SSE2.
 ;
 ; Calling Convention: System V AMD64 ABI
 ;   - Arguments: rdi, rsi, rdx, rcx, r8, r9
@@ -14,11 +14,6 @@ default rel
 
 section .data
     align 16
-
-section .rodata
-    align 16
-    ; Byte swap mask for converting network order to host order (16-bit words)
-    bswap_mask: db 1,0, 3,2, 5,4, 7,6, 9,8, 11,10, 13,12, 15,14
 
 section .text
     global dnsasm_parse_header
@@ -42,16 +37,22 @@ dnsasm_parse_header:
     cmp     rsi, 12
     jb      .too_short
 
-    ; Load 12 bytes of header using SSE2 (unaligned load)
-    ; This is faster than 6 separate 16-bit loads
-    movdqu  xmm0, [rdi]
+    ; Load exactly 12 bytes. A 16-byte load is not safe for a caller that
+    ; provides a valid 12-byte slice at the end of an accessible page.
+    movq    xmm0, [rdi]
+    movd    xmm2, [rdi + 8]
+    pslldq  xmm2, 8
+    por     xmm0, xmm2
 
-    ; Byte swap the 16-bit words (network to host order)
-    ; Using PSHUFB (SSSE3) - available on all modern x86_64
-    movdqa  xmm1, [bswap_mask]
-    pshufb  xmm0, xmm1
+    ; Byte swap all 16-bit words using baseline SSE2. This avoids requiring
+    ; runtime SSSE3/AVX feature dispatch.
+    movdqa  xmm1, xmm0
+    psllw   xmm0, 8
+    psrlw   xmm1, 8
+    por     xmm0, xmm1
 
-    ; Store the first 12 bytes to output structure
+    ; Store only the 12 wire bytes to the output structure. A 16-byte store
+    ; would temporarily overwrite the parsed-flag fields.
     ; dnsasm_header_t layout:
     ;   0-1:   id
     ;   2-3:   flags  
@@ -59,7 +60,9 @@ dnsasm_parse_header:
     ;   6-7:   ancount
     ;   8-9:   nscount
     ;   10-11: arcount
-    movdqu  [rdx], xmm0
+    movq    [rdx], xmm0
+    psrldq  xmm0, 8
+    movd    [rdx + 8], xmm0
 
     ; Now parse the flags field (bytes 2-3, already byte-swapped)
     movzx   eax, word [rdx + 2]     ; Load flags
@@ -144,13 +147,9 @@ dnsasm_parse_header:
 ; Performance: ~10 cycles
 ; ============================================================================
 dnsasm_build_header:
-    ; Byte swap and store each field
-    ; Using XCHG for byte swap (faster than BSWAP for 16-bit)
+    ; Byte swap and store each field.
 
     ; ID (bytes 0-1)
-    xchg    sil, dil                ; Oops, can't do this - use different approach
-    ; Actually, let's use proper byte swapping
-    
     mov     ax, si                  ; id
     xchg    al, ah                  ; byte swap
     mov     [rdi], ax

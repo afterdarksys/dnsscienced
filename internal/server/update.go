@@ -370,6 +370,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	// CR-01: write lock protects concurrent write to cfg.Zones map.
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
+	s.ixfrJournal.Record(z, clone)
 	s.zonesMu.Lock()
 	s.cfg.Zones[zoneName] = clone
 	s.zonesMu.Unlock()

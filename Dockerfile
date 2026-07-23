@@ -1,32 +1,39 @@
-# Multi-stage build for dnsscienced
-FROM golang:alpine AS builder
+# syntax=docker/dockerfile:1
+
+# Linux/amd64 is the primary deployment target. DNSASM requires a native cgo
+# toolchain even though the final executable is statically linked with musl.
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
-# Copy everything
+RUN apk add --no-cache build-base nasm
+
+COPY go.mod go.sum ./
+COPY dnsasm/go/go.mod dnsasm/go/go.mod
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
 COPY . .
 
-# Download dependencies
-RUN go mod download
+RUN make -C dnsasm dirs \
+    && make -C dnsasm USE_ASM=1 build/lib/libdnsasm.a
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags '-linkmode external -extldflags "-static"' \
+    -o /out/dnsscienced ./cmd/dnsscienced/
 
-# Build static binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o dnsscienced ./cmd/dnsscienced/
-
-# Final stage
-FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates tzdata
+# Final stage contains no compiler, source, or cgo runtime dependencies.
+FROM alpine:3.22
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /build/dnsscienced .
+RUN apk --no-cache add ca-certificates tzdata
 
-# Create zones directory
 RUN mkdir -p /zones
 
-# Expose DNS ports and gRPC
+COPY --from=builder /out/dnsscienced ./dnsscienced
+
 EXPOSE 53/udp 53/tcp 9090/tcp
 
-ENTRYPOINT ["./dnsscienced"]
+ENTRYPOINT ["/app/dnsscienced"]
 CMD ["-authoritative"]

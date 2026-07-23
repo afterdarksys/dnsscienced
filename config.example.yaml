@@ -1,6 +1,13 @@
 # DNSScienced Configuration Example
 # Comprehensive configuration showing all defensive DNS features
 
+# Go runtime tuning. Omit or leave at zero to preserve Go's environment- and
+# container-aware defaults (GOMAXPROCS, GOGC, and GOMEMLIMIT).
+runtime:
+  max_procs: 0                  # Concurrent Go execution; not an OS thread count
+  # gc_percent: 100             # Optional GOGC override; -1 disables GC
+  memory_limit_mb: 0            # Soft Go memory limit; size caches separately below
+
 server:
   # Listen addresses
   udp_addr: "0.0.0.0:53"
@@ -19,6 +26,8 @@ server:
     worker_queue_size: 1000      # Bounded waiting lookups; excess receives SERVFAIL
     query_timeout: 2s            # Timeout for each authoritative nameserver query
     max_iterations: 20           # Bound iterative/referral processing
+    nameserver_parallelism: 2    # Maximum in-flight authorities per delegation
+    nameserver_hedge_delay: 25ms # Delay before trying a second slow authority
 
     # Security features (cache poisoning resistance)
     enable_0x20: true            # 0x20 encoding (case randomization)
@@ -108,15 +117,33 @@ zones:
     allow_transfer:
       - "192.0.2.0/24"         # Allow AXFR from this network
       - "2001:db8::/32"
-    # also_notify is reserved for future secondary notification support.
+    # also_notify is reserved for outbound primary NOTIFY support.
 
     # Security overrides (per-zone)
     enable_0x20: true          # Enable 0x20 for this zone
     enable_dnssec: true        # Enable DNSSEC validation
     enable_scrubbing: true     # Enable response scrubbing
 
-  # Secondary, forward, and stub zone roles are intentionally rejected at
-  # startup until their transfer/forwarding engines are implemented.
+  # Secondary zones perform an initial AXFR before listeners open, then refresh
+  # from SOA timers or authenticated/authorized RFC 1996 NOTIFY.
+  # - name: "secondary.example.com"
+  #   type: "secondary"
+  #   masters:
+  #     - "192.0.2.10:53"
+  #     - "[2001:db8::10]:53"
+  #   transfer_source: "192.0.2.20"
+  #   transfer_tsig_key: "secondary-xfer.example."
+  #   refresh_interval: 1h     # optional; otherwise use transferred SOA
+  #   min_refresh_time: 5m
+  #   max_refresh_time: 24h
+  #   min_retry_time: 30s
+  #   max_retry_time: 1h
+  #
+  # Define the referenced key at top level:
+  # tsig_keys:
+  #   - name: "secondary-xfer.example."
+  #     algorithm: "hmac-sha256"
+  #     secret: "<base64-secret>"
 
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases

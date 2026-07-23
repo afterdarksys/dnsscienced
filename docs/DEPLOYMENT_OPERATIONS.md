@@ -670,56 +670,37 @@ sudo sysctl -p /etc/sysctl.d/99-dnsscience.conf
 ### Application-Level Tuning
 
 ```yaml
-# Performance tuning in dnsscienced.conf
-performance:
-  # Worker configuration
-  workers: auto              # auto = NumCPU
+# Implemented settings in dnsscienced.conf
+runtime:
+  max_procs: 0
+  gc_percent: 100
+  memory_limit_mb: 768
 
-  # UDP configuration
-  udp:
-    buffer-size: 65535
-    batch-size: 64           # Process multiple packets
-    reuse-port: true         # SO_REUSEPORT for load balancing
+server:
+  udp_listeners: 4
+  recursive:
+    workers: 100
+    worker_queue_size: 1000
+    nameserver_parallelism: 2
+    nameserver_hedge_delay: 25ms
 
-  # TCP configuration
-  tcp:
-    max-connections: 10000
-    idle-timeout: 10s
-    pipelining: true
-
-  # Memory pools
-  memory:
-    message-pool-size: 10000
-    buffer-pool-size: 10000
-    preallocate: true
-
-  # CPU affinity (advanced)
-  cpu-affinity:
-    enable: true
-    workers:
-      - cores: [0, 1]        # Worker 0-1 on cores 0-1
-      - cores: [2, 3]        # Worker 2-3 on cores 2-3
+cache:
+  max_entries: 100000
+  max_memory_mb: 512
+  shard_count: 256
+  prefetch: true
 ```
 
 ### NUMA Optimization
 
-```yaml
-# For multi-socket systems
-numa:
-  enable: true
+DNSScienced does not implement per-worker CPU affinity or NUMA placement.
+Resolver workers are goroutines and are not permanently attached to OS threads.
+Use systemd `CPUAffinity=`, container CPU sets, or an equivalent process-level
+control, and keep `runtime.max_procs` aligned with the assigned CPU quota.
 
-  # Pin workers to NUMA nodes
-  nodes:
-    - id: 0
-      workers: 8
-      memory-allocation: local
-      network-interfaces: [eth0, eth1]
-
-    - id: 1
-      workers: 8
-      memory-allocation: local
-      network-interfaces: [eth2, eth3]
-```
+Receive/send batching and XDP are not configuration options. They remain measured
+Linux-specific research items; see [Runtime and Resolver Performance
+Tuning](PERFORMANCE_TUNING.md).
 
 ---
 

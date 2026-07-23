@@ -62,6 +62,14 @@ type Config struct {
 	// Max iterations for iterative resolution
 	MaxIterations int `yaml:"max_iterations"`
 
+	// NameserverParallelism bounds concurrent authoritative queries within one
+	// delegation. A value of 1 disables hedging.
+	NameserverParallelism int `yaml:"nameserver_parallelism"`
+
+	// NameserverHedgeDelay is the delay before querying an additional
+	// authoritative server while an earlier query is still outstanding.
+	NameserverHedgeDelay time.Duration `yaml:"nameserver_hedge_delay"`
+
 	// Enable DNS cookies
 	EnableCookies bool          `yaml:"enable_cookies"`
 	CookieConfig  cookie.Config `yaml:"cookies"`
@@ -133,15 +141,17 @@ func (v validationResolver) Query(ctx context.Context, name string, qtype uint16
 // set individual flags to false. Config{} means "all features off".
 func DefaultConfig() Config {
 	return Config{
-		QueryTimeout:      5 * time.Second,
-		MaxIterations:     20,
-		Workers:           100,
-		QNAMEMinimization: true,
-		AggressiveNSEC:    true,
-		ServeStale:        true,
-		StaleTTL:          24 * time.Hour,
-		Enable0x20:        true,
-		EnableScrubbing:   true,
+		QueryTimeout:          5 * time.Second,
+		MaxIterations:         20,
+		Workers:               100,
+		NameserverParallelism: 2,
+		NameserverHedgeDelay:  25 * time.Millisecond,
+		QNAMEMinimization:     true,
+		AggressiveNSEC:        true,
+		ServeStale:            true,
+		StaleTTL:              24 * time.Hour,
+		Enable0x20:            true,
+		EnableScrubbing:       true,
 		CacheConfig: cache.Config{
 			// MinTTL 0 means "no floor" (matches applyTTLPolicy's `> 0` gate).
 			// MaxTTL caps positive-response TTLs at 1 day (Unbound cache-max-ttl
@@ -156,11 +166,26 @@ func DefaultConfig() Config {
 
 // NewRecursive creates a new recursive resolver
 func NewRecursive(cfg Config) (*Recursive, error) {
+	if err := cfg.CacheConfig.Validate(); err != nil {
+		return nil, fmt.Errorf("cache: %w", err)
+	}
 	if cfg.QueryTimeout == 0 {
 		cfg.QueryTimeout = 5 * time.Second
 	}
 	if cfg.MaxIterations == 0 {
 		cfg.MaxIterations = 20
+	}
+	if cfg.NameserverParallelism == 0 {
+		cfg.NameserverParallelism = 2
+	}
+	if cfg.NameserverParallelism < 1 || cfg.NameserverParallelism > 32 {
+		return nil, fmt.Errorf("nameserver_parallelism must be between 1 and 32 (got %d)", cfg.NameserverParallelism)
+	}
+	if cfg.NameserverHedgeDelay == 0 {
+		cfg.NameserverHedgeDelay = 25 * time.Millisecond
+	}
+	if cfg.NameserverHedgeDelay < 0 {
+		return nil, fmt.Errorf("nameserver_hedge_delay cannot be negative")
 	}
 	if cfg.Workers == 0 {
 		cfg.Workers = 100
@@ -624,37 +649,27 @@ func (r *Recursive) resolveIterativeWithBudget(ctx context.Context, qname string
 			}
 		}
 
-		// Try each nameserver until one responds; this keeps server failover
-		// within a single delegation separate from the iterative hop counter.
-		var resp *dns.Msg
-		var lastNSErr error
-		for i, ns := range nameservers {
-			var err error
-			resp, err = r.queryNameserver(ctx, ns, sendName, sendType, qclass)
+		// Hedge slow authoritative servers after a short delay while keeping
+		// concurrent fan-out bounded within this delegation.
+		resp, respondingNS, err := r.queryNameservers(ctx, nameservers, sendName, sendType, qclass)
+		if err != nil {
+			return nil, fmt.Errorf("all nameservers failed: %w", err)
+		}
+
+		// QNAME minimization NODATA at an intermediate hop (RFC 9156 section 4):
+		// disable minimization and re-issue the full qname. Prefer the server
+		// that returned NODATA, then fail over across the delegation.
+		if r.cfg.QNAMEMinimization && sendName != qname &&
+			len(resp.Answer) == 0 && resp.Rcode == dns.RcodeSuccess && len(resp.Ns) == 0 {
+			resp, err = r.queryNameserver(ctx, respondingNS, qname, qtype, qclass)
 			if err != nil {
-				lastNSErr = err
-				if i == len(nameservers)-1 {
-					return nil, fmt.Errorf("all nameservers failed: %w", lastNSErr)
-				}
-				continue
-			}
-			// QNAME minimization NODATA at intermediate hop (RFC 9156 section 4):
-			// if minimized and answer is empty + NOERROR + no NS records, disable
-			// minimization and re-issue full qname to this same nameserver.
-			if r.cfg.QNAMEMinimization && sendName != qname &&
-				len(resp.Answer) == 0 && resp.Rcode == dns.RcodeSuccess && len(resp.Ns) == 0 {
-				resp, err = r.queryNameserver(ctx, ns, qname, qtype, qclass)
+				resp, _, err = r.queryNameservers(ctx, nameservers, qname, qtype, qclass)
 				if err != nil {
-					lastNSErr = err
-					if i == len(nameservers)-1 {
-						return nil, fmt.Errorf("all nameservers failed: %w", lastNSErr)
-					}
-					continue
+					return nil, fmt.Errorf("all nameservers failed: %w", err)
 				}
-				sendName = qname
-				sendType = qtype
 			}
-			break // success
+			sendName = qname
+			sendType = qtype
 		}
 
 		// A positive response to an intermediate minimized name is not the

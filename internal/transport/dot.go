@@ -2,15 +2,16 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/miekg/dns"
 )
 
@@ -166,25 +167,29 @@ func (l *DoTListener) handleConnection(conn net.Conn) {
 
 	for {
 		// Read DNS message length (2-byte prefix per RFC 7858)
-		length := make([]byte, 2)
-		if _, err := io.ReadFull(conn, length); err != nil {
+		var length [2]byte
+		if _, err := io.ReadFull(conn, length[:]); err != nil {
 			return
 		}
 
-		msgLen := int(length[0])<<8 | int(length[1])
+		msgLen := int(binary.BigEndian.Uint16(length[:]))
 		if msgLen > 65535 || msgLen == 0 {
 			return
 		}
 
 		// Read DNS message
-		msgBytes := make([]byte, msgLen)
+		readBuf := pool.GetBuffer(msgLen)
+		msgBytes := readBuf[:msgLen]
 		if _, err := io.ReadFull(conn, msgBytes); err != nil {
+			pool.PutBuffer(readBuf)
 			return
 		}
 
 		// Parse DNS message
 		req := new(dns.Msg)
-		if err := req.Unpack(msgBytes); err != nil {
+		unpackErr := req.Unpack(msgBytes)
+		pool.PutBuffer(readBuf)
+		if unpackErr != nil {
 			continue
 		}
 
@@ -199,27 +204,54 @@ func (l *DoTListener) handleConnection(conn net.Conn) {
 		}
 
 		// Pack and send response
-		respBytes, err := resp.Pack()
+		frameBuf := pool.GetPackBuffer(resp)
+		respBytes, err := resp.PackBuffer(frameBuf[2:])
 		if err != nil {
+			pool.PutBuffer(frameBuf)
 			continue
 		}
 
-		// Write length prefix
 		respLen := len(respBytes)
-		header := []byte{byte(respLen >> 8), byte(respLen)}
+		if respLen > 65535 {
+			pool.PutBuffer(frameBuf)
+			continue
+		}
+		var frame []byte
+		if respLen+2 <= cap(frameBuf) {
+			frame = frameBuf[:respLen+2]
+			copy(frame[2:], respBytes)
+		} else {
+			frame = make([]byte, respLen+2)
+			copy(frame[2:], respBytes)
+		}
+		binary.BigEndian.PutUint16(frame[:2], uint16(respLen))
 		if err := conn.SetWriteDeadline(time.Now().Add(l.timeout)); err != nil {
+			pool.PutBuffer(frameBuf)
 			return
 		}
-		if _, err := io.Copy(conn, io.MultiReader(
-			bytes.NewReader(header),
-			bytes.NewReader(respBytes),
-		)); err != nil {
+		if err := writeFull(conn, frame); err != nil {
+			pool.PutBuffer(frameBuf)
 			return
 		}
+		pool.PutBuffer(frameBuf)
 
 		// Reset deadline for next query
 		if err := conn.SetReadDeadline(time.Now().Add(l.timeout)); err != nil {
 			return
 		}
 	}
+}
+
+func writeFull(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrUnexpectedEOF
+		}
+		data = data[n:]
+	}
+	return nil
 }

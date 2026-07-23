@@ -32,6 +32,11 @@ resolver:
   forwarders:
     - "8.8.8.8:53"
 
+runtime:
+  max_procs: 6
+  gc_percent: 80
+  memory_limit_mb: 768
+
 dhcp:
   enabled: true
   interfaces: ["eth0", "eth1"]
@@ -119,6 +124,12 @@ dhcp:
 	// Verify Resolver/Cache Config
 	assert.Equal(t, 500, cfg.Resolver.CacheConfig.MaxEntries)
 	assert.Equal(t, "test-key-123", cfg.Resolver.CacheConfig.DarkAPIKey)
+
+	// Verify Go runtime tuning is decoded but not applied by Load.
+	require.NotNil(t, cfg.Runtime.GCPercent)
+	assert.Equal(t, 6, cfg.Runtime.MaxProcs)
+	assert.Equal(t, 80, *cfg.Runtime.GCPercent)
+	assert.Equal(t, int64(768), cfg.Runtime.MemoryLimitMB)
 
 	// Verify DHCP Config
 	assert.True(t, cfg.DHCP.Enabled)
@@ -253,6 +264,7 @@ zones:
       - "10.0.1.10:53"
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
+    transfer_tsig_key: "secondary-xfer.example."
     refresh_interval: 3600s
 
   - name: "forward.example.com"
@@ -314,6 +326,7 @@ zones:
 	assert.Len(t, secondaryZone.Masters, 2)
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
+	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 
 	// Verify forward zone
@@ -410,6 +423,8 @@ func TestDistributedExampleConfigsParse(t *testing.T) {
 			assert.Equal(t, 100, cfg.Server.RecursiveConfig.Workers)
 			assert.Equal(t, 1000, cfg.Server.RecursiveConfig.WorkerQueueSize)
 			assert.Equal(t, 2*time.Second, cfg.Server.RecursiveConfig.QueryTimeout)
+			assert.Equal(t, 2, cfg.Server.RecursiveConfig.NameserverParallelism)
+			assert.Equal(t, 25*time.Millisecond, cfg.Server.RecursiveConfig.NameserverHedgeDelay)
 			if name == "config.example.yaml" {
 				assert.Equal(t, 10000, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
 				assert.Equal(t, "json", cfg.Logging.Format)

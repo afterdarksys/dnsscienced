@@ -25,6 +25,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -129,6 +130,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
 			os.Exit(1)
 		}
+		config.ApplyRuntime(loadedCfg.Runtime)
+		fmt.Printf("Runtime concurrency: GOMAXPROCS=%d\n", runtime.GOMAXPROCS(0))
 		// Merge loaded config into default config
 		// For now, we just replace the server config section entirely
 		// A proper merge should look at which fields were set, but since we are unmarshaling
@@ -305,6 +308,31 @@ func main() {
 		fmt.Println()
 	}
 
+	// Load secondary zones before opening listeners. Initial transfer failure is
+	// a startup failure so the daemon never advertises an empty secondary.
+	var secondaryMgr *secondary.Manager
+	if loadedCfg != nil {
+		secondaryConfigs, err := buildSecondaryConfigs(loadedCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring secondary zones: %v\n", err)
+			os.Exit(1)
+		}
+		if len(secondaryConfigs) > 0 {
+			secondaryMgr, err = secondary.NewManager(srv, nil, secondaryConfigs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating secondary manager: %v\n", err)
+				os.Exit(1)
+			}
+			srv.SetSOANotifyHandler(secondaryMgr)
+			if err := secondaryMgr.Start(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading secondary zones: %v\n", err)
+				os.Exit(1)
+			}
+			srv.EnableAuthoritative()
+			fmt.Printf("Loaded %d secondary zone(s)\n\n", len(secondaryConfigs))
+		}
+	}
+
 	// Start DNS server
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
@@ -426,6 +454,10 @@ sigloop:
 		grpcSrv.GracefulStop()
 	}
 
+	if secondaryMgr != nil {
+		secondaryMgr.Close()
+	}
+
 	// Stop DNS server
 	if err := srv.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error stopping server: %v\n", err)
@@ -439,6 +471,12 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		kind := strings.ToLower(strings.TrimSpace(zc.Type))
 		if kind == "" {
 			kind = "primary"
+		}
+		if kind == "secondary" {
+			if len(zc.Masters) == 0 {
+				return loaded, fmt.Errorf("zone %s: secondary zone requires masters", zc.Name)
+			}
+			continue
 		}
 		if kind != "primary" {
 			return loaded, fmt.Errorf("zone %s: type %q is not implemented", zc.Name, kind)
@@ -471,6 +509,48 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		loaded++
 	}
 	return loaded, nil
+}
+
+func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
+	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
+	for _, key := range cfg.TsigKeys {
+		keys[strings.ToLower(dns.Fqdn(key.Name))] = key
+	}
+
+	var result []secondary.Config
+	for _, zc := range cfg.Zones {
+		if strings.ToLower(strings.TrimSpace(zc.Type)) != "secondary" {
+			continue
+		}
+		secondaryCfg := secondary.Config{
+			Name:              zc.Name,
+			Masters:           append([]string(nil), zc.Masters...),
+			TransferSource:    zc.TransferSource,
+			RefreshInterval:   zc.RefreshInterval,
+			MinRefreshTime:    zc.MinRefreshTime,
+			MaxRefreshTime:    zc.MaxRefreshTime,
+			MinRetryTime:      zc.MinRetryTime,
+			MaxRetryTime:      zc.MaxRetryTime,
+			AllowAXFRFallback: true,
+		}
+		if zc.AllowAXFRFallback != nil {
+			secondaryCfg.AllowAXFRFallback = *zc.AllowAXFRFallback
+		}
+		if zc.TransferTSIGKey != "" {
+			keyName := strings.ToLower(dns.Fqdn(zc.TransferTSIGKey))
+			key, ok := keys[keyName]
+			if !ok {
+				return nil, fmt.Errorf("zone %s: transfer_tsig_key %q is not defined", zc.Name, zc.TransferTSIGKey)
+			}
+			secondaryCfg.TransferKey = &secondary.TransferKey{
+				Name:      key.Name,
+				Algorithm: key.Algorithm,
+				Secret:    key.Secret,
+			}
+		}
+		result = append(result, secondaryCfg)
+	}
+	return result, nil
 }
 
 // loadZonesFromDir scans a directory for source and compiled zone files. A

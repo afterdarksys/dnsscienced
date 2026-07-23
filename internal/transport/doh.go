@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/miekg/dns"
 )
 
@@ -173,7 +174,9 @@ func (l *DoHListener) handleDoH(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Serialize response
-	respBytes, err := dnsResponse.Pack()
+	packBuf := pool.GetPackBuffer(dnsResponse)
+	defer pool.PutBuffer(packBuf)
+	respBytes, err := dnsResponse.PackBuffer(packBuf)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

@@ -29,11 +29,20 @@ func (w *ednsVersionTestResponseWriter) WriteMsg(m *dns.Msg) error {
 	w.written = true
 	return nil
 }
-func (w *ednsVersionTestResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
-func (w *ednsVersionTestResponseWriter) Close() error                { return nil }
-func (w *ednsVersionTestResponseWriter) TsigStatus() error           { return nil }
-func (w *ednsVersionTestResponseWriter) TsigTimersOnly(b bool)       {}
-func (w *ednsVersionTestResponseWriter) Hijack()                     {}
+func (w *ednsVersionTestResponseWriter) Write(b []byte) (int, error) {
+	msg := new(dns.Msg)
+	if err := msg.Unpack(b); err != nil {
+		return 0, err
+	}
+	if err := w.WriteMsg(msg); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+func (w *ednsVersionTestResponseWriter) Close() error          { return nil }
+func (w *ednsVersionTestResponseWriter) TsigStatus() error     { return nil }
+func (w *ednsVersionTestResponseWriter) TsigTimersOnly(b bool) {}
+func (w *ednsVersionTestResponseWriter) Hijack()               {}
 
 // makeEDNSVersionRequest creates a standard A query for name with an EDNS0
 // OPT record carrying the given EDNS VERSION.

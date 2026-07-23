@@ -190,8 +190,11 @@ type Server struct {
 	dsyncNotifier    *dsync.DSYNCNotifier
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
-	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
-	persistMu        sync.Mutex                  // Orders zone swaps and durable snapshots across UPDATE requests.
+	soaNotifyMu      sync.RWMutex
+	soaNotifyHandler SOANotifyHandler
+	ixfrJournal      *zone.Journal
+	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
+	persistMu        sync.Mutex        // Orders zone swaps and durable snapshots across UPDATE requests.
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -220,12 +223,20 @@ type Server struct {
 
 // New creates a new DNS server
 func New(cfg Config) (*Server, error) {
+	if cfg.UDPListeners == 0 {
+		cfg.UDPListeners = runtime.NumCPU()
+	}
+	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
+		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		cfg:    cfg,
-		ctx:    ctx,
-		cancel: cancel,
+		cfg:         cfg,
+		ctx:         ctx,
+		cancel:      cancel,
+		ixfrJournal: zone.NewJournal(100),
 	}
 
 	// Initialize recursive resolver if enabled
@@ -668,6 +679,23 @@ func (w *messageResponseWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// writeMsg avoids the allocation in dns.ResponseWriter.WriteMsg for ordinary
+// unsigned responses. Signed responses stay on WriteMsg so the library retains
+// its TSIG MAC chaining and signing behavior.
+func writeMsg(w dns.ResponseWriter, msg *dns.Msg) error {
+	if _, encryptedAdapter := w.(*messageResponseWriter); encryptedAdapter || msg.IsTsig() != nil {
+		return w.WriteMsg(msg)
+	}
+	buf := pool.GetPackBuffer(msg)
+	defer pool.PutBuffer(buf)
+	wire, err := msg.PackBuffer(buf)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(wire)
+	return err
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
@@ -694,17 +722,51 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeFormatError
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
-		// RFC 9859 DSYNC notifications use CDS or CSYNC. Ordinary RFC 1996
-		// SOA NOTIFY belongs to secondary-zone refresh, which is not yet
-		// implemented; never route it through the DSYNC acceptance path.
+		if r.Question[0].Qtype == dns.TypeSOA {
+			if clientIP == nil || r.Question[0].Qclass != dns.ClassINET {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeRefused
+				writeMsg(w, m) //nolint:errcheck
+				return
+			}
+			if r.IsTsig() != nil && w.TsigStatus() != nil {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeNotAuth
+				writeMsg(w, m) //nolint:errcheck
+				return
+			}
+			var tsigName string
+			if requestTSIG := r.IsTsig(); requestTSIG != nil {
+				tsigName = requestTSIG.Hdr.Name
+			}
+			s.soaNotifyMu.RLock()
+			handler := s.soaNotifyHandler
+			s.soaNotifyMu.RUnlock()
+
+			m := new(dns.Msg)
+			m.SetReply(r)
+			if requestTSIG := r.IsTsig(); requestTSIG != nil {
+				m.SetTsig(requestTSIG.Hdr.Name, requestTSIG.Algorithm, requestTSIG.Fudge, time.Now().Unix())
+			}
+			if handler == nil {
+				m.Rcode = dns.RcodeNotImplemented
+			} else if err := handler.HandleNotify(s.ctx, r.Question[0].Name, clientIP, tsigName); err != nil {
+				m.Rcode = dns.RcodeRefused
+			}
+			writeMsg(w, m) //nolint:errcheck
+			return
+		}
+		// RFC 9859 DSYNC notifications use CDS or CSYNC.
 		if r.Question[0].Qtype != dns.TypeCDS && r.Question[0].Qtype != dns.TypeCSYNC {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeNotImplemented
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
 		// Guard against unknown transport types that leave clientIP nil.
@@ -713,7 +775,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
 		if s.dsyncHandler != nil {
@@ -722,7 +784,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeNotImplemented
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 		}
 		return
 	}
@@ -739,7 +801,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
 		s.handleAXFR(w, r, clientIP)
@@ -753,7 +815,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
 		s.handleUpdate(w, r, clientIP)
@@ -761,7 +823,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// Set up query event emission. emitQuery publishes a QueryEvent to the bus
-	// (no-op when bus is nil). Called before each w.WriteMsg() in the normal path.
+	// (no-op when bus is nil). Called before each response write in the normal path.
 	queryStart := time.Now()
 	queryProto := "udp"
 	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
@@ -811,7 +873,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				m.SetReply(r)
 				m.Rcode = dns.RcodeRefused
 				emitQuery(m.Rcode, "")
-				w.WriteMsg(m)
+				writeMsg(w, m)
 				return
 			}
 		}
@@ -837,21 +899,21 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		m.Rcode = dns.RcodeFormatError
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
-		w.WriteMsg(m)
+		writeMsg(w, m)
 		return
 	}
 	if r.Opcode != dns.OpcodeQuery {
 		m.Rcode = dns.RcodeNotImplemented
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
-		w.WriteMsg(m) //nolint:errcheck
+		writeMsg(w, m) //nolint:errcheck
 		return
 	}
 	if r.Question[0].Qclass != dns.ClassINET {
 		m.Rcode = dns.RcodeRefused
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
-		w.WriteMsg(m) //nolint:errcheck
+		writeMsg(w, m) //nolint:errcheck
 		return
 	}
 
@@ -872,7 +934,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		m.Extra = append(m.Extra, respOpt)
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
-		w.WriteMsg(m)
+		writeMsg(w, m)
 		return
 	}
 
@@ -902,7 +964,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 
 			emitQuery(blockedResp.Rcode, "")
-			w.WriteMsg(blockedResp)
+			writeMsg(w, blockedResp)
 			return
 		}
 	}
@@ -924,7 +986,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 					s.nxdomain.Add(1)
 				}
 				emitQuery(resp.Rcode, "")
-				w.WriteMsg(resp)
+				writeMsg(w, resp)
 				return
 			}
 		case firewalld.VerdictRedirect:
@@ -937,7 +999,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.nxdomain.Add(1)
 			}
 			emitQuery(resp.Rcode, "")
-			w.WriteMsg(resp)
+			writeMsg(w, resp)
 			return
 		}
 	}
@@ -998,7 +1060,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 			s.errors.Add(1)
 			emitQuery(m.Rcode, "")
-			w.WriteMsg(m)
+			writeMsg(w, m)
 			return
 		}
 
@@ -1054,7 +1116,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 
 			emitQuery(m.Rcode, "")
-			w.WriteMsg(m)
+			writeMsg(w, m)
 			return
 		}
 	}
@@ -1068,7 +1130,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = dns.RcodeRefused
 			s.errors.Add(1)
 			emitQuery(m.Rcode, "")
-			w.WriteMsg(m) //nolint:errcheck
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
 		resp, err := s.recursive.Resolve(s.ctx, r, clientIP)
@@ -1082,7 +1144,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 
 			emitQuery(m.Rcode, "")
-			w.WriteMsg(m)
+			writeMsg(w, m)
 			return
 		}
 
@@ -1113,7 +1175,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 
 		emitQuery(resp.Rcode, "")
-		w.WriteMsg(resp)
+		writeMsg(w, resp)
 		return
 	}
 
@@ -1121,7 +1183,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Rcode = dns.RcodeRefused
 	s.errors.Add(1)
 	emitQuery(m.Rcode, "")
-	w.WriteMsg(m)
+	writeMsg(w, m)
 }
 
 // handleAuthoritative checks authoritative zones
@@ -1311,10 +1373,9 @@ func (s *Server) LoadZone(filename, format string) error {
 		return fmt.Errorf("parse zone %s: %w", filename, err)
 	}
 
-	// Add to server (write lock protects concurrent map access, CR-01)
-	s.zonesMu.Lock()
-	s.cfg.Zones[z.Origin] = z
-	s.zonesMu.Unlock()
+	if err := s.AddZone(z); err != nil {
+		return err
+	}
 
 	fmt.Printf("Loaded zone: %s (%d records)\n", z.Name, z.GetStats().Records)
 
@@ -1331,17 +1392,31 @@ func (s *Server) AddZone(z *zone.Zone) error {
 		return fmt.Errorf("zone validation failed: %w", err)
 	}
 
+	s.persistMu.Lock()
+	s.zonesMu.RLock()
+	previous := s.cfg.Zones[z.Origin]
+	s.zonesMu.RUnlock()
+	if previous == nil {
+		s.ixfrJournal.Reset(z.Origin)
+	} else {
+		s.ixfrJournal.Record(previous, z)
+	}
 	s.zonesMu.Lock()
 	s.cfg.Zones[z.Origin] = z
 	s.zonesMu.Unlock()
+	s.persistMu.Unlock()
 	return nil
 }
 
 // RemoveZone removes a zone from the server
 func (s *Server) RemoveZone(origin string) {
+	origin = strings.ToLower(dns.Fqdn(origin))
+	s.persistMu.Lock()
 	s.zonesMu.Lock()
 	delete(s.cfg.Zones, origin)
 	s.zonesMu.Unlock()
+	s.ixfrJournal.Reset(origin)
+	s.persistMu.Unlock()
 }
 
 // GetZone returns a zone by origin

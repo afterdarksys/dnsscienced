@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 
@@ -79,15 +80,6 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		w.WriteMsg(m) //nolint:errcheck
 		return
 	}
-	allowFallback, fallbackConfigured := s.cfg.ZoneAllowAXFRFallback[qname]
-	if r.Question[0].Qtype == dns.TypeIXFR && fallbackConfigured && !allowFallback {
-		m := new(dns.Msg)
-		m.SetReply(r)
-		m.Rcode = dns.RcodeNotImplemented
-		w.WriteMsg(m) //nolint:errcheck
-		return
-	}
-
 	// 6. ACL check (D-01, D-03):
 	//    nil ACL = no allow_transfer configured = deny all (secure-by-default).
 	//    non-nil ACL = source IP must be in the allowlist.
@@ -111,8 +103,43 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		return
 	}
 
-	// 8. Multi-message streaming (D-09) via dns.Transfer.Out.
-	//    RFC 5936 §2.2: opening SOA, middle RRs, closing SOA.
+	transferRRs := fullTransferRecords(z)
+	if r.Question[0].Qtype == dns.TypeIXFR {
+		requestedSerial, ok := ixfrRequestSerial(r, z.Class)
+		if !ok {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeFormatError
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+		if !zone.SerialGreater(z.SOA.Serial, requestedSerial) {
+			transferRRs = []dns.RR{dns.Copy(z.SOA)}
+		} else if deltas, found := s.ixfrJournal.Changes(qname, requestedSerial, z.SOA.Serial); found {
+			incremental := incrementalTransferRecords(z.SOA, deltas)
+			allowFallback := true
+			if configured, ok := s.cfg.ZoneAllowAXFRFallback[qname]; ok {
+				allowFallback = configured
+			}
+			if !allowFallback || transferRecordSize(incremental) < transferRecordSize(transferRRs) {
+				transferRRs = incremental
+			}
+		} else {
+			allowFallback := true
+			if configured, ok := s.cfg.ZoneAllowAXFRFallback[qname]; ok {
+				allowFallback = configured
+			}
+			if !allowFallback {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeNotImplemented
+				w.WriteMsg(m) //nolint:errcheck
+				return
+			}
+		}
+	}
+
+	// 8. Multi-message streaming via dns.Transfer.Out.
 	//
 	//    errCh is buffered so tr.Out can exit without blocking on the send,
 	//    even if we are still inside the select below.  The send() helper
@@ -140,32 +167,13 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		}
 	}
 
-	// Opening SOA (RFC 5936 §2.2)
-	if !send(&dns.Envelope{RR: []dns.RR{z.SOA}}) {
-		close(ch)
-		wg.Wait()
-		return
-	}
-
-	// Middle: all zone RRs — exclude SOA because all production loaders
-	// (ParseDNSZone, ParseBIND, LoadCompiledZone) call AddRecord for the SOA,
-	// placing it in both z.SOA and z.Records.  Sending it again here would
-	// produce a malformed transfer (RFC 5936 §2.2 forbids extra SOAs in the
-	// middle section).
-	allRRs := z.GetAllRecords()
-	var rrs []dns.RR
-	for _, rr := range allRRs {
-		if rr.Header().Rrtype != dns.TypeSOA {
-			rrs = append(rrs, rr)
-		}
-	}
 	aborted := false
-	for i := 0; i < len(rrs); i += axfrBatchSize {
+	for i := 0; i < len(transferRRs); i += axfrBatchSize {
 		end := i + axfrBatchSize
-		if end > len(rrs) {
-			end = len(rrs)
+		if end > len(transferRRs) {
+			end = len(transferRRs)
 		}
-		if !send(&dns.Envelope{RR: rrs[i:end]}) {
+		if !send(&dns.Envelope{RR: transferRRs[i:end]}) {
 			aborted = true
 			break
 		}
@@ -176,9 +184,52 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		return
 	}
 
-	// Closing SOA (RFC 5936 §2.2)
-	send(&dns.Envelope{RR: []dns.RR{z.SOA}}) //nolint:errcheck — peer disconnect OK here
 	close(ch)
 	wg.Wait()
 	w.Close() //nolint:errcheck
+}
+
+func ixfrRequestSerial(request *dns.Msg, zoneClass uint16) (uint32, bool) {
+	if len(request.Ns) != 1 {
+		return 0, false
+	}
+	soa, ok := request.Ns[0].(*dns.SOA)
+	if !ok || soa.Hdr.Class != zoneClass ||
+		!strings.EqualFold(dns.Fqdn(soa.Hdr.Name), dns.Fqdn(request.Question[0].Name)) {
+		return 0, false
+	}
+	return soa.Serial, true
+}
+
+func fullTransferRecords(z *zone.Zone) []dns.RR {
+	result := []dns.RR{dns.Copy(z.SOA)}
+	for _, rr := range z.GetAllRecords() {
+		if rr.Header().Rrtype != dns.TypeSOA {
+			result = append(result, dns.Copy(rr))
+		}
+	}
+	return append(result, dns.Copy(z.SOA))
+}
+
+func incrementalTransferRecords(current *dns.SOA, deltas []zone.Delta) []dns.RR {
+	result := []dns.RR{dns.Copy(current)}
+	for _, delta := range deltas {
+		result = append(result, dns.Copy(delta.FromSOA))
+		for _, rr := range delta.Deleted {
+			result = append(result, dns.Copy(rr))
+		}
+		result = append(result, dns.Copy(delta.ToSOA))
+		for _, rr := range delta.Added {
+			result = append(result, dns.Copy(rr))
+		}
+	}
+	return append(result, dns.Copy(current))
+}
+
+func transferRecordSize(records []dns.RR) int {
+	total := 0
+	for _, rr := range records {
+		total += dns.Len(rr)
+	}
+	return total
 }

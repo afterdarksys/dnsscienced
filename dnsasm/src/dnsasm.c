@@ -29,6 +29,7 @@ static inline uint32_t bswap32(uint32_t x) {
 /*
  * Parse DNS header from packet.
  */
+#ifndef DNSASM_ASM_HEADER
 int dnsasm_parse_header(const uint8_t *packet, size_t len, dnsasm_header_t *out) {
     if (len < DNS_HEADER_SIZE) {
         return DNSASM_ERR_SHORT;
@@ -54,6 +55,7 @@ int dnsasm_parse_header(const uint8_t *packet, size_t len, dnsasm_header_t *out)
 
     return DNSASM_OK;
 }
+#endif
 
 /*
  * Decompress a DNS name.
@@ -233,6 +235,7 @@ dnsasm_result_t dnsasm_parse_rr(const uint8_t *packet, size_t len,
 /*
  * Build DNS header.
  */
+#ifndef DNSASM_ASM_HEADER
 size_t dnsasm_build_header(uint8_t *out, uint16_t id, uint16_t flags,
                             uint16_t qdcount, uint16_t ancount,
                             uint16_t nscount, uint16_t arcount) {
@@ -244,6 +247,7 @@ size_t dnsasm_build_header(uint8_t *out, uint16_t id, uint16_t flags,
     *(uint16_t *)(out + 10) = bswap16(arcount);
     return DNS_HEADER_SIZE;
 }
+#endif
 
 /*
  * Copy question section.

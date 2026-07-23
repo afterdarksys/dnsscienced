@@ -1,4 +1,9 @@
 # DNSScienced Production Configuration with ThreatScript
+runtime:
+  max_procs: 0          # Auto/container-aware; set only after measuring
+  gc_percent: 100
+  memory_limit_mb: 768  # Keep above cache.max_memory_mb plus process overhead
+
 server:
   # Listen addresses
   udp_addr: "0.0.0.0:53"
@@ -35,6 +40,8 @@ server:
     worker_queue_size: 1000
     query_timeout: 2s
     max_iterations: 20
+    nameserver_parallelism: 2
+    nameserver_hedge_delay: 25ms
     enable_0x20: true
     enable_scrubbing: true
     qname_minimization: true     # QNAME minimization (RFC 7816 / RFC 9156)

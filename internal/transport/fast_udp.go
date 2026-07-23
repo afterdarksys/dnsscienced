@@ -118,9 +118,9 @@ func (s *FastUDPServer) worker() {
 }
 
 func (s *FastUDPServer) handlePacket(ctx context.Context, packet []byte, addr *net.UDPAddr) {
-	// 1. Fast parse header using DNSASM (Assembly optimized)
-	// Returns parsed header struct
-	header, err := dnsasm.ParseHeader(packet)
+	// 1. Parse the fixed header without allocating or crossing cgo.
+	var header dnsasm.Header
+	err := dnsasm.ParseHeaderInto(packet, &header)
 	if err != nil {
 		atomic.AddUint64(&s.packErrors, 1)
 		return

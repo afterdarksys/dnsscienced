@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 // Config is the top-level configuration structure
 type Config struct {
+	Runtime  RuntimeConfig   `yaml:"runtime"`
 	Server   server.Config   `yaml:"server"`
 	Resolver resolver.Config `yaml:"resolver"`
 	// Backward-compatible top-level aliases used by config.example.yaml. Load
@@ -52,6 +54,34 @@ type Config struct {
 
 	// TSIG keys for authenticated zone transfers (RFC 2845)
 	TsigKeys []TsigKeyConfig `yaml:"tsig_keys"`
+}
+
+// RuntimeConfig controls the Go runtime independently of DNS request
+// concurrency. Zero values leave environment-derived Go defaults unchanged.
+type RuntimeConfig struct {
+	// MaxProcs limits Go code executing simultaneously. It is not an OS thread
+	// count; zero preserves the runtime/container-aware default.
+	MaxProcs int `yaml:"max_procs"`
+	// GCPercent overrides GOGC when present. -1 disables collection.
+	GCPercent *int `yaml:"gc_percent"`
+	// MemoryLimitMB overrides GOMEMLIMIT when positive.
+	MemoryLimitMB int64 `yaml:"memory_limit_mb"`
+}
+
+// Validate rejects runtime values that could overflow or create an unusable
+// process. Deliberately generous upper bounds retain room for large servers.
+func (c RuntimeConfig) Validate() error {
+	if c.MaxProcs < 0 || c.MaxProcs > 65536 {
+		return fmt.Errorf("runtime.max_procs must be between 0 and 65536")
+	}
+	if c.GCPercent != nil && (*c.GCPercent < -1 || *c.GCPercent > 10000) {
+		return fmt.Errorf("runtime.gc_percent must be between -1 and 10000")
+	}
+	const bytesPerMiB = int64(1024 * 1024)
+	if c.MemoryLimitMB < 0 || c.MemoryLimitMB > math.MaxInt64/bytesPerMiB {
+		return fmt.Errorf("runtime.memory_limit_mb is out of range")
+	}
+	return nil
 }
 
 // TsigKeyConfig holds TSIG key configuration for zone transfers and dynamic updates (RFC 2845).
@@ -118,8 +148,9 @@ type ZoneConfig struct {
 	PersistUpdates *bool    `yaml:"persist_updates,omitempty"` // nil/false = in-memory only; true = write-back to zone file (D-11)
 
 	// Zone transfer options (for secondary zones)
-	TransferSource  string        `yaml:"transfer_source,omitempty"`  // Source IP for AXFR
-	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
+	TransferSource  string        `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
+	TransferTSIGKey string        `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
+	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"`  // Override SOA refresh
 
 	// AllowAXFRFallback controls whether IXFR failures fall back to a full AXFR.
 	// Set to false to force operators to fix IXFR issues rather than silently
@@ -353,6 +384,9 @@ func Load(filename string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config file: %w", err)
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return nil, err
 	}
 
 	// Historical examples placed these sections at the top level while the

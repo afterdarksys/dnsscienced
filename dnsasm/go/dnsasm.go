@@ -22,7 +22,9 @@ package dnsasm
 */
 import "C"
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
@@ -74,6 +76,77 @@ type Header struct {
 	RCode  uint8 // Response code
 }
 
+// parseHeaderASMInto is retained as a benchmark control for the optional native
+// implementation. Production header rejection uses ParseHeaderInto because the
+// cgo transition costs more than parsing twelve bytes in Go.
+func parseHeaderASMInto(packet []byte, header *Header) error {
+	if len(packet) < 12 {
+		return ErrShort
+	}
+
+	var ch C.dnsasm_header_t
+	if status := C.dnsasm_parse_header(
+		(*C.uint8_t)(unsafe.Pointer(&packet[0])),
+		C.size_t(len(packet)),
+		&ch,
+	); status != C.DNSASM_OK {
+		return errorFromCode(status)
+	}
+
+	*header = Header{
+		ID:      uint16(ch.id),
+		Flags:   uint16(ch.flags),
+		QDCount: uint16(ch.qdcount),
+		ANCount: uint16(ch.ancount),
+		NSCount: uint16(ch.nscount),
+		ARCount: uint16(ch.arcount),
+		QR:      ch.qr != 0,
+		Opcode:  uint8(ch.opcode),
+		AA:      ch.aa != 0,
+		TC:      ch.tc != 0,
+		RD:      ch.rd != 0,
+		RA:      ch.ra != 0,
+		RCode:   uint8(ch.rcode),
+	}
+	return nil
+}
+
+// ParseHeadersStrided parses fixed-stride packet slots such as buffers prepared
+// for recvmmsg. Caller-owned output and status slices keep steady-state parsing
+// allocation-free.
+func ParseHeadersStrided(buffer []byte, stride int, lengths []uint16, out []Header, statuses []error) (int, error) {
+	count := len(lengths)
+	if count == 0 {
+		return 0, nil
+	}
+	if stride < 12 {
+		return 0, fmt.Errorf("dnsasm: stride %d is smaller than a DNS header", stride)
+	}
+	if count > len(out) || count > len(statuses) {
+		return 0, errors.New("dnsasm: output slices are smaller than the batch")
+	}
+	if count > len(buffer)/stride {
+		return 0, errors.New("dnsasm: buffer is smaller than the fixed-stride batch")
+	}
+	for _, length := range lengths {
+		if int(length) > stride {
+			return 0, errors.New("dnsasm: packet length exceeds stride")
+		}
+	}
+
+	parsed := 0
+	for i := 0; i < count; i++ {
+		start := i * stride
+		statuses[i] = ParseHeaderInto(buffer[start:start+int(lengths[i])], &out[i])
+		if statuses[i] == nil {
+			parsed++
+		} else {
+			out[i] = Header{}
+		}
+	}
+	return parsed, nil
+}
+
 // Question represents a parsed DNS question.
 type Question struct {
 	Name    string // Decompressed name (e.g., "www.example.com")
@@ -93,39 +166,36 @@ type RR struct {
 	WireLen  uint16 // Bytes consumed from wire
 }
 
-// ParseHeader parses the DNS header from a packet.
-// This is extremely fast: ~10 nanoseconds per call.
-func ParseHeader(packet []byte) (*Header, error) {
+// ParseHeaderInto parses a DNS header into caller-owned storage without
+// allocations or a cgo transition.
+func ParseHeaderInto(packet []byte, header *Header) error {
 	if len(packet) < 12 {
-		return nil, ErrShort
+		return ErrShort
 	}
 
-	var ch C.dnsasm_header_t
-	ret := C.dnsasm_parse_header(
-		(*C.uint8_t)(unsafe.Pointer(&packet[0])),
-		C.size_t(len(packet)),
-		&ch,
-	)
+	header.ID = binary.BigEndian.Uint16(packet[0:2])
+	header.Flags = binary.BigEndian.Uint16(packet[2:4])
+	header.QDCount = binary.BigEndian.Uint16(packet[4:6])
+	header.ANCount = binary.BigEndian.Uint16(packet[6:8])
+	header.NSCount = binary.BigEndian.Uint16(packet[8:10])
+	header.ARCount = binary.BigEndian.Uint16(packet[10:12])
+	header.QR = header.Flags&(1<<15) != 0
+	header.Opcode = uint8((header.Flags >> 11) & 0xf)
+	header.AA = header.Flags&(1<<10) != 0
+	header.TC = header.Flags&(1<<9) != 0
+	header.RD = header.Flags&(1<<8) != 0
+	header.RA = header.Flags&(1<<7) != 0
+	header.RCode = uint8(header.Flags & 0xf)
+	return nil
+}
 
-	if ret != C.DNSASM_OK {
-		return nil, errorFromCode(ret)
+// ParseHeader parses the DNS header from a packet.
+func ParseHeader(packet []byte) (*Header, error) {
+	header := new(Header)
+	if err := ParseHeaderInto(packet, header); err != nil {
+		return nil, err
 	}
-
-	return &Header{
-		ID:      uint16(ch.id),
-		Flags:   uint16(ch.flags),
-		QDCount: uint16(ch.qdcount),
-		ANCount: uint16(ch.ancount),
-		NSCount: uint16(ch.nscount),
-		ARCount: uint16(ch.arcount),
-		QR:      ch.qr != 0,
-		Opcode:  uint8(ch.opcode),
-		AA:      ch.aa != 0,
-		TC:      ch.tc != 0,
-		RD:      ch.rd != 0,
-		RA:      ch.ra != 0,
-		RCode:   uint8(ch.rcode),
-	}, nil
+	return header, nil
 }
 
 // ParseQuestion parses a DNS question section starting at the given offset.
