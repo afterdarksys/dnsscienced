@@ -117,9 +117,10 @@ type Config struct {
 	DSYNC DSYNCConfig `yaml:"dsync"`
 
 	// Performance tuning
-	ReadTimeout  time.Duration `yaml:"read_timeout"`
-	WriteTimeout time.Duration `yaml:"write_timeout"`
-	IdleTimeout  time.Duration `yaml:"idle_timeout"` // TCP only
+	ReadTimeout   time.Duration                 `yaml:"read_timeout"`
+	WriteTimeout  time.Duration                 `yaml:"write_timeout"`
+	IdleTimeout   time.Duration                 `yaml:"idle_timeout"` // TCP only
+	TCPProtection transport.TCPProtectionConfig `yaml:"tcp_protection"`
 
 	// UDP buffer sizes
 	UDPReadBuffer  int `yaml:"udp_read_buffer"`
@@ -184,9 +185,10 @@ func DefaultConfig() Config {
 		QueryComplexity:  defaultQueryComplexityConfig(),
 		ClientReputation: reputation.DefaultConfig(),
 
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:   5 * time.Second,
+		WriteTimeout:  5 * time.Second,
+		IdleTimeout:   60 * time.Second,
+		TCPProtection: transport.DefaultTCPProtectionConfig(),
 
 		UDPReadBuffer:  8 * 1024 * 1024, // 8MB
 		UDPWriteBuffer: 8 * 1024 * 1024, // 8MB
@@ -231,6 +233,7 @@ type Server struct {
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
 	tcpServer  *dns.Server
+	tcpLimiter *transport.LimitedListener
 	dohServer  *transport.DoHListener
 	dotServer  *transport.DoTListener
 
@@ -258,6 +261,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
 		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
+	}
+	if err := cfg.TCPProtection.Validate(); err != nil {
+		return nil, err
 	}
 	complexityConfig, err := normalizeQueryComplexityConfig(cfg.QueryComplexity)
 	if err != nil {
@@ -559,7 +565,11 @@ func New(cfg Config) (*Server, error) {
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-		TsigProvider: s.tsigKeyRing,
+		IdleTimeout: func() time.Duration {
+			return cfg.IdleTimeout
+		},
+		MaxTCPQueries: cfg.TCPProtection.MaxQueriesPerConnection,
+		TsigProvider:  s.tsigKeyRing,
 	}
 
 	if cfg.DoH.Enabled {
@@ -584,8 +594,31 @@ func New(cfg Config) (*Server, error) {
 
 // Start starts all DNS listeners
 func (s *Server) Start() error {
+	if s.cfg.TCPAddr != "" {
+		baseListener, err := net.Listen("tcp", s.cfg.TCPAddr)
+		if err != nil {
+			return fmt.Errorf("listen TCP DNS: %w", err)
+		}
+		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
+		if err != nil {
+			_ = baseListener.Close()
+			return fmt.Errorf("protect TCP DNS listener: %w", err)
+		}
+		s.tcpServer.Listener = listener
+		if limited, ok := listener.(*transport.LimitedListener); ok {
+			s.tcpLimiter = limited
+		}
+	}
+	closeTCPListener := func() {
+		if s.tcpServer.Listener != nil {
+			_ = s.tcpServer.Listener.Close()
+			s.tcpServer.Listener = nil
+			s.tcpLimiter = nil
+		}
+	}
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
+			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
 	}
@@ -594,6 +627,7 @@ func (s *Server) Start() error {
 			if s.dohServer != nil {
 				_ = s.dohServer.Stop()
 			}
+			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
 	}
@@ -605,6 +639,7 @@ func (s *Server) Start() error {
 			if s.dotServer != nil {
 				_ = s.dotServer.Stop()
 			}
+			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
 	}
@@ -625,17 +660,19 @@ func (s *Server) Start() error {
 		}()
 	}
 
-	// Start TCP listener
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	// Start the pre-bound, admission-limited TCP listener.
+	if s.tcpServer.Listener != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
 
-		fmt.Printf("TCP listener started on %s\n", s.cfg.TCPAddr)
+			fmt.Printf("TCP listener started on %s\n", s.cfg.TCPAddr)
 
-		if err := s.tcpServer.ListenAndServe(); err != nil {
-			fmt.Printf("TCP listener error: %v\n", err)
-		}
-	}()
+			if err := s.tcpServer.ActivateAndServe(); err != nil {
+				fmt.Printf("TCP listener error: %v\n", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -665,8 +702,10 @@ func (s *Server) Stop() error {
 	}
 
 	// Shutdown TCP server
-	if err := s.tcpServer.Shutdown(); err != nil {
-		fmt.Printf("Error shutting down TCP listener: %v\n", err)
+	if s.tcpServer.Listener != nil {
+		if err := s.tcpServer.Shutdown(); err != nil {
+			fmt.Printf("Error shutting down TCP listener: %v\n", err)
+		}
 	}
 
 	// Wait for all goroutines
@@ -1511,6 +1550,7 @@ type Stats struct {
 	ComplexityRejected uint64
 
 	ClientReputation reputation.Stats
+	TCPConnections   transport.TCPConnectionStats
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1530,6 +1570,9 @@ func (s *Server) GetStats() Stats {
 	}
 	if s.reputation != nil {
 		stats.ClientReputation = s.reputation.Stats()
+	}
+	if s.tcpLimiter != nil {
+		stats.TCPConnections = s.tcpLimiter.Stats()
 	}
 
 	if s.recursive != nil {

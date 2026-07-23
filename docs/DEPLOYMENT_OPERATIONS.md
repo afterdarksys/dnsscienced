@@ -648,8 +648,10 @@ net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.udp_rmem_min = 16384
 net.ipv4.udp_wmem_min = 16384
 
-# TCP tuning (for DoT/DoH)
+# TCP tuning (DNS over TCP, DoT, and DoH)
+net.ipv4.tcp_syncookies = 1
 net.ipv4.tcp_max_syn_backlog = 65536
+net.ipv4.tcp_synack_retries = 3
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 
@@ -666,6 +668,35 @@ net.ipv4.tcp_congestion_control = bbr
 # Apply settings
 sudo sysctl -p /etc/sysctl.d/99-dnsscience.conf
 ```
+
+`tcp_syncookies` and `tcp_max_syn_backlog` protect connections before they
+reach the process. Keep SYN cookies enabled, but treat sustained activation as
+an overload signal: cookies preserve availability by omitting TCP options and
+do not replace upstream anycast, scrubbing, or NIC/XDP filtering.
+
+The application independently bounds established connections, per-client
+connections, completed handshakes per second, idle lifetime, and queries per
+connection:
+
+```yaml
+server:
+  read_timeout: 5s
+  write_timeout: 5s
+  idle_timeout: 60s
+  tcp_protection:
+    enabled: true
+    max_connections: 20000
+    max_connections_per_client: 128
+    accept_rate_per_second: 10000
+    accept_burst: 20000
+    max_queries_per_connection: 100
+```
+
+Size `LimitNOFILE` above `max_connections` plus UDP, control-plane, upstream,
+and logging descriptors. Alert on
+`dnsscienced_tcp_connections_rejected_total`, especially the `accept_rate` and
+`global_capacity` reasons, and on sustained SYN-cookie activity from Linux
+network telemetry.
 
 ### Application-Level Tuning
 

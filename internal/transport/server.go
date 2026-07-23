@@ -31,25 +31,33 @@ type ServerConfig struct {
 	MinimalResponses bool
 
 	// TCP connection limits
-	MaxTCPConnections int           // Maximum concurrent TCP connections (default: 1000)
-	TCPReadTimeout    time.Duration // TCP read timeout (default: 5s)
-	TCPWriteTimeout   time.Duration // TCP write timeout (default: 5s)
-	TCPIdleTimeout    time.Duration // TCP idle timeout (default: 30s)
+	MaxTCPConnections          int           // Maximum concurrent TCP connections (default: 1000)
+	MaxTCPConnectionsPerClient int           // Maximum concurrent connections per client (default: 128)
+	TCPAcceptRatePerSecond     int           // Completed handshakes admitted per second (default: 10000)
+	TCPAcceptBurst             int           // Completed handshake burst (default: 20000)
+	MaxTCPQueriesPerConnection int           // Maximum queries before closing a TCP connection (default: 100)
+	TCPReadTimeout             time.Duration // TCP read timeout (default: 5s)
+	TCPWriteTimeout            time.Duration // TCP write timeout (default: 5s)
+	TCPIdleTimeout             time.Duration // TCP idle timeout (default: 30s)
 }
 
 // DefaultServerConfig returns a configuration with sensible defaults.
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		UDPAddr:           ":53",
-		TCPAddr:           ":53",
-		Upstream:          "8.8.8.8:53",
-		Enable0x20:        true,
-		EnableScrubbing:   true,
-		EnableQNAMEMin:    true,
-		MaxTCPConnections: 1000,
-		TCPReadTimeout:    5 * time.Second,
-		TCPWriteTimeout:   5 * time.Second,
-		TCPIdleTimeout:    30 * time.Second,
+		UDPAddr:                    ":53",
+		TCPAddr:                    ":53",
+		Upstream:                   "8.8.8.8:53",
+		Enable0x20:                 true,
+		EnableScrubbing:            true,
+		EnableQNAMEMin:             true,
+		MaxTCPConnections:          1000,
+		MaxTCPConnectionsPerClient: 128,
+		TCPAcceptRatePerSecond:     10000,
+		TCPAcceptBurst:             20000,
+		MaxTCPQueriesPerConnection: 100,
+		TCPReadTimeout:             5 * time.Second,
+		TCPWriteTimeout:            5 * time.Second,
+		TCPIdleTimeout:             30 * time.Second,
 	}
 }
 
@@ -130,13 +138,45 @@ func (s *Server) Start() error {
 	// Create the DNS handler
 	handler := dns.HandlerFunc(s.handleDNS)
 
+	var tcpListener net.Listener
+	if s.config.TCPAddr != "" {
+		protection := DefaultTCPProtectionConfig()
+		if s.config.MaxTCPConnections > 0 {
+			protection.MaxConnections = s.config.MaxTCPConnections
+		}
+		if s.config.MaxTCPConnectionsPerClient > 0 {
+			protection.MaxConnectionsPerClient = s.config.MaxTCPConnectionsPerClient
+		} else if protection.MaxConnectionsPerClient > protection.MaxConnections {
+			protection.MaxConnectionsPerClient = protection.MaxConnections
+		}
+		if s.config.TCPAcceptRatePerSecond > 0 {
+			protection.AcceptRatePerSecond = s.config.TCPAcceptRatePerSecond
+		}
+		if s.config.TCPAcceptBurst > 0 {
+			protection.AcceptBurst = s.config.TCPAcceptBurst
+		}
+		if s.config.MaxTCPQueriesPerConnection > 0 {
+			protection.MaxQueriesPerConnection = s.config.MaxTCPQueriesPerConnection
+		}
+		s.config.MaxTCPQueriesPerConnection = protection.MaxQueriesPerConnection
+		baseListener, err := net.Listen("tcp", s.config.TCPAddr)
+		if err != nil {
+			return fmt.Errorf("listen TCP DNS: %w", err)
+		}
+		tcpListener, err = NewLimitedListener(baseListener, protection)
+		if err != nil {
+			_ = baseListener.Close()
+			return fmt.Errorf("protect TCP DNS listener: %w", err)
+		}
+	}
+
 	// Start UDP server with timeouts
 	if s.config.UDPAddr != "" {
 		s.udpServer = &dns.Server{
 			Addr:         s.config.UDPAddr,
 			Net:          "udp",
 			Handler:      handler,
-			ReadTimeout:  s.config.TCPReadTimeout,  // Apply same timeout to UDP
+			ReadTimeout:  s.config.TCPReadTimeout, // Apply same timeout to UDP
 			WriteTimeout: s.config.TCPWriteTimeout,
 			UDPSize:      4096, // Maximum UDP payload size
 		}
@@ -160,22 +200,21 @@ func (s *Server) Start() error {
 	// Start TCP server with connection limits
 	if s.config.TCPAddr != "" {
 		s.tcpServer = &dns.Server{
-			Addr:         s.config.TCPAddr,
-			Net:          "tcp",
+			Listener:     tcpListener,
 			Handler:      handler,
 			ReadTimeout:  s.config.TCPReadTimeout,
 			WriteTimeout: s.config.TCPWriteTimeout,
 			IdleTimeout: func() time.Duration {
 				return s.config.TCPIdleTimeout
 			},
-			MaxTCPQueries: s.config.MaxTCPConnections,
+			MaxTCPQueries: s.config.MaxTCPQueriesPerConnection,
 		}
 
 		s.serverWg.Add(1)
 		go func() {
 			defer s.serverWg.Done()
 
-			if err := s.tcpServer.ListenAndServe(); err != nil {
+			if err := s.tcpServer.ActivateAndServe(); err != nil {
 				select {
 				case s.serverErrs <- fmt.Errorf("TCP server error: %w", err):
 				case <-s.ctx.Done():

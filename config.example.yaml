@@ -18,6 +18,16 @@ server:
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
   primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
+  read_timeout: 5s
+  write_timeout: 5s
+  idle_timeout: 60s              # Bounds idle TCP connection lifetime
+  tcp_protection:
+    enabled: true
+    max_connections: 20000
+    max_connections_per_client: 128
+    accept_rate_per_second: 10000
+    accept_burst: 20000
+    max_queries_per_connection: 100
   query_complexity:
     enabled: true
     max_score: 20

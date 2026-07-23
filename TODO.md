@@ -76,7 +76,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   authoritative, and recursive processing, with Prometheus rejection counters.
 - [x] Add bounded adaptive IP-reputation admission limits with lazy score decay,
   fixed-capacity sharded state, trusted CIDR exemptions, and Prometheus metrics.
-- [ ] Add explicit TCP/SYN-flood deployment protections.
+- [x] Add explicit TCP/SYN-flood protections: bounded global/per-client
+  established connections, handshake admission rate, idle/query limits,
+  Prometheus metrics, and Linux SYN-cookie/backlog deployment guidance.
 - [ ] Add forensic query replay and SOC 2/ISO 27001 reporting workflows.
 - [ ] Add SIEM/SOAR export formats and integrations.
 
