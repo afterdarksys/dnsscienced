@@ -36,12 +36,16 @@ func (kr *KeyRing) Generate(msg []byte, t *dns.TSIG) ([]byte, error) {
 	if !ok {
 		return nil, dns.ErrSecret
 	}
+	algorithm := dns.CanonicalName(t.Algorithm)
+	if algorithm != entry.algorithm {
+		return nil, dns.ErrKeyAlg
+	}
 	rawSecret, err := base64.StdEncoding.DecodeString(entry.secret)
 	if err != nil {
 		return nil, err
 	}
 	var mac hash.Hash
-	switch dns.CanonicalName(t.Algorithm) {
+	switch algorithm {
 	case dns.HmacSHA256:
 		mac = hmac.New(sha256.New, rawSecret)
 	case dns.HmacSHA384:

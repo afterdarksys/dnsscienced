@@ -59,15 +59,15 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
 ## Phase 2: Streaming Intelligence
 
 ### dnsscienced Side
-- [ ] Complete `WatchCache()` RPC in `api/grpc/services/cache.go`
+- [x] Complete `WatchCache()` RPC in `api/grpc/services/cache.go`
   - [x] Create the subscription channel and streaming lifecycle
   - [x] Filter events by requested event type
-  - [ ] Filter events by the requested domain pattern
-  - [ ] Emit HIT, MISS, and EVICT events in addition to STORE
+  - [x] Filter events by the requested domain pattern
+  - [x] Emit HIT, MISS, and EVICT events in addition to STORE
 
-- [ ] Complete the cache event publisher integration
+- [x] Complete the cache event publisher integration
   - [x] Publish STORE events with threat metadata
-  - [ ] Publish the remaining cache mutation/access events
+  - [x] Publish the remaining cache mutation/access events
 
 ### ads-httpproxy Side
 - [ ] Subscribe to `WatchCache()` stream for real-time threat updates

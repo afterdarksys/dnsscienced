@@ -17,14 +17,22 @@ import (
 
 func startDualProtocolDNSServer(t *testing.T, handler dns.Handler) string {
 	t.Helper()
-	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen TCP: %v", err)
-	}
-	udpConn, err := net.ListenPacket("udp", tcpListener.Addr().String())
-	if err != nil {
+	var tcpListener net.Listener
+	var udpConn net.PacketConn
+	var err error
+	for range 10 {
+		tcpListener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen TCP: %v", err)
+		}
+		udpConn, err = net.ListenPacket("udp", tcpListener.Addr().String())
+		if err == nil {
+			break
+		}
 		_ = tcpListener.Close()
-		t.Fatalf("listen UDP: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("listen UDP on a shared TCP/UDP port: %v", err)
 	}
 
 	tcpServer := &dns.Server{Listener: tcpListener, Handler: handler}
@@ -72,6 +80,130 @@ func TestQueryNameserverRetriesTruncatedUDPOverTCP(t *testing.T) {
 	}
 	if udpQueries.Load() != 1 || tcpQueries.Load() != 1 {
 		t.Fatalf("UDP queries=%d TCP queries=%d, want one of each", udpQueries.Load(), tcpQueries.Load())
+	}
+}
+
+func TestForwardOnlyUsesConfiguredRecursiveUpstream(t *testing.T) {
+	var recursiveDesired atomic.Bool
+	addr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		recursiveDesired.Store(req.RecursionDesired)
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.RecursionAvailable = true
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("192.0.2.90"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+	r, err := NewRecursive(Config{
+		QueryTimeout: time.Second,
+		ForwardMode:  ForwardModeOnly,
+		Forwarders:   []string{addr},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	resp, err := r.resolveUpstream(context.Background(), "forwarded.example.", dns.TypeA, dns.ClassINET)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recursiveDesired.Load() || len(resp.Answer) != 1 {
+		t.Fatalf("RD=%v response=%v", recursiveDesired.Load(), resp)
+	}
+}
+
+func TestConditionalForwardingUsesLongestSuffixAndDefaultsFailClosed(t *testing.T) {
+	global := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("192.0.2.1"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+	conditional := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("192.0.2.2"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+	r, err := NewRecursive(Config{
+		QueryTimeout: time.Second,
+		ForwardMode:  ForwardModeFirst,
+		Forwarders:   []string{global},
+		ConditionalForwarders: map[string][]string{
+			"corp.example.com": {conditional},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	rule, ok := r.forwardRuleFor("host.corp.example.com.")
+	if !ok || rule.servers[0] != conditional || rule.mode != ForwardModeOnly {
+		t.Fatalf("conditional rule = %+v, matched=%v", rule, ok)
+	}
+	resp, err := r.resolveUpstream(context.Background(), "host.corp.example.com.", dns.TypeA, dns.ClassINET)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Answer[0].(*dns.A).A.String(); got != "192.0.2.2" {
+		t.Fatalf("answer = %s, want conditional forwarder", got)
+	}
+}
+
+func TestForwardFirstFallsBackToDirectIteration(t *testing.T) {
+	authoritative := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Authoritative = true
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("192.0.2.91"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+	deadListener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddress := deadListener.LocalAddr().String()
+	_ = deadListener.Close()
+
+	r, err := NewRecursive(Config{
+		QueryTimeout: 50 * time.Millisecond,
+		ForwardMode:  ForwardModeFirst,
+		Forwarders:   []string{deadAddress},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.roots = []string{authoritative}
+	resp, err := r.resolveUpstream(context.Background(), "fallback.example.", dns.TypeA, dns.ClassINET)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Answer[0].(*dns.A).A.String(); got != "192.0.2.91" {
+		t.Fatalf("answer = %s, want direct fallback", got)
+	}
+}
+
+func TestForwardingConfigurationRejectsIgnoredOrHostnameUpstreams(t *testing.T) {
+	for _, cfg := range []Config{
+		{ForwardMode: ForwardModeDirect, Forwarders: []string{"192.0.2.1"}},
+		{ForwardMode: ForwardModeOnly},
+		{ForwardMode: ForwardModeOnly, Forwarders: []string{"resolver.example:53"}},
+	} {
+		if _, err := NewRecursive(cfg); err == nil {
+			t.Fatalf("NewRecursive accepted invalid forwarding config: %+v", cfg)
+		}
 	}
 }
 

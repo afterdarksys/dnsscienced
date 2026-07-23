@@ -40,8 +40,8 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Enrich entries when the sharded cache stores them.
 - [x] Implement the `WatchCache` streaming RPC lifecycle and event-type filtering.
 - [x] Publish cache STORE events, including threat metadata.
-- [ ] Publish HIT, MISS, and EVICT events and implement the requested domain-pattern
-  filter; the protobuf fields exist but the service does not yet enforce all of them.
+- [x] Publish HIT, MISS, EVICT, STORE, and DELETE events; enforce event-type and
+  domain-pattern filters in the streaming service.
 - [ ] Aggregate multiple threat-intelligence providers with configurable refresh,
   scoring, provenance, and conflict handling.
 - [ ] Import operator-supplied threat lists.
@@ -114,9 +114,15 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
 - [ ] Integrate Linux batching into a feature-parity listener only after complete
   receive-parse-route-send load tests improve throughput and tail latency.
-- [ ] Evaluate XDP/eBPF as a separately deployable cache-hit fast path with explicit
-  security-policy parity, cache-coherency, privilege, observability, and portable
-  fallback requirements; do not couple it to the portable resolver by default.
+- [x] Define an opt-in XDP/AF_XDP architecture with guarded `XDP_PASS` fallback,
+  queue-owned workers, generation-based cache/policy coherence, least privilege,
+  observability, hardware qualification, and portable-path differential tests.
+- [ ] Implement and qualify guarded XSK-map redirection and the AF_XDP user-space
+  engine; keep direct in-kernel cache responses out of scope until separately
+  threat-modeled and proven faster.
+- [x] Quarantine and harden the legacy Netfilter RPZ module: root-only
+  capability-checked control, bounded ingress-only parsing, opt-in rate-limited
+  logging, fragment pass-through, and RCU-safe unload.
 - [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
@@ -124,7 +130,7 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   concurrency, queue size, cache size/shards, and Go memory/GC limits.
 - [x] Decide and document CPU-affinity support. Prefer service-manager/container
   affinity unless measurements justify per-worker OS-thread pinning.
-- [ ] Add explicit forwarding/upstream modes so operators can choose direct
+- [x] Add explicit forwarding/upstream modes so operators can choose direct
   iterative resolution, public recursive resolvers, or conditional forwarders
   without relying on ignored configuration.
 

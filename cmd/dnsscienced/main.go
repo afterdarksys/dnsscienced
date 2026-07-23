@@ -19,11 +19,14 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/admin"
 	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/dnsscience/dnsscienced/internal/catalog"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/dnsscience/dnsscienced/internal/primarynotify"
+	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/server"
@@ -140,6 +143,10 @@ func main() {
 		// Wait, let's restart. config.Load returns a *config.Config which CONTAINS server.Config.
 		// So we should take cfg = loadedCfg.Server.
 		cfg = loadedCfg.Server
+		if err := wireResolverForwarding(&cfg.RecursiveConfig, loadedCfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring resolver forwarding: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Initialize defensive features if configured
 		if hasDefensiveFeatures(loadedCfg.Defensive) {
@@ -174,9 +181,11 @@ func main() {
 		// Empty AllowUpdate slice is passed as-is; server.New() intercepts empty → nil (deny all per D-15).
 		if len(loadedCfg.Zones) > 0 {
 			cfg.ZoneUpdateCIDRs = make(map[string][]string, len(loadedCfg.Zones))
+			cfg.ZoneUpdateTSIGKeys = make(map[string][]string, len(loadedCfg.Zones))
 			for _, zc := range loadedCfg.Zones {
 				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
 				cfg.ZoneUpdateCIDRs[zoneName] = zc.AllowUpdate
+				cfg.ZoneUpdateTSIGKeys[zoneName] = zc.UpdateTSIGKeys
 			}
 		}
 
@@ -208,6 +217,12 @@ func main() {
 				}
 			}
 		}
+		notifyZones, err := buildPrimaryNotifyConfigs(loadedCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring primary NOTIFY: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.PrimaryNotifyZones = notifyZones
 
 		// Check if DHCP config was loaded
 		if loadedCfg.DHCP.Enabled {
@@ -317,11 +332,47 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error configuring secondary zones: %v\n", err)
 			os.Exit(1)
 		}
+		var secondaryStore secondary.ZoneStore = srv
+		var catalogRuntime *catalog.Runtime
+		if len(loadedCfg.CatalogZones) > 0 {
+			sources, catalogTransfers, err := buildCatalogConfigs(loadedCfg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring catalog zones: %v\n", err)
+				os.Exit(1)
+			}
+			reservedSecondaries := make([]string, 0, len(secondaryConfigs))
+			for _, secondaryConfig := range secondaryConfigs {
+				reservedSecondaries = append(reservedSecondaries, secondaryConfig.Name)
+			}
+			catalogRuntime, err = catalog.NewRuntime(
+				srv,
+				sources,
+				loadedCfg.CatalogStateFile,
+				reservedSecondaries,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading catalog state: %v\n", err)
+				os.Exit(1)
+			}
+			catalogConfigs, err := catalogRuntime.CatalogSecondaryConfigs(catalogTransfers)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring catalog transfers: %v\n", err)
+				os.Exit(1)
+			}
+			secondaryConfigs = append(secondaryConfigs, catalogConfigs...)
+			secondaryStore = catalogRuntime
+		}
 		if len(secondaryConfigs) > 0 {
-			secondaryMgr, err = secondary.NewManager(srv, nil, secondaryConfigs)
+			secondaryMgr, err = secondary.NewManager(secondaryStore, nil, secondaryConfigs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating secondary manager: %v\n", err)
 				os.Exit(1)
+			}
+			if catalogRuntime != nil {
+				if err := catalogRuntime.AttachController(secondaryMgr); err != nil {
+					fmt.Fprintf(os.Stderr, "Error restoring catalog members: %v\n", err)
+					os.Exit(1)
+				}
 			}
 			srv.SetSOANotifyHandler(secondaryMgr)
 			if err := secondaryMgr.Start(context.Background()); err != nil {
@@ -329,7 +380,7 @@ func main() {
 				os.Exit(1)
 			}
 			srv.EnableAuthoritative()
-			fmt.Printf("Loaded %d secondary zone(s)\n\n", len(secondaryConfigs))
+			fmt.Printf("Loaded %d secondary/catalog zone(s)\n\n", len(secondaryConfigs))
 		}
 	}
 
@@ -478,6 +529,12 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 			}
 			continue
 		}
+		if kind == "forward" {
+			if len(zc.Forwarders) == 0 {
+				return loaded, fmt.Errorf("zone %s: forward zone requires forwarders", zc.Name)
+			}
+			continue
+		}
 		if kind != "primary" {
 			return loaded, fmt.Errorf("zone %s: type %q is not implemented", zc.Name, kind)
 		}
@@ -486,9 +543,6 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		}
 		if zc.DNSSECSigning != nil && zc.DNSSECSigning.Enabled {
 			return loaded, fmt.Errorf("zone %s: authoritative DNSSEC signing is not implemented", zc.Name)
-		}
-		if len(zc.AlsoNotify) > 0 {
-			return loaded, fmt.Errorf("zone %s: also_notify is not implemented", zc.Name)
 		}
 		z, err := zone.ParseZoneFile(zc.File, zone.DefaultConfig())
 		if err != nil {
@@ -511,6 +565,89 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 	return loaded, nil
 }
 
+func wireResolverForwarding(resolverConfig *resolver.Config, cfg *config.Config) error {
+	if resolverConfig.ConditionalForwarders == nil {
+		resolverConfig.ConditionalForwarders = make(map[string][]string)
+	}
+	if resolverConfig.ForwardZoneModes == nil {
+		resolverConfig.ForwardZoneModes = make(map[string]string)
+	}
+	for configuredSuffix, servers := range cfg.Forwarders {
+		suffix := ""
+		if strings.TrimSpace(configuredSuffix) != "" {
+			suffix = strings.ToLower(dns.Fqdn(configuredSuffix))
+		}
+		if suffix == "" {
+			if len(resolverConfig.Forwarders) > 0 {
+				return fmt.Errorf("duplicate global forwarders")
+			}
+			resolverConfig.Forwarders = append([]string(nil), servers...)
+			continue
+		}
+		if _, exists := resolverConfig.ConditionalForwarders[suffix]; exists {
+			return fmt.Errorf("duplicate forwarder suffix %q", configuredSuffix)
+		}
+		resolverConfig.ConditionalForwarders[suffix] = append([]string(nil), servers...)
+	}
+	for _, zoneConfig := range cfg.Zones {
+		if strings.ToLower(strings.TrimSpace(zoneConfig.Type)) != "forward" {
+			continue
+		}
+		suffix := strings.ToLower(dns.Fqdn(zoneConfig.Name))
+		if _, exists := resolverConfig.ConditionalForwarders[suffix]; exists {
+			return fmt.Errorf("duplicate forwarder suffix %s", suffix)
+		}
+		resolverConfig.ConditionalForwarders[suffix] = append([]string(nil), zoneConfig.Forwarders...)
+		mode := zoneConfig.ForwardMode
+		if mode == "" {
+			mode = resolver.ForwardModeOnly
+		}
+		resolverConfig.ForwardZoneModes[suffix] = mode
+	}
+	return nil
+}
+
+func buildPrimaryNotifyConfigs(cfg *config.Config) (map[string]primarynotify.ZoneConfig, error) {
+	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
+	for _, key := range cfg.TsigKeys {
+		keys[strings.ToLower(dns.Fqdn(key.Name))] = key
+	}
+
+	result := make(map[string]primarynotify.ZoneConfig)
+	for _, zc := range cfg.Zones {
+		kind := strings.ToLower(strings.TrimSpace(zc.Type))
+		if kind == "" {
+			kind = "primary"
+		}
+		if kind != "primary" || len(zc.AlsoNotify) == 0 {
+			continue
+		}
+		notifyCfg := primarynotify.ZoneConfig{
+			Targets:       append([]string(nil), zc.AlsoNotify...),
+			AllowUnsigned: zc.AllowUnsignedNotify,
+			Timeout:       zc.NotifyTimeout,
+			RetryBackoff:  zc.NotifyRetryBackoff,
+			Attempts:      zc.NotifyAttempts,
+		}
+		if zc.NotifyTSIGKey != "" {
+			keyName := strings.ToLower(dns.Fqdn(zc.NotifyTSIGKey))
+			key, ok := keys[keyName]
+			if !ok {
+				return nil, fmt.Errorf("zone %s: notify_tsig_key %q is not defined", zc.Name, zc.NotifyTSIGKey)
+			}
+			notifyCfg.TSIGKey = key.Name
+			notifyCfg.TSIGAlgorithm = key.Algorithm
+		} else if !zc.AllowUnsignedNotify {
+			return nil, fmt.Errorf(
+				"zone %s: notify_tsig_key is required when also_notify is configured; set allow_unsigned_notify only for legacy secondaries",
+				zc.Name,
+			)
+		}
+		result[strings.ToLower(dns.Fqdn(zc.Name))] = notifyCfg
+	}
+	return result, nil
+}
+
 func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
 	for _, key := range cfg.TsigKeys {
@@ -523,15 +660,16 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			continue
 		}
 		secondaryCfg := secondary.Config{
-			Name:              zc.Name,
-			Masters:           append([]string(nil), zc.Masters...),
-			TransferSource:    zc.TransferSource,
-			RefreshInterval:   zc.RefreshInterval,
-			MinRefreshTime:    zc.MinRefreshTime,
-			MaxRefreshTime:    zc.MaxRefreshTime,
-			MinRetryTime:      zc.MinRetryTime,
-			MaxRetryTime:      zc.MaxRetryTime,
-			AllowAXFRFallback: true,
+			Name:                  zc.Name,
+			Masters:               append([]string(nil), zc.Masters...),
+			TransferSource:        zc.TransferSource,
+			AllowUnsignedTransfer: zc.AllowUnsignedTransfer,
+			RefreshInterval:       zc.RefreshInterval,
+			MinRefreshTime:        zc.MinRefreshTime,
+			MaxRefreshTime:        zc.MaxRefreshTime,
+			MinRetryTime:          zc.MinRetryTime,
+			MaxRetryTime:          zc.MaxRetryTime,
+			AllowAXFRFallback:     true,
 		}
 		if zc.AllowAXFRFallback != nil {
 			secondaryCfg.AllowAXFRFallback = *zc.AllowAXFRFallback
@@ -547,8 +685,95 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 				Algorithm: key.Algorithm,
 				Secret:    key.Secret,
 			}
+		} else if !zc.AllowUnsignedTransfer {
+			return nil, fmt.Errorf(
+				"zone %s: transfer_tsig_key is required for secure secondary operation; set allow_unsigned_transfer: true only for a legacy primary",
+				zc.Name,
+			)
 		}
 		result = append(result, secondaryCfg)
+	}
+	return result, nil
+}
+
+func buildCatalogConfigs(cfg *config.Config) (
+	[]catalog.SourceConfig,
+	map[string]secondary.Config,
+	error,
+) {
+	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
+	for _, key := range cfg.TsigKeys {
+		keys[strings.ToLower(dns.Fqdn(key.Name))] = key
+	}
+
+	sources := make([]catalog.SourceConfig, 0, len(cfg.CatalogZones))
+	transfers := make(map[string]secondary.Config, len(cfg.CatalogZones))
+	for _, configured := range cfg.CatalogZones {
+		name := strings.ToLower(dns.Fqdn(configured.Name))
+		transfer, err := catalogTransferConfig(name, configured.CatalogTransferConfig, keys)
+		if err != nil {
+			return nil, nil, err
+		}
+		defaults, err := catalogTransferConfig(name+" member default", configured.MemberDefaults, keys)
+		if err != nil {
+			return nil, nil, err
+		}
+		groups := make(map[string]secondary.Config, len(configured.Groups))
+		for group, groupConfig := range configured.Groups {
+			resolved, err := catalogTransferConfig(name+" group "+group, groupConfig, keys)
+			if err != nil {
+				return nil, nil, err
+			}
+			groups[group] = resolved
+		}
+		sources = append(sources, catalog.SourceConfig{
+			Name:     name,
+			Defaults: defaults,
+			Groups:   groups,
+		})
+		transfers[name] = transfer
+	}
+	return sources, transfers, nil
+}
+
+func catalogTransferConfig(
+	label string,
+	configured config.CatalogTransferConfig,
+	keys map[string]config.TsigKeyConfig,
+) (secondary.Config, error) {
+	result := secondary.Config{
+		Masters:               append([]string(nil), configured.Masters...),
+		TransferSource:        configured.TransferSource,
+		AllowUnsignedTransfer: configured.AllowUnsignedTransfer,
+		RefreshInterval:       configured.RefreshInterval,
+		MinRefreshTime:        configured.MinRefreshTime,
+		MaxRefreshTime:        configured.MaxRefreshTime,
+		MinRetryTime:          configured.MinRetryTime,
+		MaxRetryTime:          configured.MaxRetryTime,
+		AllowAXFRFallback:     true,
+	}
+	if configured.AllowAXFRFallback != nil {
+		result.AllowAXFRFallback = *configured.AllowAXFRFallback
+	}
+	if configured.TransferTSIGKey != "" {
+		keyName := strings.ToLower(dns.Fqdn(configured.TransferTSIGKey))
+		key, ok := keys[keyName]
+		if !ok {
+			return secondary.Config{}, fmt.Errorf("%s: transfer_tsig_key %q is not defined", label, configured.TransferTSIGKey)
+		}
+		result.TransferKey = &secondary.TransferKey{
+			Name:      key.Name,
+			Algorithm: key.Algorithm,
+			Secret:    key.Secret,
+		}
+	} else if !configured.AllowUnsignedTransfer {
+		return secondary.Config{}, fmt.Errorf(
+			"%s: transfer_tsig_key is required; unsigned catalog/member transfers require explicit allow_unsigned_transfer",
+			label,
+		)
+	}
+	if len(result.Masters) == 0 {
+		return secondary.Config{}, fmt.Errorf("%s: at least one master is required", label)
 	}
 	return result, nil
 }

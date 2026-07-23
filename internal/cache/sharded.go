@@ -505,6 +505,28 @@ func (c *ShardedCache) getShard(hash uint64) *shard {
 
 // Get retrieves an entry from cache
 func (c *ShardedCache) Get(hash uint64) (*Entry, bool) {
+	return c.get(hash, "", 0, 0, false)
+}
+
+// GetQuestion retrieves an entry while retaining enough question identity to
+// publish truthful MISS events. Callers on the DNS request path should prefer
+// this method; Get remains available for hash-only internal probes.
+func (c *ShardedCache) GetQuestion(
+	hash uint64,
+	qname string,
+	qtype uint16,
+	qclass uint16,
+) (*Entry, bool) {
+	return c.get(hash, qname, qtype, qclass, true)
+}
+
+func (c *ShardedCache) get(
+	hash uint64,
+	qname string,
+	qtype uint16,
+	qclass uint16,
+	reportMiss bool,
+) (*Entry, bool) {
 	shard := c.getShard(hash)
 
 	shard.mu.RLock()
@@ -513,24 +535,35 @@ func (c *ShardedCache) Get(hash uint64) (*Entry, bool) {
 
 	if !ok {
 		c.misses.Add(1)
+		if reportMiss && c.broadcaster != nil {
+			c.broadcaster.PublishMiss(qname, qtype, qclass, "never_cached")
+		}
 		return nil, false
 	}
 
 	// Check expiration
+	stale := false
 	if entry.IsExpired() {
 		if !c.serveStale {
 			c.misses.Add(1)
+			if reportMiss && c.broadcaster != nil {
+				c.broadcaster.PublishMiss(qname, qtype, qclass, "expired")
+			}
 			return nil, false
 		}
 
 		// Check if within serve-stale window
 		if !entry.IsStale(c.maxStaleTTL) {
 			c.misses.Add(1)
+			if reportMiss && c.broadcaster != nil {
+				c.broadcaster.PublishMiss(qname, qtype, qclass, "stale_window_expired")
+			}
 			return nil, false
 		}
 
 		// Serve stale but increment miss counter
 		c.misses.Add(1)
+		stale = true
 	} else {
 		c.hits.Add(1)
 
@@ -550,6 +583,9 @@ func (c *ShardedCache) Get(hash uint64) (*Entry, bool) {
 	}
 
 	entry.Hits.Add(1)
+	if c.broadcaster != nil {
+		c.broadcaster.PublishHit(entry, stale)
+	}
 	return entry, true
 }
 
@@ -677,11 +713,14 @@ func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 	}
 
 	// Evict as many entries as needed to satisfy both count and memory bounds.
+	var evicted []*Entry
 	for len(shard.entries) >= shard.maxSize ||
 		(shard.maxMemory > 0 && shard.memoryUsed.Load()+entrySize > shard.maxMemory) {
-		if !c.evictNext(shard) {
+		evictedEntry, ok := c.evictNext(shard)
+		if !ok {
 			break
 		}
+		evicted = append(evicted, evictedEntry)
 	}
 
 	// Add new entry
@@ -691,6 +730,9 @@ func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 	shard.mu.Unlock()
 
 	if c.broadcaster != nil {
+		for _, evictedEntry := range evicted {
+			c.broadcaster.PublishEvict(evictedEntry, "capacity")
+		}
 		c.broadcaster.PublishStore(entry)
 	}
 }
@@ -700,13 +742,18 @@ func (c *ShardedCache) Delete(hash uint64) {
 	shard := c.getShard(hash)
 
 	shard.mu.Lock()
+	var removed *Entry
 	if entry, exists := shard.entries[hash]; exists {
+		removed = entry
 		entrySize := entry.estimateSize()
 		shard.memoryUsed.Add(-entrySize)
 		delete(shard.entries, hash)
 		shard.expiry.remove(hash)
 	}
 	shard.mu.Unlock()
+	if removed != nil && c.broadcaster != nil {
+		c.broadcaster.PublishDelete(removed, "explicit")
+	}
 }
 
 func (c *ShardedCache) removeAfter(entry *Entry) time.Time {
@@ -718,29 +765,39 @@ func (c *ShardedCache) removeAfter(entry *Entry) time.Time {
 
 // evictNext removes the earliest-expiring entry in O(log n). The caller must
 // hold the shard write lock.
-func (c *ShardedCache) evictNext(s *shard) bool {
+func (c *ShardedCache) evictNext(s *shard) (*Entry, bool) {
 	item, ok := s.expiry.pop()
 	if !ok {
-		return false
+		return nil, false
 	}
 	entry, ok := s.entries[item.hash]
 	if !ok {
-		return false
+		return nil, false
 	}
 	s.memoryUsed.Add(-entry.estimateSize())
 	delete(s.entries, item.hash)
 	c.evictions.Add(1)
-	return true
+	return entry, true
 }
 
 // Flush clears all entries from cache
 func (c *ShardedCache) Flush() {
 	for _, shard := range c.shards {
 		shard.mu.Lock()
+		var removed []*Entry
+		if c.broadcaster != nil && c.broadcaster.HasSubscribers() {
+			removed = make([]*Entry, 0, len(shard.entries))
+			for _, entry := range shard.entries {
+				removed = append(removed, entry)
+			}
+		}
 		shard.entries = make(map[uint64]*Entry, shard.maxSize)
 		shard.expiry = newExpiryQueue(shard.maxSize)
 		shard.memoryUsed.Store(0)
 		shard.mu.Unlock()
+		for _, entry := range removed {
+			c.broadcaster.PublishDelete(entry, "flush")
+		}
 	}
 }
 
@@ -768,6 +825,7 @@ func (c *ShardedCache) performCleanup() {
 		shard.mu.Lock()
 
 		expired := 0
+		var expiredEntries []*Entry
 		for {
 			next, ok := shard.expiry.peek()
 			if !ok || next.removeAfter.After(now) {
@@ -782,9 +840,15 @@ func (c *ShardedCache) performCleanup() {
 			shard.memoryUsed.Add(-entry.estimateSize())
 			c.expirations.Add(1)
 			expired++
+			expiredEntries = append(expiredEntries, entry)
 		}
 
 		shard.mu.Unlock()
+		if c.broadcaster != nil {
+			for _, entry := range expiredEntries {
+				c.broadcaster.PublishEvict(entry, "expired")
+			}
+		}
 
 		// Yield to prevent blocking for too long
 		if expired > 0 {

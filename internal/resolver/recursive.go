@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
@@ -42,6 +45,12 @@ var (
 	ErrMaxIterations = errors.New("max iterations reached")
 	ErrNoNameservers = errors.New("no nameservers available")
 	ErrTimeout       = errors.New("query timeout")
+)
+
+const (
+	ForwardModeDirect = "direct"
+	ForwardModeFirst  = "first"
+	ForwardModeOnly   = "only"
 )
 
 // Config holds resolver configuration
@@ -107,6 +116,19 @@ type Config struct {
 	// StaleTTL is the maximum age past expiry that a stale record may be served.
 	// Defaults to 24h. Wired into CacheConfig.MaxStaleTTL to avoid duplication (D-11).
 	StaleTTL time.Duration `yaml:"stale_max_ttl"`
+
+	// ForwardMode selects the global upstream policy:
+	// direct = iterative resolution from the root, first = try global
+	// forwarders then iterate, only = never bypass global forwarders.
+	ForwardMode string `yaml:"forward_mode"`
+	// Forwarders is the global recursive-upstream list.
+	Forwarders []string `yaml:"forwarders"`
+	// ConditionalForwarders maps zone suffixes to recursive upstream IPs.
+	// Longest matching suffix wins.
+	ConditionalForwarders map[string][]string `yaml:"-"`
+	// ForwardZoneModes optionally overrides first/only for a suffix. Conditional
+	// rules default to only to avoid leaking private names on failure.
+	ForwardZoneModes map[string]string `yaml:"-"`
 }
 
 // Recursive implements a full recursive DNS resolver
@@ -125,6 +147,15 @@ type Recursive struct {
 	// UDP client with randomized source port
 	client *dns.Client
 	roots  []string
+
+	forwardRules  []forwardRule
+	forwardCursor atomic.Uint64
+}
+
+type forwardRule struct {
+	suffix  string
+	servers []string
+	mode    string
 }
 
 type validationResolver struct{ recursive *Recursive }
@@ -132,7 +163,7 @@ type validationResolver struct{ recursive *Recursive }
 func (v validationResolver) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
 	// DNSKEY/DS lookups must bypass Recursive.Resolve's validation stage or the
 	// validator recursively invokes itself while constructing its own chain.
-	return v.recursive.resolveIterative(ctx, dns.Fqdn(name), qtype, dns.ClassINET)
+	return v.recursive.resolveUpstream(ctx, dns.Fqdn(name), qtype, dns.ClassINET)
 }
 
 // DefaultConfig returns an RFC-compliant default configuration with all three
@@ -152,6 +183,7 @@ func DefaultConfig() Config {
 		StaleTTL:              24 * time.Hour,
 		Enable0x20:            true,
 		EnableScrubbing:       true,
+		ForwardMode:           ForwardModeDirect,
 		CacheConfig: cache.Config{
 			// MinTTL 0 means "no floor" (matches applyTTLPolicy's `> 0` gate).
 			// MaxTTL caps positive-response TTLs at 1 day (Unbound cache-max-ttl
@@ -199,6 +231,10 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.WorkerQueueSize < 1 || cfg.WorkerQueueSize > 1_000_000 {
 		return nil, fmt.Errorf("worker_queue_size must be between 1 and 1000000 (got %d)", cfg.WorkerQueueSize)
 	}
+	forwardRules, err := normalizeForwardRules(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	// Wire resolver feature flags into cache config (D-11: avoid duplication).
 	if cfg.ServeStale {
@@ -224,10 +260,11 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 			Timeout: cfg.QueryTimeout,
 			Net:     "udp",
 		},
-		cfg:    cfg,
-		roots:  append([]string(nil), rootServers...),
-		ctx:    resolverCtx,
-		cancel: resolverCancel,
+		cfg:          cfg,
+		roots:        append([]string(nil), rootServers...),
+		ctx:          resolverCtx,
+		cancel:       resolverCancel,
+		forwardRules: forwardRules,
 	}
 	initialized := false
 	defer func() {
@@ -313,7 +350,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 
 	// 1. Check cache first.
 	cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)
-	if entry, ok := r.cache.Get(cacheKey); ok {
+	if entry, ok := r.cache.GetQuestion(cacheKey, question.Name, question.Qtype, question.Qclass); ok {
 		// Bogus entries are quarantined: serve SERVFAIL so clients don't use
 		// DNSSEC-invalid data, but avoid re-querying until BogusTTL expires.
 		if entry.DNSSECBogus {
@@ -356,7 +393,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	if err != nil {
 		// Upstream failure: attempt stale cache lookup before SERVFAIL (RFC 8767, D-07 bug 2).
 		if r.cfg.ServeStale {
-			if staleEntry, ok := r.cache.Get(cacheKey); ok {
+			if staleEntry, ok := r.cache.GetQuestion(cacheKey, question.Name, question.Qtype, question.Qclass); ok {
 				staleResp := pool.GetMessage()
 				if unpackErr := staleResp.Unpack(staleEntry.Data); unpackErr == nil {
 					staleResp.Id = q.Id
@@ -423,7 +460,7 @@ func (r *Recursive) resolveCoalesced(ctx context.Context, question dns.Question)
 }
 
 func (r *Recursive) resolveFresh(ctx context.Context, question dns.Question) (*dns.Msg, error) {
-	resp, err := r.resolveIterative(ctx, question.Name, question.Qtype, question.Qclass)
+	resp, err := r.resolveUpstream(ctx, question.Name, question.Qtype, question.Qclass)
 	if err != nil {
 		return nil, err
 	}
@@ -562,7 +599,7 @@ func (r *Recursive) followAliases(ctx context.Context, initial *dns.Msg, qname s
 		}
 		seen[target] = struct{}{}
 
-		next, err := r.resolveIterative(ctx, target, qtype, qclass)
+		next, err := r.resolveUpstream(ctx, target, qtype, qclass)
 		if err != nil {
 			return nil, err
 		}
@@ -620,6 +657,165 @@ func ageCachedTTLs(msg *dns.Msg, expiresAt time.Time) {
 			}
 		}
 	}
+}
+
+func normalizeForwardRules(cfg Config) ([]forwardRule, error) {
+	globalMode, err := normalizeForwardMode(cfg.ForwardMode, ForwardModeDirect)
+	if err != nil {
+		return nil, fmt.Errorf("forward_mode: %w", err)
+	}
+
+	configuredRules := make(map[string][]string, len(cfg.ConditionalForwarders)+1)
+	for suffix, servers := range cfg.ConditionalForwarders {
+		configuredRules[suffix] = servers
+	}
+	if len(cfg.Forwarders) > 0 {
+		configuredRules[""] = cfg.Forwarders
+	}
+	rules := make([]forwardRule, 0, len(configuredRules))
+	seen := make(map[string]bool, len(configuredRules))
+	hasGlobal := false
+	for configuredSuffix, configuredServers := range configuredRules {
+		suffix := "."
+		if strings.TrimSpace(configuredSuffix) != "" {
+			suffix = strings.ToLower(dns.Fqdn(strings.TrimSpace(configuredSuffix)))
+		}
+		if seen[suffix] {
+			return nil, fmt.Errorf("duplicate forwarder suffix %s", suffix)
+		}
+		seen[suffix] = true
+		if len(configuredServers) == 0 {
+			return nil, fmt.Errorf("forwarder suffix %s has no upstreams", suffix)
+		}
+		servers := make([]string, 0, len(configuredServers))
+		for _, configuredServer := range configuredServers {
+			server, err := normalizeForwarderAddress(configuredServer)
+			if err != nil {
+				return nil, fmt.Errorf("forwarder suffix %s: %w", suffix, err)
+			}
+			servers = append(servers, server)
+		}
+
+		mode := ForwardModeOnly
+		if suffix == "." {
+			mode = globalMode
+			hasGlobal = true
+		} else if configuredMode := cfg.ForwardZoneModes[suffix]; configuredMode != "" {
+			mode, err = normalizeForwardMode(configuredMode, ForwardModeOnly)
+			if err != nil {
+				return nil, fmt.Errorf("forwarder suffix %s: %w", suffix, err)
+			}
+			if mode == ForwardModeDirect {
+				return nil, fmt.Errorf("forwarder suffix %s cannot use direct mode", suffix)
+			}
+		}
+		rules = append(rules, forwardRule{suffix: suffix, servers: servers, mode: mode})
+	}
+	if globalMode != ForwardModeDirect && !hasGlobal {
+		return nil, fmt.Errorf("forward_mode %s requires global forwarders", globalMode)
+	}
+	if globalMode == ForwardModeDirect && hasGlobal {
+		return nil, fmt.Errorf("global forwarders require forward_mode first or only")
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		leftLabels := dns.CountLabel(rules[i].suffix)
+		rightLabels := dns.CountLabel(rules[j].suffix)
+		if leftLabels != rightLabels {
+			return leftLabels > rightLabels
+		}
+		return rules[i].suffix < rules[j].suffix
+	})
+	return rules, nil
+}
+
+func normalizeForwardMode(mode, fallback string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = fallback
+	}
+	switch strings.ReplaceAll(mode, "_", "-") {
+	case "direct", "iterative":
+		return ForwardModeDirect, nil
+	case "first", "forward-first":
+		return ForwardModeFirst, nil
+	case "only", "forward-only":
+		return ForwardModeOnly, nil
+	default:
+		return "", fmt.Errorf("mode %q must be direct, first, or only", mode)
+	}
+}
+
+func normalizeForwarderAddress(address string) (string, error) {
+	address = strings.TrimSpace(address)
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		if ip := net.ParseIP(strings.Trim(address, "[]")); ip != nil {
+			return net.JoinHostPort(ip.String(), "53"), nil
+		}
+		return "", fmt.Errorf("upstream %q must be an IP address with optional port", address)
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return "", fmt.Errorf("upstream %q must use an IP address", address)
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", fmt.Errorf("upstream %q has invalid port", address)
+	}
+	return net.JoinHostPort(ip.String(), port), nil
+}
+
+func (r *Recursive) resolveUpstream(
+	ctx context.Context,
+	qname string,
+	qtype, qclass uint16,
+) (*dns.Msg, error) {
+	rule, matched := r.forwardRuleFor(qname)
+	if matched {
+		response, err := r.queryForwarders(ctx, rule.servers, qname, qtype, qclass)
+		if err == nil {
+			return response, nil
+		}
+		if rule.mode == ForwardModeOnly {
+			return nil, fmt.Errorf("forward-only resolution for %s failed: %w", rule.suffix, err)
+		}
+	}
+	return r.resolveIterative(ctx, qname, qtype, qclass)
+}
+
+func (r *Recursive) forwardRuleFor(qname string) (forwardRule, bool) {
+	qname = strings.ToLower(dns.Fqdn(qname))
+	for _, rule := range r.forwardRules {
+		if dns.IsSubDomain(rule.suffix, qname) {
+			return rule, true
+		}
+	}
+	return forwardRule{}, false
+}
+
+func (r *Recursive) queryForwarders(
+	ctx context.Context,
+	servers []string,
+	qname string,
+	qtype, qclass uint16,
+) (*dns.Msg, error) {
+	if len(servers) == 0 {
+		return nil, ErrNoNameservers
+	}
+	start := int(r.forwardCursor.Add(1)-1) % len(servers)
+	failures := make([]string, 0, len(servers))
+	for offset := range len(servers) {
+		server := servers[(start+offset)%len(servers)]
+		response, err := r.queryServer(ctx, server, qname, qtype, qclass, true)
+		if err == nil && response.Rcode != dns.RcodeServerFailure && response.Rcode != dns.RcodeRefused {
+			return response, nil
+		}
+		if err == nil {
+			err = fmt.Errorf("rcode %s", dns.RcodeToString[response.Rcode])
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", server, err))
+	}
+	return nil, fmt.Errorf("all forwarders failed: %s", strings.Join(failures, "; "))
 }
 
 // resolveIterative performs iterative resolution starting from root
@@ -784,11 +980,21 @@ func (r *Recursive) resolveIterativeWithBudget(ctx context.Context, qname string
 
 // queryNameserver sends a query to a specific nameserver
 func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string, qtype, qclass uint16) (*dns.Msg, error) {
+	return r.queryServer(ctx, ns, qname, qtype, qclass, false)
+}
+
+func (r *Recursive) queryServer(
+	ctx context.Context,
+	ns string,
+	qname string,
+	qtype, qclass uint16,
+	recursionDesired bool,
+) (*dns.Msg, error) {
 	msg := pool.GetMessage()
 	defer pool.PutMessage(msg)
 
 	msg.Id = random.TransactionID()
-	msg.RecursionDesired = false // Iterative queries don't set RD
+	msg.RecursionDesired = recursionDesired
 
 	// 0x20 case randomization (draft-vixie-dnsext-dns0x20): send a mixed-case copy
 	// of the name on the wire. A compliant authoritative server echoes the case
@@ -821,6 +1027,12 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 		if err != nil {
 			return nil, fmt.Errorf("TCP retry after truncated UDP response: %w", err)
 		}
+	}
+	if len(resp.Question) != 1 ||
+		resp.Question[0].Qtype != qtype ||
+		resp.Question[0].Qclass != qclass ||
+		!strings.EqualFold(resp.Question[0].Name, wireName) {
+		return nil, fmt.Errorf("response question mismatch from %s", ns)
 	}
 
 	// Validate the 0x20 echo: a response that does not preserve the exact case we

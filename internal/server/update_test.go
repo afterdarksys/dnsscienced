@@ -1,11 +1,13 @@
 package server
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
@@ -24,8 +26,14 @@ func testServerWithUpdate(allowUpdate []string) (*Server, error) {
 		}
 	}
 	cfg := Config{
-		Zones:           zones,
-		ZoneUpdateCIDRs: updateCIDRs,
+		Zones:              zones,
+		ZoneUpdateCIDRs:    updateCIDRs,
+		ZoneUpdateTSIGKeys: map[string][]string{"example.com.": {"test."}},
+		TsigKeys: []tsig.KeyConfig{{
+			Name:      "test.",
+			Algorithm: "hmac-sha256",
+			Secret:    base64.StdEncoding.EncodeToString([]byte("update-test-secret")),
+		}},
 	}
 	return New(cfg)
 }
@@ -335,6 +343,115 @@ func TestHandleUpdate_IPNotAllowed_Refused(t *testing.T) {
 	}
 	if w.msgs[0].Rcode != dns.RcodeRefused {
 		t.Errorf("Rcode = %d, want %d (REFUSED)", w.msgs[0].Rcode, dns.RcodeRefused)
+	}
+}
+
+func TestHandleUpdate_KeyNotAuthorizedForZone_Refused(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithUpdate: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+	if err := s.tsigKeyRing.Add(tsig.KeyConfig{
+		Name:      "other.",
+		Algorithm: "hmac-sha256",
+		Secret:    base64.StdEncoding.EncodeToString([]byte("other-test-secret")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := makeUpdateMsg("example.com.", nil, []dns.RR{
+		makeAddRR("forbidden.example.com.", "192.0.2.44"),
+	})
+	r.IsTsig().Hdr.Name = "other."
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, r, net.ParseIP("192.0.2.1"))
+
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeRefused {
+		t.Fatalf("response=%v, want REFUSED for a valid but unauthorized key", w.msgs)
+	}
+	if got := s.GetZone("example.com.").ExactRecords("forbidden.example.com.", dns.TypeA); len(got) != 0 {
+		t.Fatalf("unauthorized update mutated zone: %v", got)
+	}
+}
+
+func TestHandleUpdate_MissingZoneKeyPolicy_Refused(t *testing.T) {
+	cfg := Config{
+		Zones: map[string]*zone.Zone{"example.com.": testZone()},
+		ZoneUpdateCIDRs: map[string][]string{
+			"example.com.": {"0.0.0.0/0"},
+		},
+		TsigKeys: []tsig.KeyConfig{{
+			Name:      "test.",
+			Algorithm: "hmac-sha256",
+			Secret:    base64.StdEncoding.EncodeToString([]byte("update-test-secret")),
+		}},
+	}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, makeUpdateMsg("example.com.", nil, nil), net.ParseIP("192.0.2.1"))
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeRefused {
+		t.Fatalf("response=%v, want REFUSED when update_tsig_keys is absent", w.msgs)
+	}
+}
+
+func TestNewRejectsUndefinedZoneUpdateKey(t *testing.T) {
+	_, err := New(Config{
+		ZoneUpdateTSIGKeys: map[string][]string{
+			"example.com.": {"missing."},
+		},
+	})
+	if err == nil {
+		t.Fatal("New accepted an undefined update_tsig_keys reference")
+	}
+}
+
+func TestHandleUpdate_OutOfZonePrerequisite_ReturnsNotZone(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	prereq := makeAddRR("outside.invalid.", "192.0.2.1")
+	prereq.Header().Ttl = 0
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(
+		w,
+		makeUpdateMsg("example.com.", []dns.RR{prereq}, nil),
+		net.ParseIP("192.0.2.1"),
+	)
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeNotZone {
+		t.Fatalf("response=%v, want NOTZONE for out-of-zone prerequisite", w.msgs)
+	}
+}
+
+func TestHandleUpdate_OutOfZoneMutation_ReturnsNotZoneWithoutMutation(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	before := s.GetZone("example.com.").SOA.Serial
+
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(
+		w,
+		makeUpdateMsg("example.com.", nil, []dns.RR{
+			makeAddRR("outside.invalid.", "192.0.2.1"),
+		}),
+		net.ParseIP("192.0.2.1"),
+	)
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeNotZone {
+		t.Fatalf("response=%v, want NOTZONE for out-of-zone update", w.msgs)
+	}
+	if after := s.GetZone("example.com.").SOA.Serial; after != before {
+		t.Fatalf("serial changed from %d to %d after rejected update", before, after)
 	}
 }
 

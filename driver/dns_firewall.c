@@ -12,6 +12,8 @@
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <linux/ctype.h>
+#include <linux/capability.h>
+#include <linux/unaligned.h>
 
 #include "dnsasm_kernel.h"
 
@@ -25,6 +27,7 @@ MODULE_VERSION("0.2");
 #define DNS_PORT 53
 #define MAX_DOMAIN_LEN 256
 #define PROC_FILENAME "dns_firewall_rules"
+#define IPV4_FRAGMENT_MASK 0x3fff
 
 /* RPZ Actions */
 #define RPZ_ACTION_PASS 0
@@ -32,7 +35,7 @@ MODULE_VERSION("0.2");
 #define RPZ_ACTION_MARK 2
 
 /* Parameters */
-static bool debug_logging = true;
+static bool debug_logging = false;
 module_param(debug_logging, bool, 0644);
 MODULE_PARM_DESC(debug_logging, "Enable debug logging");
 
@@ -72,10 +75,11 @@ static int parse_dns_header(const u8 *packet, size_t len, dnsasm_header_t *out)
     if (len < DNS_HEADER_SIZE) {
         return DNSASM_ERR_SHORT;
     }
-    out->id      = ntohs(*(const __be16 *)(packet + 0));
-    out->flags   = ntohs(*(const __be16 *)(packet + 2));
-    out->qdcount = ntohs(*(const __be16 *)(packet + 4));
-    // We only care about id, flags, qdcount for now
+    out->id      = get_unaligned_be16(packet + 0);
+    out->flags   = get_unaligned_be16(packet + 2);
+    out->qdcount = get_unaligned_be16(packet + 4);
+    out->qr      = (out->flags >> 15) & 1;
+    out->opcode  = (out->flags >> 11) & 0x0f;
     return DNSASM_OK;
 }
 
@@ -105,6 +109,9 @@ static int parse_qname(const u8 *packet, size_t len, size_t offset, char *out_bu
         /* Pointers not supported in simple QNAME parser yet */
         if ((label_len & 0xC0) == 0xC0) {
             return DNSASM_ERR_POINTER; 
+        }
+        if (label_len > 63) {
+            return DNSASM_ERR_NAME;
         }
         
         if (pos + 1 + label_len > len) return DNSASM_ERR_SHORT;
@@ -137,22 +144,39 @@ static unsigned int dns_hook_func(void *priv,
     dnsasm_header_t dns_hdr;
     char qname[MAX_DOMAIN_LEN];
     struct rpz_rule *rule;
-    int ret;
+    unsigned int network_offset;
+    unsigned int ip_header_len;
+    unsigned int data_offset;
+    unsigned int udp_len;
+    unsigned int read_len;
     u32 hash;
     
     // Safety checks
     if (!skb) return NF_ACCEPT;
     iph = ip_hdr(skb);
     if (!iph || iph->protocol != IPPROTO_UDP) return NF_ACCEPT;
+    if (iph->ihl < 5) return NF_ACCEPT;
+    if (ntohs(iph->frag_off) & IPV4_FRAGMENT_MASK) return NF_ACCEPT;
+
+    network_offset = skb_network_offset(skb);
+    ip_header_len = iph->ihl * 4;
     
-    udph = skb_header_pointer(skb, iph->ihl * 4, sizeof(_udph), &_udph);
+    udph = skb_header_pointer(skb, network_offset + ip_header_len,
+                              sizeof(_udph), &_udph);
     if (!udph) return NF_ACCEPT;
     
-    /* Standard DNS ports only */
-    if (ntohs(udph->dest) != DNS_PORT && ntohs(udph->source) != DNS_PORT)
+    /* Inspect ingress DNS queries only; never reinterpret response traffic. */
+    if (ntohs(udph->dest) != DNS_PORT)
         return NF_ACCEPT;
 
-    int data_offset = (iph->ihl * 4) + sizeof(struct udphdr);
+    udp_len = ntohs(udph->len);
+    if (udp_len < sizeof(struct udphdr) + DNS_HEADER_SIZE)
+        return NF_ACCEPT;
+    if (ntohs(iph->tot_len) < ip_header_len + udp_len)
+        return NF_ACCEPT;
+    data_offset = network_offset + ip_header_len + sizeof(struct udphdr);
+    if (data_offset > skb->len || udp_len - sizeof(struct udphdr) > skb->len - data_offset)
+        return NF_ACCEPT;
     
     /* Read Header */
     if (skb_header_pointer(skb, data_offset, DNS_HEADER_SIZE, dns_header_buf) == NULL)
@@ -161,14 +185,12 @@ static unsigned int dns_hook_func(void *priv,
     if (parse_dns_header(dns_header_buf, DNS_HEADER_SIZE, &dns_hdr) != DNSASM_OK)
         return NF_ACCEPT;
 
-    /* Only inspect Queries (QR=0) or Responses with Questions?
-     * Usually RPZ filters based on the Question.
-     */
-    if (dns_hdr.qdcount > 0) {
+    /* Only standard one-question QUERY messages enter the exact-name policy. */
+    if (!dns_hdr.qr && dns_hdr.opcode == 0 && dns_hdr.qdcount == 1) {
         /* Read QNAME. Max reasonable packet size check for simplicity */
         /* We need more data than just header. Let's pull up to 512 bytes safely */
         u8 buf[512];
-        int read_len = skb->len - data_offset;
+        read_len = udp_len - sizeof(struct udphdr);
         if (read_len > sizeof(buf)) read_len = sizeof(buf);
         
         if (skb_header_pointer(skb, data_offset, read_len, buf) == NULL)
@@ -180,16 +202,12 @@ static unsigned int dns_hook_func(void *priv,
             /* RCU Lookup */
             rcu_read_lock();
             hash = domain_hash(qname);
-            bool match = false;
             
             hash_for_each_possible_rcu(rpz_ht, rule, node, hash) {
                 if (strcmp(rule->domain, qname) == 0) {
-                    /* Match! */
-                    match = true;
-                    
                     if (debug_logging) {
-                        printk(KERN_INFO "dns_firewall: RPZ MATCH %s Action=%d Mark=0x%x\n", 
-                               qname, rule->action, rule->mark);
+                        pr_info_ratelimited("dns_firewall: RPZ MATCH %s Action=%d Mark=0x%x\n",
+                                            qname, rule->action, rule->mark);
                     }
                     
                     if (rule->action == RPZ_ACTION_DROP) {
@@ -216,12 +234,6 @@ static struct nf_hook_ops dns_ops[] = {
         .hooknum  = NF_INET_PRE_ROUTING,
         .priority = NF_IP_PRI_FIRST,
     },
-    {
-        .hook     = dns_hook_func,
-        .pf       = NFPROTO_IPV4,
-        .hooknum  = NF_INET_LOCAL_OUT,
-        .priority = NF_IP_PRI_FIRST,
-    },
 };
 
 /* --- Procfs Management --- */
@@ -245,6 +257,35 @@ static int rpz_open(struct inode *inode, struct file *file) {
     return single_open(file, rpz_show, NULL);
 }
 
+static int normalize_domain(char *domain)
+{
+    size_t len;
+    size_t i;
+    size_t label_len = 0;
+
+    len = strnlen(domain, MAX_DOMAIN_LEN);
+    if (len == 0 || len >= MAX_DOMAIN_LEN)
+        return -EINVAL;
+    if (domain[len - 1] == '.') {
+        domain[--len] = '\0';
+    }
+    if (len == 0)
+        return -EINVAL;
+
+    for (i = 0; i < len; i++) {
+        if (domain[i] == '.') {
+            if (label_len == 0)
+                return -EINVAL;
+            label_len = 0;
+            continue;
+        }
+        if (++label_len > 63)
+            return -EINVAL;
+        domain[i] = tolower((unsigned char)domain[i]);
+    }
+    return label_len == 0 ? -EINVAL : 0;
+}
+
 /* Command format: 
  * "+ domain DROP"
  * "+ domain MARK 0x123"
@@ -258,8 +299,11 @@ static ssize_t rpz_write(struct file *file, const char __user *buffer,
     char mark_str[16];
     struct rpz_rule *rule;
     u32 hash;
-    int bkt;
     struct hlist_node *tmp;
+    int fields;
+
+    if (!capable(CAP_NET_ADMIN))
+        return -EPERM;
 
     if (count > sizeof(kbuf) - 1) return -EINVAL;
     if (copy_from_user(kbuf, buffer, count)) return -EFAULT;
@@ -267,7 +311,8 @@ static ssize_t rpz_write(struct file *file, const char __user *buffer,
     
     /* Simple parsing */
     char op;
-    if (sscanf(kbuf, "%c %255s %15s %15s", &op, dom, action_str, mark_str) < 2) {
+    fields = sscanf(kbuf, "%c %255s %15s %15s", &op, dom, action_str, mark_str);
+    if (fields < 2 || normalize_domain(dom)) {
         return -EINVAL;
     }
 
@@ -288,17 +333,23 @@ static ssize_t rpz_write(struct file *file, const char __user *buffer,
         /* Add */
         int act = RPZ_ACTION_PASS;
         u32 mk = 0;
+
+        if (fields < 3)
+            return -EINVAL;
         
         if (strcmp(action_str, "DROP") == 0) act = RPZ_ACTION_DROP;
         else if (strcmp(action_str, "MARK") == 0) {
             act = RPZ_ACTION_MARK;
-            if (kstrtou32(mark_str, 16, &mk)) mk = 0;
+            if (fields < 4 || kstrtou32(mark_str, 0, &mk))
+                return -EINVAL;
         }
+        else if (strcmp(action_str, "PASS") != 0)
+            return -EINVAL;
 
         struct rpz_rule *new_rule = kzalloc(sizeof(*new_rule), GFP_KERNEL);
         if (!new_rule) return -ENOMEM;
         
-        strncpy(new_rule->domain, dom, MAX_DOMAIN_LEN);
+        strscpy(new_rule->domain, dom, MAX_DOMAIN_LEN);
         new_rule->action = act;
         new_rule->mark = mk;
         
@@ -314,6 +365,9 @@ static ssize_t rpz_write(struct file *file, const char __user *buffer,
         
         hash_add_rcu(rpz_ht, &new_rule->node, hash);
         spin_unlock(&rpz_lock);
+    }
+    else {
+        return -EINVAL;
     }
     
     return count;
@@ -339,7 +393,7 @@ static int __init dns_firewall_init(void)
     if (ret < 0) return ret;
 
     /* Create Proc entry */
-    if (!proc_create(PROC_FILENAME, 0666, NULL, &rpz_proc_ops)) {
+    if (!proc_create(PROC_FILENAME, 0600, NULL, &rpz_proc_ops)) {
         nf_unregister_net_hooks(&init_net, dns_ops, ARRAY_SIZE(dns_ops));
         return -ENOMEM;
     }
@@ -359,6 +413,7 @@ static void __exit dns_firewall_exit(void)
 
     /* Unregister */
     nf_unregister_net_hooks(&init_net, dns_ops, ARRAY_SIZE(dns_ops));
+    synchronize_rcu();
     
     /* Cleanup Hash Table */
     /* No need to lock here as module is exiting, no one else accesses */
@@ -366,6 +421,7 @@ static void __exit dns_firewall_exit(void)
         hash_del(&rule->node);
         kfree(rule);
     }
+    rcu_barrier();
     
     printk(KERN_INFO "dns_firewall_rpz: unloaded\n");
 }

@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/server"
 )
 
@@ -85,6 +87,54 @@ func TestConfiguredZonesDefersSecondaryToTransferManager(t *testing.T) {
 	}
 }
 
+func TestWireResolverForwardingIncludesGlobalAndZonePolicies(t *testing.T) {
+	resolverConfig := resolver.Config{ForwardMode: resolver.ForwardModeFirst}
+	cfg := &config.Config{
+		Forwarders: map[string][]string{
+			"":             {"8.8.8.8:53"},
+			"corp.example": {"192.0.2.10:53"},
+		},
+		Zones: []config.ZoneConfig{{
+			Name:        "private.example",
+			Type:        "forward",
+			Forwarders:  []string{"192.0.2.11:53"},
+			ForwardMode: "only",
+		}},
+	}
+	if err := wireResolverForwarding(&resolverConfig, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if resolverConfig.Forwarders[0] != "8.8.8.8:53" ||
+		resolverConfig.ConditionalForwarders["corp.example."][0] != "192.0.2.10:53" ||
+		resolverConfig.ConditionalForwarders["private.example."][0] != "192.0.2.11:53" ||
+		resolverConfig.ForwardZoneModes["private.example."] != resolver.ForwardModeOnly {
+		t.Fatalf(
+			"resolver forwarding = global:%+v conditional:%+v modes=%v",
+			resolverConfig.Forwarders,
+			resolverConfig.ConditionalForwarders,
+			resolverConfig.ForwardZoneModes,
+		)
+	}
+}
+
+func TestConfiguredZonesDefersForwardZoneToResolver(t *testing.T) {
+	cfg := server.DefaultConfig()
+	cfg.UDPListeners = 1
+	srv, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	loaded, err := loadConfiguredZones(srv, []config.ZoneConfig{{
+		Name:       "private.example",
+		Type:       "forward",
+		Forwarders: []string{"192.0.2.11:53"},
+	}})
+	if err != nil || loaded != 0 {
+		t.Fatalf("loaded=%d error=%v, want forward zone deferred without error", loaded, err)
+	}
+}
+
 func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
 	cfg := &config.Config{
 		TsigKeys: []config.TsigKeyConfig{{
@@ -106,5 +156,149 @@ func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].TransferKey == nil || got[0].TransferKey.Secret != "c2VjcmV0" {
 		t.Fatalf("secondary configs = %+v", got)
+	}
+}
+
+func TestBuildSecondaryConfigsRequiresTransferKeyByDefault(t *testing.T) {
+	cfg := &config.Config{
+		Zones: []config.ZoneConfig{{
+			Name:    "secondary.test",
+			Type:    "secondary",
+			Masters: []string{"192.0.2.1"},
+		}},
+	}
+
+	if _, err := buildSecondaryConfigs(cfg); err == nil {
+		t.Fatal("buildSecondaryConfigs accepted an unsigned secondary without explicit opt-in")
+	}
+}
+
+func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T) {
+	cfg := &config.Config{
+		Zones: []config.ZoneConfig{{
+			Name:                  "secondary.test",
+			Type:                  "secondary",
+			Masters:               []string{"192.0.2.1"},
+			AllowUnsignedTransfer: true,
+		}},
+	}
+
+	got, err := buildSecondaryConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].AllowUnsignedTransfer || got[0].TransferKey != nil {
+		t.Fatalf("secondary configs = %+v", got)
+	}
+}
+
+func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "catalog-xfer.example.",
+			Algorithm: "hmac-sha256",
+			Secret:    "c2VjcmV0",
+		}},
+		CatalogZones: []config.CatalogZoneConfig{{
+			Name: "catalog.example.",
+			CatalogTransferConfig: config.CatalogTransferConfig{
+				Masters:         []string{"192.0.2.1"},
+				TransferTSIGKey: "catalog-xfer.example.",
+			},
+			MemberDefaults: config.CatalogTransferConfig{
+				Masters:         []string{"192.0.2.2"},
+				TransferTSIGKey: "catalog-xfer.example.",
+			},
+			Groups: map[string]config.CatalogTransferConfig{
+				"blue": {
+					Masters:         []string{"192.0.2.3"},
+					TransferTSIGKey: "catalog-xfer.example.",
+				},
+			},
+		}},
+	}
+	sources, transfers, err := buildCatalogConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 ||
+		sources[0].Defaults.TransferKey == nil ||
+		sources[0].Groups["blue"].TransferKey == nil ||
+		transfers["catalog.example."].TransferKey == nil {
+		t.Fatalf("sources=%+v transfers=%+v", sources, transfers)
+	}
+}
+
+func TestBuildCatalogConfigsRejectsUnsignedCatalogAndMemberDefaults(t *testing.T) {
+	cfg := &config.Config{CatalogZones: []config.CatalogZoneConfig{{
+		Name: "catalog.example.",
+		CatalogTransferConfig: config.CatalogTransferConfig{
+			Masters: []string{"192.0.2.1"},
+		},
+		MemberDefaults: config.CatalogTransferConfig{
+			Masters: []string{"192.0.2.2"},
+		},
+	}}}
+	if _, _, err := buildCatalogConfigs(cfg); err == nil {
+		t.Fatal("buildCatalogConfigs accepted unsigned catalog transfers")
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsResolvesKeyAndTuning(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "notify.example.",
+			Algorithm: "hmac-sha512",
+			Secret:    "c2VjcmV0",
+		}},
+		Zones: []config.ZoneConfig{{
+			Name:               "primary.test",
+			Type:               "primary",
+			AlsoNotify:         []string{"192.0.2.2"},
+			NotifyTSIGKey:      "notify.example",
+			NotifyTimeout:      3 * time.Second,
+			NotifyRetryBackoff: 50 * time.Millisecond,
+			NotifyAttempts:     4,
+		}},
+	}
+
+	got, err := buildPrimaryNotifyConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifyCfg, ok := got["primary.test."]
+	if !ok || notifyCfg.TSIGKey != "notify.example." ||
+		notifyCfg.TSIGAlgorithm != "hmac-sha512" ||
+		notifyCfg.Timeout != 3*time.Second ||
+		notifyCfg.RetryBackoff != 50*time.Millisecond ||
+		notifyCfg.Attempts != 4 {
+		t.Fatalf("primary notify config = %+v", got)
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsRequiresAuthenticationByDefault(t *testing.T) {
+	cfg := &config.Config{Zones: []config.ZoneConfig{{
+		Name:       "primary.test",
+		Type:       "primary",
+		AlsoNotify: []string{"192.0.2.2"},
+	}}}
+	if _, err := buildPrimaryNotifyConfigs(cfg); err == nil {
+		t.Fatal("buildPrimaryNotifyConfigs accepted unsigned NOTIFY without explicit opt-in")
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsAllowsExplicitLegacyUnsigned(t *testing.T) {
+	cfg := &config.Config{Zones: []config.ZoneConfig{{
+		Name:                "primary.test",
+		Type:                "primary",
+		AlsoNotify:          []string{"192.0.2.2"},
+		AllowUnsignedNotify: true,
+	}}}
+	got, err := buildPrimaryNotifyConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["primary.test."].AllowUnsigned {
+		t.Fatalf("primary notify config = %+v", got)
 	}
 }

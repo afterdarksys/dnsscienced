@@ -13,6 +13,7 @@ server:
   udp_addr: "0.0.0.0:53"
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
+  primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
 
   # Enable modes
   enable_authoritative: true     # Enable authoritative server
@@ -20,8 +21,10 @@ server:
 
   # Recursive resolver configuration
   recursive:
-    # The current resolver is fully iterative from root hints; it does not use
-    # the host/ISP recursive resolver. Explicit forwarding modes are planned.
+    # direct: iterate from root hints and bypass ISP resolvers entirely
+    # first: try global forwarders below, then fall back to direct iteration
+    # only: use global forwarders exclusively and fail closed if unavailable
+    forward_mode: first
     workers: 100                 # Maximum concurrent distinct cache-miss lookups
     worker_queue_size: 1000      # Bounded waiting lookups; excess receives SERVFAIL
     query_timeout: 2s            # Timeout for each authoritative nameserver query
@@ -117,7 +120,19 @@ zones:
     allow_transfer:
       - "192.0.2.0/24"         # Allow AXFR from this network
       - "2001:db8::/32"
-    # also_notify is reserved for outbound primary NOTIFY support.
+    # also_notify:
+    #   - "192.0.2.53:53"
+    # notify_tsig_key: "notify-key.example."
+    # notify_timeout: 2s
+    # notify_retry_backoff: 250ms
+    # notify_attempts: 3
+
+    # RFC 2136 UPDATE requires both a source ACL and a per-zone TSIG identity.
+    # allow_update:
+    #   - "192.0.2.0/24"
+    # update_tsig_keys:
+    #   - "update-key.example."
+    # persist_updates: true
 
     # Security overrides (per-zone)
     enable_0x20: true          # Enable 0x20 for this zone
@@ -133,13 +148,15 @@ zones:
   #     - "[2001:db8::10]:53"
   #   transfer_source: "192.0.2.20"
   #   transfer_tsig_key: "secondary-xfer.example."
+  #   # Legacy escape hatch only; weakens both transfer and NOTIFY authentication:
+  #   # allow_unsigned_transfer: true
   #   refresh_interval: 1h     # optional; otherwise use transferred SOA
   #   min_refresh_time: 5m
   #   max_refresh_time: 24h
   #   min_retry_time: 30s
   #   max_retry_time: 1h
   #
-  # Define the referenced key at top level:
+  # Define referenced transfer and NOTIFY keys at top level:
   # tsig_keys:
   #   - name: "secondary-xfer.example."
   #     algorithm: "hmac-sha256"

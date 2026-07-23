@@ -16,6 +16,7 @@ func TestLoad(t *testing.T) {
 server:
   udp_addr: ":1053"
   udp_listeners: 2
+  primary_notify_workers: 6
   enable_recursive: true
   read_timeout: 2s
   rrl:
@@ -111,6 +112,7 @@ dhcp:
 	// Verify Server Config
 	assert.Equal(t, ":1053", cfg.Server.UDPAddr)
 	assert.Equal(t, 2, cfg.Server.UDPListeners)
+	assert.Equal(t, 6, cfg.Server.PrimaryNotifyWorkers)
 	assert.Equal(t, true, cfg.Server.EnableRecursive)
 	assert.Equal(t, 2*time.Second, cfg.Server.ReadTimeout)
 
@@ -191,6 +193,38 @@ dhcp:
 	assert.Equal(t, 12*time.Hour, cfg.DHCP.Subnets[0].Lease.Default)
 }
 
+func TestLoadCatalogZoneDefaultsPersistentStatePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`
+catalog_zones:
+  - name: catalog.example.
+    masters: [192.0.2.1]
+    transfer_tsig_key: catalog-key.example.
+    member_defaults:
+      masters: [192.0.2.2]
+      transfer_tsig_key: member-key.example.
+    groups:
+      blue:
+        masters: [192.0.2.3]
+        transfer_tsig_key: member-key.example.
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CatalogStateFile != "/var/lib/dnsscienced/catalog-state.json" {
+		t.Fatalf("catalog state path = %q", cfg.CatalogStateFile)
+	}
+	if len(cfg.CatalogZones) != 1 ||
+		cfg.CatalogZones[0].MemberDefaults.Masters[0] != "192.0.2.2" ||
+		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" {
+		t.Fatalf("catalog config = %+v", cfg.CatalogZones)
+	}
+}
+
 func TestMastersAndForwarders(t *testing.T) {
 	yamlContent := `
 masters:
@@ -245,8 +279,16 @@ zones:
     enable_scrubbing: true
     allow_transfer:
       - "192.0.2.0/24"
+    allow_update:
+      - "198.51.100.0/24"
+    update_tsig_keys:
+      - "update-key.example."
     also_notify:
       - "192.0.2.53:53"
+    notify_tsig_key: "notify-key.example."
+    notify_timeout: 2s
+    notify_retry_backoff: 250ms
+    notify_attempts: 4
     dnssec_signing:
       enabled: true
       algorithm: "ECDSAP256SHA256"
@@ -265,6 +307,7 @@ zones:
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
     transfer_tsig_key: "secondary-xfer.example."
+    allow_unsigned_transfer: true
     refresh_interval: 3600s
 
   - name: "forward.example.com"
@@ -305,7 +348,13 @@ zones:
 	assert.True(t, *primaryZone.EnableScrubbing)
 	assert.Len(t, primaryZone.AllowTransfer, 1)
 	assert.Equal(t, "192.0.2.0/24", primaryZone.AllowTransfer[0])
+	assert.Equal(t, []string{"198.51.100.0/24"}, primaryZone.AllowUpdate)
+	assert.Equal(t, []string{"update-key.example."}, primaryZone.UpdateTSIGKeys)
 	assert.Len(t, primaryZone.AlsoNotify, 1)
+	assert.Equal(t, "notify-key.example.", primaryZone.NotifyTSIGKey)
+	assert.Equal(t, 2*time.Second, primaryZone.NotifyTimeout)
+	assert.Equal(t, 250*time.Millisecond, primaryZone.NotifyRetryBackoff)
+	assert.Equal(t, 4, primaryZone.NotifyAttempts)
 
 	// Verify DNSSEC signing config
 	require.NotNil(t, primaryZone.DNSSECSigning)
@@ -327,6 +376,7 @@ zones:
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
 	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
+	assert.True(t, secondaryZone.AllowUnsignedTransfer)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 
 	// Verify forward zone
