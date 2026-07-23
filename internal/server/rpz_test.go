@@ -4,10 +4,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/ede"
+	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
@@ -148,6 +151,51 @@ func TestServerEnforcesResponseIPOnAuthoritativeAnswer(t *testing.T) {
 	}
 }
 
+func TestServerAppliesNameserverPolicyToTruthfulResponse(t *testing.T) {
+	policy := writeServerRPZFile(
+		t,
+		"ns.blocked.example.rpz-nsdname IN CNAME .",
+	)
+	srv, err := New(Config{
+		RPZ: RPZConfig{
+			Enabled: true,
+			Zones: []RPZZoneConfig{{
+				Name: "nameserver",
+				File: policy,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	request := new(dns.Msg)
+	request.SetQuestion("answer.example.", dns.TypeA)
+	request.SetEdns0(1232, false)
+	response := new(dns.Msg)
+	response.SetReply(request)
+	response.Answer = []dns.RR{&dns.A{
+		Hdr: dns.RR_Header{Name: "answer.example.", Rrtype: dns.TypeA},
+		A:   net.ParseIP("203.0.113.8"),
+	}}
+	matched, drop, rule := srv.applyRPZResponseWithNameservers(
+		request,
+		response,
+		net.ParseIP("192.0.2.10"),
+		&engine.RPZNameserverData{Names: []string{"ns.blocked.example."}},
+	)
+	if !matched || drop || rule == nil || response.Rcode != dns.RcodeNameError {
+		t.Fatalf(
+			"result = (matched=%v drop=%v rule=%+v rcode=%s), want NSDNAME NXDOMAIN",
+			matched,
+			drop,
+			rule,
+			dns.RcodeToString[response.Rcode],
+		)
+	}
+}
+
 func TestServerEnforcesResponseIPOnRecursiveAnswer(t *testing.T) {
 	upstreamConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
@@ -198,6 +246,69 @@ func TestServerEnforcesResponseIPOnRecursiveAnswer(t *testing.T) {
 	response := queryServer(t, srv, "forwarded.example.")
 	if response.Rcode != dns.RcodeNameError || len(response.Answer) != 0 {
 		t.Fatalf("response = %+v, want response-IP NXDOMAIN", response)
+	}
+}
+
+func TestServerEnforcesNSDNameOnRecursiveDataPath(t *testing.T) {
+	upstreamConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &dns.Server{
+		PacketConn: upstreamConn,
+		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, request *dns.Msg) {
+			response := new(dns.Msg)
+			response.SetReply(request)
+			question := request.Question[0]
+			switch {
+			case strings.EqualFold(question.Name, "forwarded.example.") && question.Qtype == dns.TypeA:
+				response.Answer = []dns.RR{&dns.A{
+					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("203.0.113.9"),
+				}}
+			case strings.EqualFold(question.Name, "example.") && question.Qtype == dns.TypeNS:
+				response.Answer = []dns.RR{&dns.NS{
+					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
+					Ns:  "ns.blocked.example.",
+				}}
+			}
+			_ = w.WriteMsg(response)
+		}),
+	}
+	go func() {
+		_ = upstream.ActivateAndServe()
+	}()
+	defer upstream.Shutdown() //nolint:errcheck
+
+	policy := writeServerRPZFile(
+		t,
+		"ns.blocked.example.rpz-nsdname IN CNAME .",
+	)
+	cfg := DefaultConfig()
+	cfg.EnableRecursive = true
+	cfg.RecursionAllowedCIDRs = []string{"192.0.2.0/24"}
+	cfg.RecursiveConfig.ForwardMode = resolver.ForwardModeOnly
+	cfg.RecursiveConfig.Forwarders = []string{upstreamConn.LocalAddr().String()}
+	cfg.RecursiveConfig.EnableDNSSEC = false
+	cfg.RPZ = RPZConfig{
+		Enabled:                 true,
+		MinNSDots:               1,
+		MaxNSLookups:            16,
+		NameserverLookupTimeout: time.Second,
+		Zones: []RPZZoneConfig{{
+			Name: "nameserver",
+			File: policy,
+		}},
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	response := queryServer(t, srv, "forwarded.example.")
+	if response.Rcode != dns.RcodeNameError || len(response.Answer) != 0 {
+		t.Fatalf("response = %+v, want NSDNAME NXDOMAIN", response)
 	}
 }
 
@@ -265,6 +376,29 @@ func TestRPZReloadConcurrentQueries(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestRPZNameserverDiscoveryConfigValidation(t *testing.T) {
+	srv, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+	policy := writeServerRPZFile(t, "ns.example.rpz-nsdname IN CNAME .")
+
+	for _, cfg := range []RPZConfig{
+		{Enabled: true, MinNSDots: -1, Zones: []RPZZoneConfig{{Name: "ns", File: policy}}},
+		{Enabled: true, MaxNSLookups: 257, Zones: []RPZZoneConfig{{Name: "ns", File: policy}}},
+		{
+			Enabled:                 true,
+			NameserverLookupTimeout: time.Millisecond,
+			Zones:                   []RPZZoneConfig{{Name: "ns", File: policy}},
+		},
+	} {
+		if err := srv.ReloadRPZ(cfg); err == nil {
+			t.Fatalf("ReloadRPZ accepted invalid discovery config: %+v", cfg)
+		}
+	}
 }
 
 func queryServer(t *testing.T, srv *Server, name string) *dns.Msg {

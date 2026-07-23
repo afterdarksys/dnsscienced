@@ -203,15 +203,84 @@ $ORIGIN rpz.example.
 	}
 }
 
-func TestLoadRPZFileStillRejectsUnsupportedTrigger(t *testing.T) {
+func TestLoadRPZFileLoadsNameserverTriggers(t *testing.T) {
 	policyFile := writeRPZFile(t, `
 $ORIGIN rpz.example.
 @ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
 @ IN NS localhost.
 24.0.2.0.192.rpz-nsip IN CNAME .
+ns.evil.example.rpz-nsdname IN CNAME *.
+*.bad-ns.example.rpz-nsdname IN CNAME rpz-passthru.
 `)
-	if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
-		t.Fatal("expected unsupported NS-IP trigger to fail closed")
+	policy, err := LoadRPZFile("security", policyFile, "")
+	if err != nil {
+		t.Fatalf("LoadRPZFile: %v", err)
+	}
+	response := new(dns.Msg)
+	response.SetQuestion("answer.example.", dns.TypeA)
+
+	tests := []struct {
+		name       string
+		nameserver RPZNameserverData
+		action     RPZAction
+	}{
+		{
+			name:       "NSIP",
+			nameserver: RPZNameserverData{Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.53")}},
+			action:     RPZActionNXDomain,
+		},
+		{
+			name:       "NSDNAME exact",
+			nameserver: RPZNameserverData{Names: []string{"ns.evil.example."}},
+			action:     RPZActionNoData,
+		},
+		{
+			name:       "NSDNAME wildcard",
+			nameserver: RPZNameserverData{Names: []string{"host.bad-ns.example."}},
+			action:     RPZActionPassthru,
+		},
+		{
+			name:       "NSDNAME wildcard excludes apex",
+			nameserver: RPZNameserverData{Names: []string{"bad-ns.example."}},
+			action:     RPZActionNone,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, action := policy.CheckResponseWithNameservers(
+				"answer.example.",
+				response,
+				&test.nameserver,
+			)
+			if action != test.action {
+				t.Fatalf("action = %v, want %v", action, test.action)
+			}
+		})
+	}
+	stats := policy.Stats()
+	if stats.NSDNameRules != 2 || stats.NSIPRules != 1 {
+		t.Fatalf("stats = %+v, want two NSDNAME and one NSIP rule", stats)
+	}
+}
+
+func TestLoadRPZFileRejectsInvalidNameserverTriggers(t *testing.T) {
+	for _, trigger := range []string{
+		"rpz-nsdname",
+		"rpz-nsip",
+		"0.0.0.0.0.rpz-nsip",
+		"24.00.2.0.192.rpz-nsip",
+	} {
+		t.Run(trigger, func(t *testing.T) {
+			policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+`+trigger+` IN CNAME .
+`)
+			if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
+				t.Fatalf("accepted invalid nameserver trigger %q", trigger)
+			}
+		})
 	}
 }
 

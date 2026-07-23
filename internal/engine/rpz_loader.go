@@ -11,9 +11,9 @@ import (
 	"github.com/miekg/dns"
 )
 
-// LoadRPZFile parses QNAME, RPZ-CLIENT-IP, and RPZ-IP CNAME policies into an
-// in-memory RPZ. The supported targets follow RPZ conventions: ".", "*.",
-// "rpz-passthru.", "rpz-drop.", or a rewrite target.
+// LoadRPZFile parses all five standard RPZ trigger families into memory.
+// Supported targets follow RPZ conventions: ".", "*.", "rpz-passthru.",
+// "rpz-drop.", or a rewrite target.
 func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 	parsed, err := zone.ParseZoneFile(filename, zone.DefaultConfig())
 	if err != nil {
@@ -55,8 +55,15 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 			clientIP = true
 			clientIPOwner = ""
 		}
-		if isUnsupportedRPZTrigger(relative) {
-			return nil, fmt.Errorf("unsupported RPZ trigger %q", owner)
+		nsDNameOwner, nsDName := strings.CutSuffix(relative, ".rpz-nsdname")
+		if relative == "rpz-nsdname" {
+			nsDName = true
+			nsDNameOwner = ""
+		}
+		nsIPOwner, nsIP := strings.CutSuffix(relative, ".rpz-nsip")
+		if relative == "rpz-nsip" {
+			nsIP = true
+			nsIPOwner = ""
 		}
 		if _, duplicate := owners[owner]; duplicate {
 			return nil, fmt.Errorf("multiple CNAME policies for RPZ owner %q", owner)
@@ -81,6 +88,28 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 			if err := rpz.AddClientIPRule(prefix, action, rewriteTarget, reason, filename); err != nil {
 				return nil, fmt.Errorf("invalid RPZ-CLIENT-IP trigger %q: %w", owner, err)
 			}
+		} else if nsDName {
+			wildcard := strings.HasPrefix(nsDNameOwner, "*.")
+			trigger := strings.TrimPrefix(nsDNameOwner, "*.")
+			if trigger == "" {
+				return nil, fmt.Errorf("invalid RPZ-NSDNAME trigger %q: nameserver name is required", owner)
+			}
+			rpz.AddNSDNameRule(
+				trigger,
+				action,
+				rewriteTarget,
+				reason,
+				filename,
+				wildcard,
+			)
+		} else if nsIP {
+			prefix, err := parseRPZIPTrigger(nsIPOwner)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RPZ-NSIP trigger %q: %w", owner, err)
+			}
+			if err := rpz.AddNSIPRule(prefix, action, rewriteTarget, reason, filename); err != nil {
+				return nil, fmt.Errorf("invalid RPZ-NSIP trigger %q: %w", owner, err)
+			}
 		} else {
 			wildcard := strings.HasPrefix(relative, "*.")
 			trigger := strings.TrimPrefix(relative, "*.")
@@ -90,21 +119,9 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 	}
 
 	if ruleCount == 0 {
-		return nil, fmt.Errorf("RPZ file contains no supported QNAME policies")
+		return nil, fmt.Errorf("RPZ file contains no supported policies")
 	}
 	return rpz, nil
-}
-
-func isUnsupportedRPZTrigger(relative string) bool {
-	for _, suffix := range []string{
-		"rpz-nsip",
-		"rpz-nsdname",
-	} {
-		if relative == suffix || strings.HasSuffix(relative, "."+suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 func rpzPolicyAction(target string) (RPZAction, string) {

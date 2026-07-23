@@ -98,7 +98,7 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
   - Detect DGA (Domain Generation Algorithm) patterns
   - Identify DNS tunneling attempts
 
-- [x] Response Policy Zones (RPZ) QNAME support
+- [x] Response Policy Zones (RPZ): QNAME, client-IP, response-IP, NSDNAME, and NSIP
   - Return NXDOMAIN for blocked domains
   - Support CNAME rewriting to sinkhole
   - Configurable policy actions per threat category

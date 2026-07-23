@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/ede"
 	"github.com/dnsscience/dnsscienced/internal/engine"
@@ -14,8 +15,11 @@ import (
 
 // RPZConfig controls production response-policy-zone loading.
 type RPZConfig struct {
-	Enabled bool            `yaml:"enabled"`
-	Zones   []RPZZoneConfig `yaml:"zones"`
+	Enabled                 bool            `yaml:"enabled"`
+	MinNSDots               int             `yaml:"min_ns_dots"`
+	MaxNSLookups            int             `yaml:"max_ns_lookups"`
+	NameserverLookupTimeout time.Duration   `yaml:"nameserver_lookup_timeout"`
+	Zones                   []RPZZoneConfig `yaml:"zones"`
 }
 
 // RPZZoneConfig identifies one policy source. Lower priority values are
@@ -47,13 +51,36 @@ func (s *Server) ReloadRPZ(cfg RPZConfig) error {
 	if len(cfg.Zones) == 0 {
 		return fmt.Errorf("enabled but no policy zones are configured")
 	}
-
+	if cfg.MinNSDots < 0 || cfg.MinNSDots > 127 {
+		return fmt.Errorf("min_ns_dots must be between 0 and 127 (got %d)", cfg.MinNSDots)
+	}
+	if cfg.MaxNSLookups == 0 {
+		cfg.MaxNSLookups = 64
+	}
+	if cfg.MaxNSLookups < 1 || cfg.MaxNSLookups > 256 {
+		return fmt.Errorf("max_ns_lookups must be between 1 and 256 (got %d)", cfg.MaxNSLookups)
+	}
+	if cfg.NameserverLookupTimeout == 0 {
+		cfg.NameserverLookupTimeout = 2 * time.Second
+	}
+	if cfg.NameserverLookupTimeout < 10*time.Millisecond ||
+		cfg.NameserverLookupTimeout > 30*time.Second {
+		return fmt.Errorf(
+			"nameserver_lookup_timeout must be between 10ms and 30s (got %s)",
+			cfg.NameserverLookupTimeout,
+		)
+	}
 	zones := append([]RPZZoneConfig(nil), cfg.Zones...)
 	sort.SliceStable(zones, func(i, j int) bool {
 		return zones[i].Priority < zones[j].Priority
 	})
 
 	aggregate := engine.NewRPZAggregate()
+	aggregate.SetNameserverDiscovery(
+		cfg.MinNSDots,
+		cfg.MaxNSLookups,
+		cfg.NameserverLookupTimeout,
+	)
 	seen := make(map[string]struct{}, len(zones))
 	for i, zoneCfg := range zones {
 		name := strings.TrimSpace(zoneCfg.Name)
@@ -164,10 +191,33 @@ func (s *Server) applyRPZResponse(
 	if active == nil || len(req.Question) != 1 {
 		return false, false, nil
 	}
-	rule, action := active.CheckRequestResponse(
+	rule, action, decisive := active.CheckRequestResponseShortcut(
 		req.Question[0].Name,
 		rpzClientAddress(clientIP),
 		resp,
+	)
+	if !decisive {
+		// Authoritative responses do not have a recursive delegation data
+		// path. Do not let a lower-priority zone bypass an unresolved NS rule.
+		return false, false, nil
+	}
+	return applyRPZAction(req, resp, rule, action)
+}
+
+func (s *Server) applyRPZResponseWithNameservers(
+	req, resp *dns.Msg,
+	clientIP net.IP,
+	nameservers *engine.RPZNameserverData,
+) (matched bool, drop bool, rule *engine.RPZRule) {
+	active := s.rpz.Load()
+	if active == nil || len(req.Question) != 1 {
+		return false, false, nil
+	}
+	rule, action := active.CheckRequestResponseWithNameservers(
+		req.Question[0].Name,
+		rpzClientAddress(clientIP),
+		resp,
+		nameservers,
 	)
 	return applyRPZAction(req, resp, rule, action)
 }

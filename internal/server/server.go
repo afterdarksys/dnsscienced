@@ -191,6 +191,13 @@ func DefaultConfig() Config {
 
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
+		RPZ: RPZConfig{
+			// Match the long-standing BIND default: inspect TLD and lower
+			// delegations but avoid a root NS walk for every eligible answer.
+			MinNSDots:               1,
+			MaxNSLookups:            64,
+			NameserverLookupTimeout: 2 * time.Second,
+		},
 
 		Experimental:     experimental.DefaultConfig(),
 		QueryComplexity:  defaultQueryComplexityConfig(),
@@ -1557,12 +1564,62 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		rpzZone := ""
 		if !rpzDecided {
-			if matched, drop, rule := s.applyRPZResponse(r, resp, clientIP); matched {
-				s.observeClient(clientIP, reputation.SignalPolicy)
-				if drop {
-					return
+			active := s.rpz.Load()
+			var nameservers *engine.RPZNameserverData
+			responseDecisive := false
+			if active != nil {
+				rule, action, decisive := active.CheckRequestResponseShortcut(
+					r.Question[0].Name,
+					rpzClientAddress(clientIP),
+					resp,
+				)
+				responseDecisive = decisive
+				if decisive {
+					matched, drop, matchedRule := applyRPZAction(
+						r,
+						resp,
+						rule,
+						action,
+					)
+					if matched {
+						s.observeClient(clientIP, reputation.SignalPolicy)
+						if drop {
+							return
+						}
+						rpzZone = matchedRule.Zone
+					}
 				}
-				rpzZone = rule.Zone
+			}
+			if active != nil && !responseDecisive {
+				requirements := active.NameserverRequirements()
+				if requirements.Names || requirements.Addresses {
+					discoveryCtx, cancelDiscovery := context.WithTimeout(
+						s.ctx,
+						requirements.Timeout,
+					)
+					nameservers = s.recursive.DiscoverRPZNameservers(
+						discoveryCtx,
+						resp,
+						requirements.Addresses,
+						requirements.MinNSDots,
+						requirements.MaxLookups,
+					)
+					cancelDiscovery()
+				}
+			}
+			if !responseDecisive {
+				if matched, drop, rule := s.applyRPZResponseWithNameservers(
+					r,
+					resp,
+					clientIP,
+					nameservers,
+				); matched {
+					s.observeClient(clientIP, reputation.SignalPolicy)
+					if drop {
+						return
+					}
+					rpzZone = rule.Zone
+				}
 			}
 		}
 

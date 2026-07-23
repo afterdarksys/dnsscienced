@@ -103,7 +103,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   production authoritative/recursive response enforcement.
 - [x] Implement client-IP (`rpz-client-ip`) triggers with longest-prefix matching,
   IPv4/IPv6 validation, and precedence over QNAME/response-IP within a policy zone.
-- [ ] Implement NS-name and NS-IP RPZ triggers.
+- [x] Implement NS-name (`rpz-nsdname`) and NS-IP (`rpz-nsip`) triggers with
+  recursive answer data-path discovery, wildcard/canonical-name and IP-prefix
+  tie-breaking, bounded lookup controls, and full trigger/zone precedence.
 - [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 

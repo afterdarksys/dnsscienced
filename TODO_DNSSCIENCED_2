@@ -58,8 +58,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   5. DNS Firewall Enhancements
 
-  Status: **Partial** — regex/QNAME RPZ and configurable multi-source threat
-  feeds are implemented; GeoIP and durable per-client behavioral history remain.
+  Status: **Partial** — all five RPZ trigger families, regex policies, and
+  configurable multi-source threat feeds are implemented; GeoIP and durable
+  per-client behavioral history remain.
 
   - Behavioral anomaly detection: ML-based detection of unusual query patterns
   - Geofencing: Block/allow queries based on GeoIP

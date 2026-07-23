@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -61,6 +62,9 @@ type RPZ struct {
 	mu                  sync.RWMutex
 	rules               map[string]*RPZRule // Exact match rules
 	wildcards           map[string]*RPZRule // Wildcard rules (*.domain)
+	nsDNameRules        map[string]*RPZRule
+	nsDNameWildcards    map[string]*RPZRule
+	nsDNameRuleCount    int
 	regex               []rpzRegexRule
 	responseIPv4        [33]map[netip.Addr]*RPZRule
 	responseIPv6        [129]map[netip.Addr]*RPZRule
@@ -72,8 +76,21 @@ type RPZ struct {
 	clientIPv4Lengths   []int
 	clientIPv6Lengths   []int
 	clientIPRules       int
+	nsIPv4              [33]map[netip.Addr]*RPZRule
+	nsIPv6              [129]map[netip.Addr]*RPZRule
+	nsIPv4Lengths       []int
+	nsIPv6Lengths       []int
+	nsIPRules           int
 	name                string // Zone name for identification
 	enabled             bool
+}
+
+// RPZNameserverData is the truthful nameserver data path used by NSDNAME and
+// NSIP triggers. Names and addresses may come from parent-side delegation/glue
+// or authoritative NS/A/AAAA lookups; both are permitted by the RPZ protocol.
+type RPZNameserverData struct {
+	Names     []string
+	Addresses []netip.Addr
 }
 
 type rpzRegexRule struct {
@@ -84,10 +101,12 @@ type rpzRegexRule struct {
 // NewRPZ creates a new RPZ instance.
 func NewRPZ(name string) *RPZ {
 	return &RPZ{
-		rules:     make(map[string]*RPZRule),
-		wildcards: make(map[string]*RPZRule),
-		name:      name,
-		enabled:   true,
+		rules:            make(map[string]*RPZRule),
+		wildcards:        make(map[string]*RPZRule),
+		nsDNameRules:     make(map[string]*RPZRule),
+		nsDNameWildcards: make(map[string]*RPZRule),
+		name:             name,
+		enabled:          true,
 	}
 }
 
@@ -202,6 +221,87 @@ func (r *RPZ) AddClientIPRule(
 	}
 	if _, exists := table[bits][prefix.Addr()]; !exists {
 		r.clientIPRules++
+	}
+	table[bits][prefix.Addr()] = rule
+	return nil
+}
+
+// AddNSDNameRule adds an RPZ-NSDNAME exact or wildcard trigger.
+func (r *RPZ) AddNSDNameRule(
+	trigger string,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+	wildcard bool,
+) {
+	trigger = dns.Fqdn(strings.ToLower(trigger))
+	if rewriteTarget != "" {
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
+	}
+	rule := &RPZRule{
+		Trigger:         trigger,
+		Action:          action,
+		RewriteTarget:   rewriteTarget,
+		Reason:          reason,
+		Zone:            r.name,
+		Source:          source,
+		descendantsOnly: wildcard,
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	table := r.nsDNameRules
+	if wildcard {
+		table = r.nsDNameWildcards
+	}
+	if _, exists := table[trigger]; !exists {
+		r.nsDNameRuleCount++
+	}
+	table[trigger] = rule
+}
+
+// AddNSIPRule adds an RPZ-NSIP prefix rule.
+func (r *RPZ) AddNSIPRule(
+	prefix netip.Prefix,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+) error {
+	if !prefix.IsValid() || prefix.Bits() < 1 ||
+		(prefix.Addr().Is4() && prefix.Bits() > 32) ||
+		(!prefix.Addr().Is4() && prefix.Bits() > 128) {
+		return fmt.Errorf("invalid RPZ-NSIP prefix %v", prefix)
+	}
+	prefix = prefix.Masked()
+	if rewriteTarget != "" {
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
+	}
+	rule := &RPZRule{
+		Trigger:       prefix.String(),
+		Action:        action,
+		RewriteTarget: rewriteTarget,
+		Reason:        reason,
+		Zone:          r.name,
+		Source:        source,
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lengths := &r.nsIPv6Lengths
+	table := r.nsIPv6[:]
+	if prefix.Addr().Is4() {
+		lengths = &r.nsIPv4Lengths
+		table = r.nsIPv4[:]
+	}
+	bits := prefix.Bits()
+	if table[bits] == nil {
+		table[bits] = make(map[netip.Addr]*RPZRule)
+		*lengths = append(*lengths, bits)
+		sort.Sort(sort.Reverse(sort.IntSlice(*lengths)))
+	}
+	if _, exists := table[bits][prefix.Addr()]; !exists {
+		r.nsIPRules++
 	}
 	table[bits][prefix.Addr()] = rule
 	return nil
@@ -325,12 +425,20 @@ func (r *RPZ) checkName(name string, recordHit bool) (*RPZRule, RPZAction) {
 	return nil, RPZActionNone
 }
 
-// HasResponseIPRules reports whether this zone can only be decided after a
-// truthful answer is available.
-func (r *RPZ) HasResponseIPRules() bool {
+// HasResponseDependentRules reports whether this zone can only be decided
+// after a truthful answer and, potentially, its nameserver data path exist.
+func (r *RPZ) HasResponseDependentRules() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.enabled && r.responseIPRules != 0
+	return r.enabled &&
+		(r.responseIPRules != 0 || r.nsDNameRuleCount != 0 || r.nsIPRules != 0)
+}
+
+// NameserverRequirements reports which expensive nameserver data is needed.
+func (r *RPZ) NameserverRequirements() (names bool, addresses bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.enabled && r.nsDNameRuleCount != 0, r.enabled && r.nsIPRules != 0
 }
 
 func (r *RPZ) checkClientIP(client netip.Addr, recordHit bool) (*RPZRule, RPZAction) {
@@ -359,24 +467,70 @@ func (r *RPZ) checkClientIP(client netip.Addr, recordHit bool) (*RPZRule, RPZAct
 	return rule, rule.Action
 }
 
-// CheckResponse evaluates QNAME first, then RPZ-IP against A/AAAA records in
-// the answer section only. Within one zone QNAME outranks RPZ-IP; among IP
-// matches the longest internal prefix wins, followed by the smaller address.
+// CheckResponse evaluates QNAME and RPZ-IP without nameserver-path data.
 func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
+	return r.CheckResponseWithNameservers(name, msg, nil)
+}
+
+// CheckResponseWithNameservers evaluates all response-dependent triggers in
+// protocol precedence order: QNAME, response-IP, NSDNAME, then NSIP.
+func (r *RPZ) CheckResponseWithNameservers(
+	name string,
+	msg *dns.Msg,
+	nameservers *RPZNameserverData,
+) (*RPZRule, RPZAction) {
 	if rule, action := r.Check(name); action != RPZActionNone {
 		return rule, action
 	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if !r.enabled || r.responseIPRules == 0 {
+	if !r.enabled {
 		return nil, RPZActionNone
 	}
 
+	if best := r.matchResponseIPLocked(msg); best != nil {
+		recordRPZHit(best)
+		return best, best.Action
+	}
+	if nameservers == nil {
+		return nil, RPZActionNone
+	}
+	if best := r.matchNSDNameLocked(nameservers.Names); best != nil {
+		recordRPZHit(best)
+		return best, best.Action
+	}
+	if best := r.matchNSIPLocked(nameservers.Addresses); best != nil {
+		recordRPZHit(best)
+		return best, best.Action
+	}
+	return nil, RPZActionNone
+}
+
+func (r *RPZ) matchResponseIPLocked(msg *dns.Msg) *RPZRule {
+	if r.responseIPRules == 0 {
+		return nil
+	}
+	return bestRPZIPRule(
+		msg.Answer,
+		r.responseIPv4[:],
+		r.responseIPv6[:],
+		r.responseIPv4Lengths,
+		r.responseIPv6Lengths,
+	)
+}
+
+func bestRPZIPRule(
+	records []dns.RR,
+	ipv4 []map[netip.Addr]*RPZRule,
+	ipv6 []map[netip.Addr]*RPZRule,
+	ipv4Lengths []int,
+	ipv6Lengths []int,
+) *RPZRule {
 	var best *RPZRule
 	bestInternalBits := -1
 	var bestAddress [16]byte
-	for _, rr := range msg.Answer {
+	for _, rr := range records {
 		var addr netip.Addr
 		switch record := rr.(type) {
 		case *dns.A:
@@ -398,10 +552,10 @@ func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
 		}
 		rule, prefix, ok := rpzIPMatch(
 			addr,
-			r.responseIPv4[:],
-			r.responseIPv6[:],
-			r.responseIPv4Lengths,
-			r.responseIPv6Lengths,
+			ipv4,
+			ipv6,
+			ipv4Lengths,
+			ipv6Lengths,
 		)
 		if !ok {
 			continue
@@ -419,11 +573,94 @@ func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
 			bestAddress = address
 		}
 	}
-	if best == nil {
-		return nil, RPZActionNone
+	return best
+}
+
+func (r *RPZ) matchNSDNameLocked(names []string) *RPZRule {
+	if r.nsDNameRuleCount == 0 {
+		return nil
 	}
-	recordRPZHit(best)
-	return best, best.Action
+	var best *RPZRule
+	bestName := ""
+	bestExact := false
+	bestLabels := -1
+	for _, name := range names {
+		normalized := dns.Fqdn(strings.ToLower(name))
+		rule, exact, labels := rpzNameMatch(
+			normalized,
+			r.nsDNameRules,
+			r.nsDNameWildcards,
+		)
+		if rule != nil && (best == nil ||
+			(exact && !bestExact) ||
+			(exact == bestExact && labels > bestLabels) ||
+			(exact == bestExact && labels == bestLabels &&
+				rpzCanonicalNameLess(bestName, normalized))) {
+			best = rule
+			bestName = normalized
+			bestExact = exact
+			bestLabels = labels
+		}
+	}
+	return best
+}
+
+func rpzNameMatch(
+	name string,
+	exact map[string]*RPZRule,
+	wildcards map[string]*RPZRule,
+) (*RPZRule, bool, int) {
+	if rule := exact[name]; rule != nil {
+		return rule, true, dns.CountLabel(name)
+	}
+	labels := dns.SplitDomainName(name)
+	for i := 0; i < len(labels); i++ {
+		suffix := dns.Fqdn(strings.Join(labels[i:], "."))
+		if rule := wildcards[suffix]; rule != nil && suffix != name {
+			return rule, false, dns.CountLabel(suffix)
+		}
+	}
+	return nil, false, 0
+}
+
+// rpzCanonicalNameLess implements RFC 4034 section 6.1 canonical DNS name
+// ordering. RPZ selects the matched NS name appearing last in this order.
+func rpzCanonicalNameLess(left, right string) bool {
+	leftLabels := dns.SplitDomainName(strings.ToLower(left))
+	rightLabels := dns.SplitDomainName(strings.ToLower(right))
+	for li, ri := len(leftLabels)-1, len(rightLabels)-1; li >= 0 && ri >= 0; li, ri = li-1, ri-1 {
+		if comparison := bytes.Compare([]byte(leftLabels[li]), []byte(rightLabels[ri])); comparison != 0 {
+			return comparison < 0
+		}
+	}
+	return len(leftLabels) < len(rightLabels)
+}
+
+func (r *RPZ) matchNSIPLocked(addresses []netip.Addr) *RPZRule {
+	if r.nsIPRules == 0 {
+		return nil
+	}
+	records := make([]dns.RR, 0, len(addresses))
+	for _, address := range addresses {
+		address = address.Unmap()
+		if !address.IsValid() {
+			continue
+		}
+		if address.Is4() {
+			octets := address.As4()
+			records = append(records, &dns.A{A: append([]byte(nil), octets[:]...)})
+		} else {
+			octets := address.As16()
+			records = append(records, &dns.AAAA{AAAA: append([]byte(nil), octets[:]...)})
+		}
+	}
+	return bestRPZIPRule(
+		records,
+		r.nsIPv4[:],
+		r.nsIPv6[:],
+		r.nsIPv4Lengths,
+		r.nsIPv6Lengths,
+	)
 }
 
 func rpzIPMatch(
@@ -531,6 +768,9 @@ func (r *RPZ) Clear() {
 	defer r.mu.Unlock()
 	r.rules = make(map[string]*RPZRule)
 	r.wildcards = make(map[string]*RPZRule)
+	r.nsDNameRules = make(map[string]*RPZRule)
+	r.nsDNameWildcards = make(map[string]*RPZRule)
+	r.nsDNameRuleCount = 0
 	r.regex = nil
 	r.responseIPv4 = [33]map[netip.Addr]*RPZRule{}
 	r.responseIPv6 = [129]map[netip.Addr]*RPZRule{}
@@ -542,6 +782,11 @@ func (r *RPZ) Clear() {
 	r.clientIPv4Lengths = nil
 	r.clientIPv6Lengths = nil
 	r.clientIPRules = 0
+	r.nsIPv4 = [33]map[netip.Addr]*RPZRule{}
+	r.nsIPv6 = [129]map[netip.Addr]*RPZRule{}
+	r.nsIPv4Lengths = nil
+	r.nsIPv6Lengths = nil
+	r.nsIPRules = 0
 }
 
 // Stats returns statistics about the RPZ.
@@ -556,6 +801,8 @@ func (r *RPZ) Stats() RPZStats {
 		RegexRules:      len(r.regex),
 		ResponseIPRules: r.responseIPRules,
 		ClientIPRules:   r.clientIPRules,
+		NSDNameRules:    r.nsDNameRuleCount,
+		NSIPRules:       r.nsIPRules,
 	}
 }
 
@@ -568,19 +815,40 @@ type RPZStats struct {
 	RegexRules      int
 	ResponseIPRules int
 	ClientIPRules   int
+	NSDNameRules    int
+	NSIPRules       int
 }
 
 // RPZAggregate manages multiple RPZ zones with priority ordering.
 type RPZAggregate struct {
-	mu    sync.RWMutex
-	zones []*RPZ
+	mu                sync.RWMutex
+	zones             []*RPZ
+	minNSDots         int
+	maxNSLookups      int
+	nameserverTimeout time.Duration
 }
 
 // NewRPZAggregate creates a new RPZ aggregate.
 func NewRPZAggregate() *RPZAggregate {
 	return &RPZAggregate{
-		zones: make([]*RPZ, 0),
+		zones:             make([]*RPZ, 0),
+		minNSDots:         1,
+		maxNSLookups:      64,
+		nameserverTimeout: 2 * time.Second,
 	}
+}
+
+// SetNameserverDiscovery configures the bounded NSDNAME/NSIP data-path walk.
+func (a *RPZAggregate) SetNameserverDiscovery(
+	minNSDots int,
+	maxLookups int,
+	timeout time.Duration,
+) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.minNSDots = minNSDots
+	a.maxNSLookups = maxLookups
+	a.nameserverTimeout = timeout
 }
 
 // AddZone adds an RPZ zone to the aggregate.
@@ -636,7 +904,7 @@ func (a *RPZAggregate) CheckRequestShortcut(
 			recordRPZHit(rule)
 			return rule, action, true
 		}
-		if rpz.HasResponseIPRules() {
+		if rpz.HasResponseDependentRules() {
 			priorResponseRules = true
 		}
 	}
@@ -650,12 +918,62 @@ func (a *RPZAggregate) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAc
 	return a.CheckRequestResponse(name, netip.Addr{}, msg)
 }
 
-// CheckRequestResponse applies RPZ-zone ordering first and, within each zone,
-// client-IP, QNAME, then response-IP trigger precedence.
+// CheckRequestResponse applies response-stage triggers that do not require a
+// nameserver path. If an earlier zone needs NSDNAME/NSIP data, it returns no
+// match rather than incorrectly allowing a later zone to bypass it.
 func (a *RPZAggregate) CheckRequestResponse(
 	name string,
 	client netip.Addr,
 	msg *dns.Msg,
+) (*RPZRule, RPZAction) {
+	rule, action, decisive := a.CheckRequestResponseShortcut(name, client, msg)
+	if !decisive {
+		return nil, RPZActionNone
+	}
+	return rule, action
+}
+
+// CheckRequestResponseShortcut returns a response-stage result without
+// nameserver discovery when trigger and zone precedence make that result
+// final. It stops at the first zone containing NSDNAME/NSIP rules if no
+// higher-precedence trigger in that zone matched.
+func (a *RPZAggregate) CheckRequestResponseShortcut(
+	name string,
+	client netip.Addr,
+	msg *dns.Msg,
+) (*RPZRule, RPZAction, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	for _, rpz := range a.zones {
+		if rule, action := rpz.checkClientIP(client, true); action != RPZActionNone {
+			return rule, action, true
+		}
+		if rule, action := rpz.checkName(name, true); action != RPZActionNone {
+			return rule, action, true
+		}
+		rpz.mu.RLock()
+		responseRule := rpz.matchResponseIPLocked(msg)
+		needsNameservers := rpz.enabled &&
+			(rpz.nsDNameRuleCount != 0 || rpz.nsIPRules != 0)
+		rpz.mu.RUnlock()
+		if responseRule != nil {
+			recordRPZHit(responseRule)
+			return responseRule, responseRule.Action, true
+		}
+		if needsNameservers {
+			return nil, RPZActionNone, false
+		}
+	}
+	return nil, RPZActionNone, true
+}
+
+// CheckRequestResponseWithNameservers applies complete trigger precedence.
+func (a *RPZAggregate) CheckRequestResponseWithNameservers(
+	name string,
+	client netip.Addr,
+	msg *dns.Msg,
+	nameservers *RPZNameserverData,
 ) (*RPZRule, RPZAction) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -664,11 +982,38 @@ func (a *RPZAggregate) CheckRequestResponse(
 		if rule, action := rpz.checkClientIP(client, true); action != RPZActionNone {
 			return rule, action
 		}
-		if rule, action := rpz.CheckResponse(name, msg); action != RPZActionNone {
+		if rule, action := rpz.CheckResponseWithNameservers(name, msg, nameservers); action != RPZActionNone {
 			return rule, action
 		}
 	}
 	return nil, RPZActionNone
+}
+
+// NameserverRequirements reports whether any active zone needs NS names or
+// addresses. It lets the server avoid nameserver-path discovery for ordinary
+// RPZ configurations.
+type RPZNameserverRequirements struct {
+	Names      bool
+	Addresses  bool
+	MinNSDots  int
+	MaxLookups int
+	Timeout    time.Duration
+}
+
+func (a *RPZAggregate) NameserverRequirements() RPZNameserverRequirements {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	requirements := RPZNameserverRequirements{
+		MinNSDots:  a.minNSDots,
+		MaxLookups: a.maxNSLookups,
+		Timeout:    a.nameserverTimeout,
+	}
+	for _, rpz := range a.zones {
+		zoneNames, zoneAddresses := rpz.NameserverRequirements()
+		requirements.Names = requirements.Names || zoneNames
+		requirements.Addresses = requirements.Addresses || zoneAddresses
+	}
+	return requirements
 }
 
 // Stats returns a stable snapshot of all configured RPZ zones in precedence
