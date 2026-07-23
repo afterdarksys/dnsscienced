@@ -2,6 +2,7 @@ package tsig
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
@@ -9,6 +10,41 @@ import (
 
 	"github.com/miekg/dns"
 )
+
+func TestKeyRingVerifyAcceptsRFC8945TruncationAndRejectsInvalidLengths(t *testing.T) {
+	kr, err := NewKeyRing([]KeyConfig{{
+		Name:      "truncation.example.",
+		Algorithm: "hmac-sha256",
+		Secret:    base64.StdEncoding.EncodeToString([]byte("truncation-test-secret")),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := []byte("authenticated DNS message")
+	record := &dns.TSIG{
+		Hdr:       dns.RR_Header{Name: "truncation.example."},
+		Algorithm: dns.HmacSHA256,
+	}
+	fullMAC, err := kr.Generate(message, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record.MAC = hex.EncodeToString(fullMAC[:16])
+	if err := kr.Verify(message, record); err != nil {
+		t.Fatalf("RFC 8945 minimum SHA-256 truncation rejected: %v", err)
+	}
+
+	record.MAC = hex.EncodeToString(fullMAC[:15])
+	if err := kr.Verify(message, record); !errors.Is(err, ErrBadTruncation) {
+		t.Fatalf("short MAC error = %v, want ErrBadTruncation", err)
+	}
+
+	record.MAC = hex.EncodeToString(append(fullMAC, 0))
+	if err := kr.Verify(message, record); !errors.Is(err, ErrMalformedMAC) {
+		t.Fatalf("oversized MAC error = %v, want ErrMalformedMAC", err)
+	}
+}
 
 func generateTestSecret() string {
 	// 32 bytes for HMAC-SHA256

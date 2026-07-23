@@ -199,8 +199,8 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 
 	// 2. TSIG validity check (D-16): bad key, MAC, time, or truncation.
-	if w.TsigStatus() != nil {
-		sendRcode(dns.RcodeNotAuth)
+	if verificationErr := w.TsigStatus(); verificationErr != nil {
+		writeTSIGVerificationError(w, r, verificationErr)
 		return
 	}
 

@@ -16,7 +16,7 @@ const axfrBatchSize = 100
 // Guard chain (each failure returns immediately with the specified rcode):
 //  1. UDP truncation (D-08): return TC=1; no zone data on UDP
 //  2. TSIG presence (D-04): absent TSIG → NOTAUTH (rcode 9)
-//  3. TSIG validity (D-05): bad/replayed TSIG → NOTAUTH
+//  3. TSIG validity (D-05): bad key/MAC/time/truncation → RFC 8945 error
 //  4. Empty question guard → REFUSED
 //  5. Zone lookup: unknown zone → REFUSED
 //  6. ACL check (D-01, D-03): nil ACL (no allow_transfer) or IP not allowed → REFUSED
@@ -55,12 +55,9 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		return
 	}
 
-	// 3. TSIG validity check (D-05): bad key, bad sig, replay attack.
-	if w.TsigStatus() != nil {
-		m := new(dns.Msg)
-		m.SetReply(r)
-		m.Rcode = dns.RcodeNotAuth
-		w.WriteMsg(m) //nolint:errcheck
+	// 3. TSIG validity check (D-05): bad key, MAC, time, or truncation.
+	if verificationErr := w.TsigStatus(); verificationErr != nil {
+		writeTSIGVerificationError(w, r, verificationErr)
 		return
 	}
 

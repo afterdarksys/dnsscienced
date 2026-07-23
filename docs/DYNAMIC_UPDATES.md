@@ -28,6 +28,12 @@ that zone's `update_tsig_keys`, and the client address must match
 validated at startup, so a misspelled or missing key stops the daemon instead of
 silently weakening authorization.
 
+TSIG processing follows RFC 8945: BADKEY and BADSIG errors carry an unsigned
+TSIG error record, while BADTIME and acceptable-but-policy-short truncation
+errors carry signed BADTIME/BADTRUNC responses. BADTIME includes the server's
+48-bit current time. SHA-2 MAC truncation is accepted only at or above the RFC
+minimum (the larger of 10 octets and half the algorithm output).
+
 Prerequisites are evaluated against the live zone while updates for that zone
 are serialized. Mutations are applied in order to a clone, structural
 invariants are validated, the SOA serial is advanced, and the replacement is

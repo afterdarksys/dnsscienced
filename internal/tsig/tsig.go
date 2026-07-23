@@ -8,12 +8,21 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"strings"
 	"sync"
 
 	"github.com/miekg/dns"
+)
+
+var (
+	// ErrBadTruncation indicates that a request MAC validated but is shorter
+	// than RFC 8945 permits for the selected algorithm.
+	ErrBadTruncation = errors.New("tsig: MAC truncation below policy minimum")
+	// ErrMalformedMAC indicates a request MAC longer than the algorithm output.
+	ErrMalformedMAC = errors.New("tsig: MAC exceeds algorithm output")
 )
 
 // Supported TSIG algorithms (FQDN form with trailing dot).
@@ -69,8 +78,18 @@ func (kr *KeyRing) Verify(msg []byte, t *dns.TSIG) error {
 	if err != nil {
 		return err
 	}
-	if !hmac.Equal(want, got) {
+	if len(got) > len(want) {
+		return ErrMalformedMAC
+	}
+	if !hmac.Equal(want[:len(got)], got) {
 		return dns.ErrSig
+	}
+	minimum := len(want) / 2
+	if minimum < 10 {
+		minimum = 10
+	}
+	if len(got) < minimum {
+		return ErrBadTruncation
 	}
 	return nil
 }

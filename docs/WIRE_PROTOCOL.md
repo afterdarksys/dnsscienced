@@ -625,6 +625,14 @@ Algorithms:
 - hmac-sha512
 - hmac-sha1 (legacy, not recommended)
 - hmac-md5 (deprecated, insecure)
+
+Every response to an authenticated TSIG request is signed with the request key,
+including ordinary QUERY and RFC 9859 notification responses. Verification
+errors use outer RCODE NOTAUTH plus the RFC 8945 TSIG error: BADKEY and BADSIG
+responses have an empty MAC, while BADTIME and BADTRUNC responses are signed.
+BADTIME preserves the request Time Signed value and carries the server's current
+48-bit time in Other Data. MAC truncation is accepted only when it is at least
+the larger of 10 octets and half the selected SHA-2 output.
 ```
 
 ---
@@ -898,7 +906,10 @@ Examples:
 | Unknown RR type | Process | RFC 3597 handling |
 | Unknown EDNS option | Ignore | Process normally |
 | Invalid OPT | Ignore OPT | Process without EDNS |
-| TSIG verification fail | Reject | BADSIG |
+| TSIG unknown key/algorithm | Reject | NOTAUTH + unsigned BADKEY |
+| TSIG MAC verification fail | Reject | NOTAUTH + unsigned BADSIG |
+| TSIG outside time window | Reject | NOTAUTH + signed BADTIME |
+| TSIG truncation below policy | Reject | NOTAUTH + signed BADTRUNC |
 
 ### Graceful Degradation
 

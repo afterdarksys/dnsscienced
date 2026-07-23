@@ -962,6 +962,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		clientIP = addr.IP
 	}
 
+	// RFC 8945 applies to every signed DNS request, independent of opcode.
+	// Reject failed authentication before any handler can observe or act on it.
+	if r.IsTsig() != nil {
+		if verificationErr := w.TsigStatus(); verificationErr != nil {
+			writeTSIGVerificationError(w, r, verificationErr)
+			return
+		}
+		w = newTSIGSigningResponseWriter(w, r.IsTsig())
+	}
+
 	// RFC 9859: dispatch NOTIFY opcode before query processing.
 	// This must be FIRST — before pool.GetMessage, before defensive checks.
 	if r.Opcode == dns.OpcodeNotify {
@@ -977,13 +987,6 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				m := new(dns.Msg)
 				m.SetReply(r)
 				m.Rcode = dns.RcodeRefused
-				writeMsg(w, m) //nolint:errcheck
-				return
-			}
-			if r.IsTsig() != nil && w.TsigStatus() != nil {
-				m := new(dns.Msg)
-				m.SetReply(r)
-				m.Rcode = dns.RcodeNotAuth
 				writeMsg(w, m) //nolint:errcheck
 				return
 			}

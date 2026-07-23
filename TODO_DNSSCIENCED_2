@@ -44,8 +44,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   4. TSIG Authentication (RFC 8945)
 
-  Status: **Implemented** for UPDATE, AXFR/IXFR, RFC 1996 NOTIFY, constant-time
-  MAC validation, and live key rotation.
+  Status: **Implemented** for UPDATE, AXFR/IXFR, RFC 1996 NOTIFY, all signed
+  request responses, constant-time full/truncated MAC validation, RFC 8945
+  BADKEY/BADSIG/BADTIME/BADTRUNC error behavior, and live key rotation.
 
   - Cryptographic authentication for zone transfers
   - Secure dynamic updates
