@@ -469,8 +469,8 @@ sigloop:
 		switch sig {
 		case syscall.SIGHUP:
 			// D-09: Full config reload (not just API keys). D-11: atomic swap via ConfigHolder.
-			if configHolder == nil || *configFile == "" {
-				fmt.Println("SIGHUP received but no config file or config holder available; ignoring")
+			if *configFile == "" {
+				fmt.Println("SIGHUP received but no config file is configured; ignoring")
 				continue
 			}
 			reloaded, err := config.Load(*configFile)
@@ -478,18 +478,26 @@ sigloop:
 				fmt.Fprintf(os.Stderr, "SIGHUP: failed to parse config: %v; keeping current config\n", err)
 				continue
 			}
-			newGrpcCfg := grpcserver.Config{
-				ListenAddr:   reloaded.Admin.Listen,
-				APIKeys:      reloaded.Admin.APIKeys,
-				TLSCertFile:  reloaded.Admin.TLSCertFile,
-				TLSKeyFile:   reloaded.Admin.TLSKeyFile,
-				TLSClientCAs: reloaded.Admin.TLSClientCAs,
-			}
-			if err := configHolder.Reload(newGrpcCfg); err != nil {
-				fmt.Fprintf(os.Stderr, "SIGHUP: config reload failed: %v; keeping current config\n", err)
+			if err := srv.ReloadRPZ(reloaded.Server.RPZ); err != nil {
+				fmt.Fprintf(os.Stderr, "SIGHUP: RPZ reload failed: %v; keeping current policies\n", err)
 				continue
 			}
-			fmt.Printf("SIGHUP: admin config reloaded (%d keys)\n", len(reloaded.Admin.APIKeys))
+			if configHolder != nil {
+				newGrpcCfg := grpcserver.Config{
+					ListenAddr:   reloaded.Admin.Listen,
+					APIKeys:      reloaded.Admin.APIKeys,
+					TLSCertFile:  reloaded.Admin.TLSCertFile,
+					TLSKeyFile:   reloaded.Admin.TLSKeyFile,
+					TLSClientCAs: reloaded.Admin.TLSClientCAs,
+				}
+				if err := configHolder.Reload(newGrpcCfg); err != nil {
+					fmt.Fprintf(os.Stderr, "SIGHUP: admin config reload failed: %v; RPZ reload applied\n", err)
+					continue
+				}
+			}
+			loadedCfg = reloaded
+			fmt.Printf("SIGHUP: configuration reloaded (%d RPZ zones, %d admin keys)\n",
+				len(reloaded.Server.RPZ.Zones), len(reloaded.Admin.APIKeys))
 		case syscall.SIGINT, syscall.SIGTERM:
 			fmt.Println()
 			break sigloop

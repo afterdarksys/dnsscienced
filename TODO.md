@@ -64,7 +64,7 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Wire durable per-client tunneling, subdomain-enumeration, and exfiltration
   correlation into the primary server path with actionable alerts.
 - [ ] Add GeoIP-based policy controls.
-- [ ] Add regex-based RPZ policy matching.
+- [x] Add regex-based RPZ policy matching.
 - [ ] Add per-client mTLS identities and authorization for DoT/DoH.
 - [ ] Add JWT-based authorization where HTTP APIs require it.
 - [ ] Add privacy-preserving, security-context audit logs and retention controls.
@@ -81,10 +81,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 
 - [x] Implement the in-memory RPZ rule engine for exact/wildcard query-name rules,
   passthrough, NXDOMAIN, NODATA, drop, and rewrite actions.
-- [ ] Wire RPZ loading and enforcement into the primary production server and its
+- [x] Wire RPZ loading and enforcement into the primary production server and its
   documented configuration path.
 - [ ] Implement response-IP and other RFC-defined RPZ triggers.
-- [ ] Add safe hot reload, precedence rules, source attribution, hit metrics, and
+- [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 
 ## Resolver performance and operator tuning

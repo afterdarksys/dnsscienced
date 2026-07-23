@@ -66,6 +66,10 @@ type Config struct {
 	// DNS Firewall (dnsfirewalld)
 	Firewall firewalld.Config `yaml:"firewall"`
 
+	// Response Policy Zones. Policies are loaded atomically at startup and can
+	// be reloaded with ReloadRPZ.
+	RPZ RPZConfig `yaml:"rpz"`
+
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
 
@@ -195,6 +199,7 @@ type Server struct {
 	defensive        *defensive.Manager
 	protective       *protective.Engine
 	firewall         *firewalld.Firewall
+	rpz              atomic.Pointer[engine.RPZAggregate]
 	tsigKeyRing      *tsig.KeyRing
 	dsyncHandler     *dsync.Handler
 	dsyncNotifier    *dsync.DSYNCNotifier
@@ -321,6 +326,11 @@ func New(cfg Config) (*Server, error) {
 	// are both handled inside StartFeed itself.
 	if s.firewall != nil {
 		s.firewall.StartFeed(s.ctx, &s.wg)
+	}
+
+	if err := s.ReloadRPZ(cfg.RPZ); err != nil {
+		cancel()
+		return nil, fmt.Errorf("init RPZ: %w", err)
 	}
 
 	// Initialize RRL if enabled
@@ -1095,6 +1105,22 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeMsg(w, resp)
 			return
 		}
+	}
+
+	if matched, drop, rule := s.applyRPZ(r, m); matched {
+		if drop {
+			return
+		}
+		if s.shouldRateLimit(m, clientIP) {
+			return
+		}
+		s.answers.Add(1)
+		if m.Rcode == dns.RcodeNameError {
+			s.nxdomain.Add(1)
+		}
+		emitQuery(m.Rcode, rule.Zone)
+		w.WriteMsg(m) //nolint:errcheck
+		return
 	}
 
 	var responseClientCookie [8]byte

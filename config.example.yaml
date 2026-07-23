@@ -61,6 +61,21 @@ server:
       - "127.0.0.0/8"
       - "::1/128"
 
+  # Response Policy Zones. Lower priority values are evaluated first.
+  # Files use standard RPZ QNAME CNAME policies and are atomically reloaded
+  # with SIGHUP. A failed reload retains the last valid policy.
+  rpz:
+    enabled: false
+    zones:
+      - name: "security-policy"
+        file: "/etc/dnsscienced/rpz/security-policy.bind"
+        reason: "operator security policy"
+        priority: 10
+        regex_rules:
+          - pattern: '(^|\.)blocked-[0-9]+\.example\.$'
+            action: "nxdomain"
+            reason: "generated blocked hostnames"
+
 # Admin gRPC API for control and monitoring
 admin:
   enabled: true

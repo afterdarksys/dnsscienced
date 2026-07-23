@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -45,6 +47,8 @@ type RPZRule struct {
 	Action        RPZAction // What to do when matched
 	RewriteTarget string    // Used only with RPZActionRewrite
 	Reason        string    // Human-readable reason (e.g., "malware", "phishing")
+	Zone          string    // RPZ zone that supplied the rule
+	Source        string    // File or provider that supplied the rule
 }
 
 // RPZ implements Response Policy Zones for DNS filtering.
@@ -53,8 +57,14 @@ type RPZ struct {
 	mu        sync.RWMutex
 	rules     map[string]*RPZRule // Exact match rules
 	wildcards map[string]*RPZRule // Wildcard rules (*.domain)
-	name      string              // Zone name for identification
+	regex     []rpzRegexRule
+	name      string // Zone name for identification
 	enabled   bool
+}
+
+type rpzRegexRule struct {
+	expression *regexp.Regexp
+	rule       *RPZRule
 }
 
 // NewRPZ creates a new RPZ instance.
@@ -69,69 +79,105 @@ func NewRPZ(name string) *RPZ {
 
 // AddRule adds an exact match rule to the RPZ.
 func (r *RPZ) AddRule(trigger string, action RPZAction, reason string) {
-	trigger = dns.Fqdn(strings.ToLower(trigger))
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.rules[trigger] = &RPZRule{
-		Trigger: trigger,
-		Action:  action,
-		Reason:  reason,
-	}
+	r.addRule(trigger, action, "", reason, "", false)
 }
 
 // AddWildcard adds a wildcard rule to the RPZ.
 // The trigger should be the base domain (without the *. prefix).
 func (r *RPZ) AddWildcard(trigger string, action RPZAction, reason string) {
-	trigger = dns.Fqdn(strings.ToLower(trigger))
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.wildcards[trigger] = &RPZRule{
-		Trigger: trigger,
-		Action:  action,
-		Reason:  reason,
-	}
+	r.addRule(trigger, action, "", reason, "", true)
 }
 
 // AddRewriteRule adds a rule that rewrites queries to a different target.
 func (r *RPZ) AddRewriteRule(trigger, target, reason string) {
-	trigger = dns.Fqdn(strings.ToLower(trigger))
-	target = dns.Fqdn(strings.ToLower(target))
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.rules[trigger] = &RPZRule{
-		Trigger:       trigger,
-		Action:        RPZActionRewrite,
-		RewriteTarget: target,
-		Reason:        reason,
-	}
+	r.addRule(trigger, RPZActionRewrite, target, reason, "", false)
 }
 
 // AddPassthru adds a passthru (whitelist) rule that overrides blocking rules.
 func (r *RPZ) AddPassthru(trigger, reason string) {
-	trigger = dns.Fqdn(strings.ToLower(trigger))
+	r.addRule(trigger, RPZActionPassthru, "", reason, "", false)
+}
+
+// AddRegexRule adds a regular-expression QNAME policy. Expressions are
+// evaluated against normalized lowercase FQDNs after exact and wildcard rules.
+func (r *RPZ) AddRegexRule(
+	pattern string,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+) error {
+	if strings.TrimSpace(pattern) == "" {
+		return fmt.Errorf("RPZ regex pattern is required")
+	}
+	expression, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("compile RPZ regex %q: %w", pattern, err)
+	}
+	if action == RPZActionRewrite {
+		if rewriteTarget == "" {
+			return fmt.Errorf("RPZ regex rewrite %q requires a target", pattern)
+		}
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
+	}
+	rule := &RPZRule{
+		Trigger:       pattern,
+		Action:        action,
+		RewriteTarget: rewriteTarget,
+		Reason:        reason,
+		Zone:          r.name,
+		Source:        source,
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rules[trigger] = &RPZRule{
-		Trigger: trigger,
-		Action:  RPZActionPassthru,
-		Reason:  reason,
+	r.regex = append(r.regex, rpzRegexRule{expression: expression, rule: rule})
+	return nil
+}
+
+func (r *RPZ) addRule(
+	trigger string,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+	wildcard bool,
+) {
+	trigger = dns.Fqdn(strings.ToLower(trigger))
+	if rewriteTarget != "" {
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rule := &RPZRule{
+		Trigger:       trigger,
+		Action:        action,
+		RewriteTarget: rewriteTarget,
+		Reason:        reason,
+		Zone:          r.name,
+		Source:        source,
+	}
+	if wildcard {
+		r.wildcards[trigger] = rule
+		return
+	}
+	r.rules[trigger] = rule
 }
 
 // Check evaluates a query name against the RPZ rules.
 // Returns the matching rule and action, or nil/RPZActionNone if no match.
 func (r *RPZ) Check(name string) (*RPZRule, RPZAction) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	if !r.enabled {
 		return nil, RPZActionNone
 	}
 
 	name = dns.Fqdn(strings.ToLower(name))
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	// 1. Check exact match first
 	if rule, ok := r.rules[name]; ok {
+		recordRPZHit(rule)
 		return rule, rule.Action
 	}
 
@@ -140,7 +186,15 @@ func (r *RPZ) Check(name string) (*RPZRule, RPZAction) {
 	for i := 0; i < len(labels); i++ {
 		wildcard := dns.Fqdn(strings.Join(labels[i:], "."))
 		if rule, ok := r.wildcards[wildcard]; ok {
+			recordRPZHit(rule)
 			return rule, rule.Action
+		}
+	}
+
+	for _, candidate := range r.regex {
+		if candidate.expression.MatchString(name) {
+			recordRPZHit(candidate.rule)
+			return candidate.rule, candidate.rule.Action
 		}
 	}
 
@@ -224,6 +278,7 @@ func (r *RPZ) Stats() RPZStats {
 		Enabled:       r.enabled,
 		ExactRules:    len(r.rules),
 		WildcardRules: len(r.wildcards),
+		RegexRules:    len(r.regex),
 	}
 }
 
@@ -233,6 +288,7 @@ type RPZStats struct {
 	Enabled       bool
 	ExactRules    int
 	WildcardRules int
+	RegexRules    int
 }
 
 // RPZAggregate manages multiple RPZ zones with priority ordering.
@@ -267,4 +323,17 @@ func (a *RPZAggregate) Check(name string) (*RPZRule, RPZAction) {
 		}
 	}
 	return nil, RPZActionNone
+}
+
+// Stats returns a stable snapshot of all configured RPZ zones in precedence
+// order.
+func (a *RPZAggregate) Stats() []RPZStats {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	stats := make([]RPZStats, 0, len(a.zones))
+	for _, rpz := range a.zones {
+		stats = append(stats, rpz.Stats())
+	}
+	return stats
 }
