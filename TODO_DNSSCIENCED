@@ -83,7 +83,7 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
 ## Phase 3: Advanced Threat Intelligence
 
 ### dnsscienced Features
-- [ ] Multi-source threat feed aggregation
+- [x] Multi-source threat feed aggregation
   - Integrate with public feeds (abuse.ch, Spamhaus, etc.)
   - Support custom threat list imports
   - Periodic refresh with configurable intervals

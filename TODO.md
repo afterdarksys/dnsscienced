@@ -42,9 +42,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Publish cache STORE events, including threat metadata.
 - [x] Publish HIT, MISS, EVICT, STORE, and DELETE events; enforce event-type and
   domain-pattern filters in the streaming service.
-- [ ] Aggregate multiple threat-intelligence providers with configurable refresh,
+- [x] Aggregate multiple threat-intelligence providers with configurable refresh,
   scoring, provenance, and conflict handling.
-- [ ] Import operator-supplied threat lists.
+- [x] Import operator-supplied threat lists.
 - [ ] Add historical, per-client query analysis and durable anomaly history.
 
 ## DNS protocol and security work

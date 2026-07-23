@@ -17,29 +17,42 @@ type ThreatScorer struct {
 
 // NewThreatScorer creates a new ThreatScorer
 func NewThreatScorer(darkAPIKey string) *ThreatScorer {
+	return NewThreatScorerWithFeeds(darkAPIKey, nil)
+}
+
+// NewThreatScorerWithFeeds creates a scorer backed only by explicitly
+// configured remote or operator-local feeds.
+func NewThreatScorerWithFeeds(darkAPIKey string, feeds []ThreatFeedConfig) *ThreatScorer {
 	var providers []ThreatProvider
 
 	if darkAPIKey != "" {
 		providers = append(providers, NewDarkAPIProvider(darkAPIKey))
 	}
 
-	// Add Async Lock-Free OSINT Aggregator
-	osintProvider := NewInMemoryFeedProvider(
-		"osint-aggregator",
-		[]string{
-			"https://urlhaus.abuse.ch/downloads/hostfile/", // Industry standard malware domain sinkhole
-		},
-		6*time.Hour,
-	)
-	providers = append(providers, osintProvider)
+	if len(feeds) > 0 {
+		providers = append(providers, NewConfiguredFeedProvider(feeds))
+	}
 
 	var p ThreatProvider
-	if len(providers) > 0 {
+	switch len(providers) {
+	case 0:
+		// Leave the provider nil so unconfigured deployments do no extra work.
+	case 1:
+		// Avoid an aggregator goroutine and mutex on the cache insertion hot path.
+		p = providers[0]
+	default:
 		p = NewAggregateProvider(providers...)
 	}
 
 	return &ThreatScorer{
 		provider: p,
+	}
+}
+
+// Close stops configured provider refresh workers.
+func (ts *ThreatScorer) Close() {
+	if closer, ok := ts.provider.(interface{ Stop() }); ok {
+		closer.Stop()
 	}
 }
 
@@ -69,11 +82,11 @@ func (ts *ThreatScorer) Enrich(ctx context.Context, entry *pb.CacheEntry) {
 
 	// Use Provider if available
 	if ts.provider != nil {
-		score, cats, err := ts.provider.CheckDomain(ctx, domain)
+		score, cats, source, err := ts.lookupDomain(ctx, domain)
 		if err == nil && score > 0 {
 			entry.ThreatScore = score
 			entry.Categories = cats
-			entry.ThreatSource = ts.provider.Name()
+			entry.ThreatSource = source
 			if score > 80 {
 				entry.Reputation = "malicious"
 			} else if score > 50 {
@@ -83,16 +96,6 @@ func (ts *ThreatScorer) Enrich(ctx context.Context, entry *pb.CacheEntry) {
 		}
 	}
 
-	// Fallback to mock logic (keep existing behavior for testing/demo)
-	if isMalicious(domain) {
-		entry.ThreatScore = 100
-		entry.Reputation = "malicious"
-		entry.Categories = []string{"malware", "phishing"}
-	} else if isSuspicious(domain) {
-		entry.ThreatScore = 50
-		entry.Reputation = "suspicious"
-		entry.Categories = []string{"newly_registered"}
-	}
 }
 
 // EnrichEntry calculates threat metadata for the internal cache Entry
@@ -119,11 +122,11 @@ func (ts *ThreatScorer) EnrichEntry(entry *Entry) {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 
-		score, cats, err := ts.provider.CheckDomain(ctx, domain)
+		score, cats, source, err := ts.lookupDomain(ctx, domain)
 		if err == nil && score > 0 {
 			entry.ThreatScore = score
 			entry.Categories = cats
-			entry.ThreatSource = ts.provider.Name()
+			entry.ThreatSource = source
 			if score > 80 {
 				entry.Reputation = "malicious"
 			} else if score > 50 {
@@ -133,46 +136,13 @@ func (ts *ThreatScorer) EnrichEntry(entry *Entry) {
 		}
 	}
 
-	// Fallback to mock logic
-	if isMalicious(domain) {
-		entry.ThreatScore = 100
-		entry.Reputation = "malicious"
-		entry.Categories = []string{"malware", "phishing"}
-	} else if isSuspicious(domain) {
-		entry.ThreatScore = 50
-		entry.Reputation = "suspicious"
-		entry.Categories = []string{"newly_registered"}
-	}
 }
 
-// Authorization logic/mock data
-// TODO: Replace with real threat feeds
-func isMalicious(domain string) bool {
-	malicious := []string{
-		"example-malware.com",
-		"bad-site.org",
-		"phishing-attempt.net",
-		"test-threat.com",
+func (ts *ThreatScorer) lookupDomain(ctx context.Context, domain string) (int32, []string, string, error) {
+	if detailed, ok := ts.provider.(detailedThreatProvider); ok {
+		result, err := detailed.LookupDomain(ctx, domain)
+		return result.Score, result.Categories, strings.Join(result.Sources, ","), err
 	}
-	for _, m := range malicious {
-		if domain == m || strings.HasSuffix(domain, "."+m) {
-			return true
-		}
-	}
-	return false
-}
-
-func isSuspicious(domain string) bool {
-	// Example heuristic: really long random-looking subdomains?
-	// For now just explicit list
-	suspicious := []string{
-		"suspicious-domain.xyz",
-		"crypto-miner-test.io",
-	}
-	for _, s := range suspicious {
-		if domain == s || strings.HasSuffix(domain, "."+s) {
-			return true
-		}
-	}
-	return false
+	score, categories, err := ts.provider.CheckDomain(ctx, domain)
+	return score, categories, ts.provider.Name(), err
 }

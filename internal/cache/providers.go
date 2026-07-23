@@ -1,15 +1,14 @@
 package cache
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +17,35 @@ type ThreatProvider interface {
 	CheckDomain(ctx context.Context, domain string) (int32, []string, error)
 	CheckURL(ctx context.Context, queryURL string) (int32, []string, error)
 	Name() string
+}
+
+// ThreatLookup preserves provider provenance for an aggregated decision.
+type ThreatLookup struct {
+	Score      int32
+	Categories []string
+	Sources    []string
+}
+
+type detailedThreatProvider interface {
+	LookupDomain(ctx context.Context, domain string) (ThreatLookup, error)
+}
+
+func sortedUnique(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // DarkAPIProvider implements ThreatProvider for darkapi.io
@@ -105,8 +133,16 @@ func NewAggregateProvider(providers ...ThreatProvider) *AggregateProvider {
 // CheckDomain queries all providers and returns the highest score
 // Concurrent execution with "fail open" policy
 func (ap *AggregateProvider) CheckDomain(ctx context.Context, domain string) (int32, []string, error) {
+	result, err := ap.LookupDomain(ctx, domain)
+	return result.Score, result.Categories, err
+}
+
+// LookupDomain queries all providers, selects the highest score, and preserves
+// sorted category/source provenance from every successful positive match.
+func (ap *AggregateProvider) LookupDomain(ctx context.Context, domain string) (ThreatLookup, error) {
 	var maxScore int32
 	var allCategories []string
+	var allSources []string
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -114,7 +150,16 @@ func (ap *AggregateProvider) CheckDomain(ctx context.Context, domain string) (in
 		wg.Add(1)
 		go func(p ThreatProvider) {
 			defer wg.Done()
-			score, cats, err := p.CheckDomain(ctx, domain)
+			var lookup ThreatLookup
+			var err error
+			if detailed, ok := p.(detailedThreatProvider); ok {
+				lookup, err = detailed.LookupDomain(ctx, domain)
+			} else {
+				lookup.Score, lookup.Categories, err = p.CheckDomain(ctx, domain)
+				if lookup.Score > 0 {
+					lookup.Sources = []string{p.Name()}
+				}
+			}
 			if err != nil {
 				// Log error but don't fail the aggregation
 				// logging.Logger.Warn("Provider failed", zap.String("provider", p.Name()), zap.Error(err))
@@ -122,10 +167,11 @@ func (ap *AggregateProvider) CheckDomain(ctx context.Context, domain string) (in
 			}
 
 			mu.Lock()
-			if score > maxScore {
-				maxScore = score
+			if lookup.Score > maxScore {
+				maxScore = lookup.Score
 			}
-			allCategories = append(allCategories, cats...)
+			allCategories = append(allCategories, lookup.Categories...)
+			allSources = append(allSources, lookup.Sources...)
 			mu.Unlock()
 		}(p)
 	}
@@ -133,16 +179,11 @@ func (ap *AggregateProvider) CheckDomain(ctx context.Context, domain string) (in
 	wg.Wait()
 
 	// Dedup categories
-	uniqueCats := make(map[string]struct{})
-	var finalCats []string
-	for _, c := range allCategories {
-		if _, ok := uniqueCats[c]; !ok {
-			uniqueCats[c] = struct{}{}
-			finalCats = append(finalCats, c)
-		}
-	}
-
-	return maxScore, finalCats, nil
+	return ThreatLookup{
+		Score:      maxScore,
+		Categories: sortedUnique(allCategories),
+		Sources:    sortedUnique(allSources),
+	}, nil
 }
 
 // CheckURL queries all providers and returns the highest score for a URL
@@ -188,141 +229,18 @@ func (ap *AggregateProvider) Name() string {
 	return "aggregate"
 }
 
-// threatData holds pre-calculated threat metadata for lock-free map reads
+// Stop halts refresh workers owned by child providers.
+func (ap *AggregateProvider) Stop() {
+	for _, provider := range ap.providers {
+		if stopper, ok := provider.(interface{ Stop() }); ok {
+			stopper.Stop()
+		}
+	}
+}
+
+// threatData holds pre-calculated threat metadata for lock-free map reads.
 type threatData struct {
 	Score      int32
 	Categories []string
-}
-
-// InMemoryFeedProvider asynchronously fetches and stores public OSINT feeds for zero-I/O lock-free lookup.
-type InMemoryFeedProvider struct {
-	feedUrls    []string
-	interval    time.Duration
-	name        string
-	database    atomic.Value // Holds map[string]threatData
-	urlDatabase atomic.Value // Holds map[string]threatData
-	stopChan    chan struct{}
-}
-
-// NewInMemoryFeedProvider constructs the provider and launches the background sync goroutine
-func NewInMemoryFeedProvider(name string, urls []string, interval time.Duration) *InMemoryFeedProvider {
-	p := &InMemoryFeedProvider{
-		feedUrls: urls,
-		interval: interval,
-		name:     name,
-		stopChan: make(chan struct{}),
-	}
-
-	// Initialize empty maps to prevent panic on first load
-	p.database.Store(make(map[string]threatData))
-	p.urlDatabase.Store(make(map[string]threatData))
-
-	go p.syncLoop()
-	return p
-}
-
-func (p *InMemoryFeedProvider) Name() string {
-	return p.name
-}
-
-// Stop halts the background sync loop
-func (p *InMemoryFeedProvider) Stop() {
-	close(p.stopChan)
-}
-
-// CheckDomain evaluates the domain in O(1) time fully in-memory via atomic load.
-func (p *InMemoryFeedProvider) CheckDomain(ctx context.Context, domain string) (int32, []string, error) {
-	db := p.database.Load().(map[string]threatData)
-	if data, ok := db[domain]; ok {
-		return data.Score, data.Categories, nil
-	}
-	return 0, nil, nil
-}
-
-// CheckURL evaluates the URL in O(1) time fully in-memory via atomic load.
-func (p *InMemoryFeedProvider) CheckURL(ctx context.Context, queryURL string) (int32, []string, error) {
-	db := p.urlDatabase.Load().(map[string]threatData)
-	if data, ok := db[queryURL]; ok {
-		return data.Score, data.Categories, nil
-	}
-	// Fallback to domain checking if specific URL isn't blocked?
-	// For pure URL feeds, we leave it exact.
-	return 0, nil, nil
-}
-
-func (p *InMemoryFeedProvider) syncLoop() {
-	// Initial fetch
-	p.fetchFeeds()
-
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-p.stopChan:
-			return
-		case <-ticker.C:
-			p.fetchFeeds()
-		}
-	}
-}
-
-func (p *InMemoryFeedProvider) fetchFeeds() {
-	// Build completely new maps in isolation
-	newDB := make(map[string]threatData)
-	newURLDB := make(map[string]threatData)
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	for _, u := range p.feedUrls {
-		resp, err := client.Get(u)
-		if err != nil {
-			// In production, log error. For now, quietly loop to prevent blocking
-			continue
-		}
-
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-
-			// Handle Hosts-file format (127.0.0.1 domain) or Raw Domain lists
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			var entry string
-			if len(fields) >= 2 && (fields[0] == "127.0.0.1" || fields[0] == "0.0.0.0") {
-				entry = fields[1]
-			} else {
-				entry = fields[0]
-			}
-
-			if strings.HasPrefix(entry, "http://") || strings.HasPrefix(entry, "https://") {
-				newURLDB[entry] = threatData{
-					Score:      90,
-					Categories: []string{"malware", "osint-feed"},
-				}
-				if parsed, err := url.Parse(entry); err == nil && parsed.Host != "" {
-					domain := strings.ToLower(parsed.Host)
-					newDB[domain] = threatData{
-						Score:      90,
-						Categories: []string{"malware", "osint-feed"},
-					}
-				}
-			} else {
-				domain := strings.ToLower(entry)
-				newDB[domain] = threatData{
-					Score:      90, // High certainty for public OSINT feed hits
-					Categories: []string{"malware", "osint-feed"},
-				}
-			}
-		}
-		resp.Body.Close()
-	}
-
-	// Atomic pointer swap: instantaneous switch to the new dataset for all incoming readers
-	p.database.Store(newDB)
-	p.urlDatabase.Store(newURLDB)
+	Sources    []string
 }

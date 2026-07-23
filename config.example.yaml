@@ -627,6 +627,16 @@ cache:
   max_ttl: 24h
   min_negative_ttl: 0s
   max_negative_ttl: 1h
+  # Explicit local/HTTPS sources only; no feed is contacted by default.
+  # threat_feeds:
+  #   - name: "operator-blocklist"
+  #     file: "/etc/dnsscienced/threats/domains.txt"
+  #     format: "domains"
+  #     score: 95
+  #     categories: ["malware", "operator"]
+  #     refresh_interval: 5m
+  #     max_bytes: 33554432
+  #     max_entries: 1000000
 
 # Logging
 logging:
