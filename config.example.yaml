@@ -18,6 +18,13 @@ server:
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
   primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
+  query_complexity:
+    enabled: true
+    max_score: 20
+    any_cost: 6
+    dnssec_cost: 4
+    long_name_cost: 5
+    edns_option_cost: 1
 
   # Enable modes
   enable_authoritative: true     # Enable authoritative server

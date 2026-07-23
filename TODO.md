@@ -72,8 +72,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   not an operational listener.
 - [ ] Implement Oblivious DoH (RFC 9230).
 - [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103).
-- [ ] Add query-complexity controls, adaptive IP-reputation limits, and explicit
-  TCP/SYN-flood deployment protections.
+- [x] Add configurable query-complexity admission scoring before policy,
+  authoritative, and recursive processing, with Prometheus rejection counters.
+- [ ] Add adaptive IP-reputation limits and explicit TCP/SYN-flood deployment
+  protections.
 - [ ] Add forensic query replay and SOC 2/ISO 27001 reporting workflows.
 - [ ] Add SIEM/SOAR export formats and integrations.
 

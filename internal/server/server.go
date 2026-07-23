@@ -70,6 +70,10 @@ type Config struct {
 	// be reloaded with ReloadRPZ.
 	RPZ RPZConfig `yaml:"rpz"`
 
+	// QueryComplexity rejects unusually expensive query combinations before
+	// authoritative, policy, or recursive work.
+	QueryComplexity QueryComplexityConfig `yaml:"query_complexity"`
+
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
 
@@ -171,7 +175,8 @@ func DefaultConfig() Config {
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
 
-		Experimental: experimental.DefaultConfig(),
+		Experimental:    experimental.DefaultConfig(),
+		QueryComplexity: defaultQueryComplexityConfig(),
 
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -229,8 +234,9 @@ type Server struct {
 	nxdomain atomic.Uint64
 
 	// Transport-level counters
-	udpQueries atomic.Uint64
-	tcpQueries atomic.Uint64
+	udpQueries         atomic.Uint64
+	tcpQueries         atomic.Uint64
+	complexityRejected atomic.Uint64
 
 	// Lifecycle
 	ctx    context.Context
@@ -246,6 +252,11 @@ func New(cfg Config) (*Server, error) {
 	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
 		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
 	}
+	complexityConfig, err := normalizeQueryComplexityConfig(cfg.QueryComplexity)
+	if err != nil {
+		return nil, err
+	}
+	cfg.QueryComplexity = complexityConfig
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1042,6 +1053,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	question := r.Question[0]
+	if s.cfg.QueryComplexity.Enabled &&
+		queryComplexityScore(r, s.cfg.QueryComplexity) > s.cfg.QueryComplexity.MaxScore {
+		m.Rcode = dns.RcodeRefused
+		s.errors.Add(1)
+		s.complexityRejected.Add(1)
+		queryComplexityRejectedTotal.Inc()
+		emitQuery(m.Rcode, "")
+		writeMsg(w, m) //nolint:errcheck
+		return
+	}
 
 	// Log query if enabled
 	if s.defensive != nil {
@@ -1439,8 +1460,9 @@ type Stats struct {
 	NXDOMAIN uint64
 
 	// Transport-level counters
-	UDPQueries uint64
-	TCPQueries uint64
+	UDPQueries         uint64
+	TCPQueries         uint64
+	ComplexityRejected uint64
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1450,12 +1472,13 @@ type Stats struct {
 // GetStats returns current statistics
 func (s *Server) GetStats() Stats {
 	stats := Stats{
-		Queries:    s.queries.Load(),
-		Answers:    s.answers.Load(),
-		Errors:     s.errors.Load(),
-		NXDOMAIN:   s.nxdomain.Load(),
-		UDPQueries: s.udpQueries.Load(),
-		TCPQueries: s.tcpQueries.Load(),
+		Queries:            s.queries.Load(),
+		Answers:            s.answers.Load(),
+		Errors:             s.errors.Load(),
+		NXDOMAIN:           s.nxdomain.Load(),
+		UDPQueries:         s.udpQueries.Load(),
+		TCPQueries:         s.tcpQueries.Load(),
+		ComplexityRejected: s.complexityRejected.Load(),
 	}
 
 	if s.recursive != nil {
