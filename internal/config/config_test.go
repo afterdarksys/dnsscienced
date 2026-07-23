@@ -193,6 +193,38 @@ dhcp:
 	assert.Equal(t, 12*time.Hour, cfg.DHCP.Subnets[0].Lease.Default)
 }
 
+func TestLoadCatalogZoneDefaultsPersistentStatePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`
+catalog_zones:
+  - name: catalog.example.
+    masters: [192.0.2.1]
+    transfer_tsig_key: catalog-key.example.
+    member_defaults:
+      masters: [192.0.2.2]
+      transfer_tsig_key: member-key.example.
+    groups:
+      blue:
+        masters: [192.0.2.3]
+        transfer_tsig_key: member-key.example.
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CatalogStateFile != "/var/lib/dnsscienced/catalog-state.json" {
+		t.Fatalf("catalog state path = %q", cfg.CatalogStateFile)
+	}
+	if len(cfg.CatalogZones) != 1 ||
+		cfg.CatalogZones[0].MemberDefaults.Masters[0] != "192.0.2.2" ||
+		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" {
+		t.Fatalf("catalog config = %+v", cfg.CatalogZones)
+	}
+}
+
 func TestMastersAndForwarders(t *testing.T) {
 	yamlContent := `
 masters:

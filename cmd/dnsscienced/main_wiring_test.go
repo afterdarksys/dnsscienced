@@ -143,6 +143,58 @@ func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T)
 	}
 }
 
+func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "catalog-xfer.example.",
+			Algorithm: "hmac-sha256",
+			Secret:    "c2VjcmV0",
+		}},
+		CatalogZones: []config.CatalogZoneConfig{{
+			Name: "catalog.example.",
+			CatalogTransferConfig: config.CatalogTransferConfig{
+				Masters:         []string{"192.0.2.1"},
+				TransferTSIGKey: "catalog-xfer.example.",
+			},
+			MemberDefaults: config.CatalogTransferConfig{
+				Masters:         []string{"192.0.2.2"},
+				TransferTSIGKey: "catalog-xfer.example.",
+			},
+			Groups: map[string]config.CatalogTransferConfig{
+				"blue": {
+					Masters:         []string{"192.0.2.3"},
+					TransferTSIGKey: "catalog-xfer.example.",
+				},
+			},
+		}},
+	}
+	sources, transfers, err := buildCatalogConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 ||
+		sources[0].Defaults.TransferKey == nil ||
+		sources[0].Groups["blue"].TransferKey == nil ||
+		transfers["catalog.example."].TransferKey == nil {
+		t.Fatalf("sources=%+v transfers=%+v", sources, transfers)
+	}
+}
+
+func TestBuildCatalogConfigsRejectsUnsignedCatalogAndMemberDefaults(t *testing.T) {
+	cfg := &config.Config{CatalogZones: []config.CatalogZoneConfig{{
+		Name: "catalog.example.",
+		CatalogTransferConfig: config.CatalogTransferConfig{
+			Masters: []string{"192.0.2.1"},
+		},
+		MemberDefaults: config.CatalogTransferConfig{
+			Masters: []string{"192.0.2.2"},
+		},
+	}}}
+	if _, _, err := buildCatalogConfigs(cfg); err == nil {
+		t.Fatal("buildCatalogConfigs accepted unsigned catalog transfers")
+	}
+}
+
 func TestBuildPrimaryNotifyConfigsResolvesKeyAndTuning(t *testing.T) {
 	cfg := &config.Config{
 		TsigKeys: []config.TsigKeyConfig{{

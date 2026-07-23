@@ -41,6 +41,19 @@ type fakeFetcher struct {
 	serial   uint32
 	calls    int
 	currents []uint32
+	err      error
+}
+
+type orderedFetcher struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (f *orderedFetcher) Fetch(_ context.Context, cfg Config, _ *zone.Zone) (*zone.Zone, error) {
+	f.mu.Lock()
+	f.names = append(f.names, cfg.Name)
+	f.mu.Unlock()
+	return validZone(cfg.Name, 1), nil
 }
 
 func (f *fakeFetcher) Fetch(_ context.Context, cfg Config, current *zone.Zone) (*zone.Zone, error) {
@@ -52,7 +65,11 @@ func (f *fakeFetcher) Fetch(_ context.Context, cfg Config, current *zone.Zone) (
 	}
 	f.currents = append(f.currents, serial)
 	fetchedSerial := f.serial
+	err := f.err
 	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return validZone(cfg.Name, fetchedSerial), nil
 }
 
@@ -66,6 +83,12 @@ func (f *fakeFetcher) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+func (f *fakeFetcher) setError(err error) {
+	f.mu.Lock()
+	f.err = err
+	f.mu.Unlock()
 }
 
 func validZone(name string, serial uint32) *zone.Zone {
@@ -182,6 +205,141 @@ func TestManagerAllowsExplicitLegacyUnsignedSecondary(t *testing.T) {
 		"",
 	); err != nil {
 		t.Fatalf("explicit legacy unsigned NOTIFY rejected: %v", err)
+	}
+}
+
+func TestManagerDynamicallyAddsReconfiguresAndRemovesZone(t *testing.T) {
+	store := newMemoryStore()
+	fetcher := &fakeFetcher{serial: 1}
+	manager, err := NewManager(store, fetcher, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	cfg := Config{
+		Name:    "dynamic.test.",
+		Masters: []string{"192.0.2.1"},
+		TransferKey: &TransferKey{
+			Name:      "xfer.example.",
+			Algorithm: dns.HmacSHA256,
+			Secret:    "c2VjcmV0",
+		},
+	}
+	if err := manager.Upsert(context.Background(), cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.GetZone("dynamic.test.").SOA.Serial; got != 1 {
+		t.Fatalf("initial serial = %d, want 1", got)
+	}
+
+	fetcher.setSerial(2)
+	if err := manager.Upsert(context.Background(), cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	fetcher.mu.Lock()
+	lastCurrent := fetcher.currents[len(fetcher.currents)-1]
+	fetcher.mu.Unlock()
+	if lastCurrent != 0 {
+		t.Fatalf("reset reconfiguration current serial = %d, want 0", lastCurrent)
+	}
+	if !manager.Remove("dynamic.test") {
+		t.Fatal("Remove reported an existing dynamic zone as absent")
+	}
+	if err := manager.HandleNotify(context.Background(), "dynamic.test.", net.ParseIP("192.0.2.1"), "xfer.example."); err != ErrUnknownZone {
+		t.Fatalf("removed zone NOTIFY error = %v, want %v", err, ErrUnknownZone)
+	}
+}
+
+func TestManagerUpsertPreservesPublishedZoneOnTransferFailure(t *testing.T) {
+	store := newMemoryStore()
+	if err := store.AddZone(validZone("dynamic.test.", 7)); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &fakeFetcher{serial: 8, err: context.DeadlineExceeded}
+	manager, err := NewManager(store, fetcher, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	cfg := Config{
+		Name:          "dynamic.test.",
+		Masters:       []string{"192.0.2.1"},
+		RetainOnError: true,
+		TransferKey: &TransferKey{
+			Name:      "xfer.example.",
+			Algorithm: dns.HmacSHA256,
+			Secret:    "c2VjcmV0",
+		},
+	}
+	if err := manager.Upsert(context.Background(), cfg, false); err != nil {
+		t.Fatalf("retained upsert failed: %v", err)
+	}
+	if got := store.GetZone("dynamic.test.").SOA.Serial; got != 7 {
+		t.Fatalf("serial after failed transfer = %d, want retained 7", got)
+	}
+}
+
+func TestManagerStartupRetainsExistingZoneWhenConfigured(t *testing.T) {
+	store := newMemoryStore()
+	if err := store.AddZone(validZone("retained.test.", 9)); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &fakeFetcher{err: context.DeadlineExceeded}
+	manager, err := NewManager(store, fetcher, []Config{{
+		Name:          "retained.test.",
+		Masters:       []string{"192.0.2.1"},
+		RetainOnError: true,
+		TransferKey: &TransferKey{
+			Name:      "xfer.example.",
+			Algorithm: dns.HmacSHA256,
+			Secret:    "c2VjcmV0",
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("startup rejected retained zone: %v", err)
+	}
+	manager.Close()
+}
+
+func TestManagerInitialTransfersFollowConfigurationOrder(t *testing.T) {
+	fetcher := &orderedFetcher{}
+	unsigned := func(name string) Config {
+		return Config{
+			Name:                  name,
+			Masters:               []string{"192.0.2.1"},
+			AllowUnsignedTransfer: true,
+		}
+	}
+	manager, err := NewManager(newMemoryStore(), fetcher, []Config{
+		unsigned("first.test."),
+		unsigned("second.test."),
+		unsigned("third.test."),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	fetcher.mu.Lock()
+	defer fetcher.mu.Unlock()
+	if len(fetcher.names) < 3 ||
+		fetcher.names[0] != "first.test." ||
+		fetcher.names[1] != "second.test." ||
+		fetcher.names[2] != "third.test." {
+		t.Fatalf("initial transfer order = %v", fetcher.names)
 	}
 }
 

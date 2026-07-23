@@ -54,6 +54,11 @@ type Config struct {
 
 	// TSIG keys for authenticated zone transfers (RFC 2845)
 	TsigKeys []TsigKeyConfig `yaml:"tsig_keys"`
+
+	// CatalogZones configures RFC 9432 v2 catalog consumers. Catalog state is
+	// persisted so ownership and last-valid data survive restarts.
+	CatalogZones     []CatalogZoneConfig `yaml:"catalog_zones"`
+	CatalogStateFile string              `yaml:"catalog_state_file"`
 }
 
 // RuntimeConfig controls the Go runtime independently of DNS request
@@ -186,6 +191,30 @@ type ZoneConfig struct {
 
 	// DSYNC controls RFC 9859 DSYNC outbound notification for this zone.
 	DSYNC *ZoneDSYNCConfig `yaml:"dsync,omitempty"`
+}
+
+// CatalogTransferConfig is the shared authenticated-secondary policy used for
+// a catalog zone and for member defaults/group overrides.
+type CatalogTransferConfig struct {
+	Masters               []string      `yaml:"masters"`
+	TransferSource        string        `yaml:"transfer_source,omitempty"`
+	TransferTSIGKey       string        `yaml:"transfer_tsig_key,omitempty"`
+	AllowUnsignedTransfer bool          `yaml:"allow_unsigned_transfer,omitempty"`
+	RefreshInterval       time.Duration `yaml:"refresh_interval,omitempty"`
+	AllowAXFRFallback     *bool         `yaml:"allow_axfr_fallback,omitempty"`
+	MaxRefreshTime        time.Duration `yaml:"max_refresh_time,omitempty"`
+	MinRefreshTime        time.Duration `yaml:"min_refresh_time,omitempty"`
+	MaxRetryTime          time.Duration `yaml:"max_retry_time,omitempty"`
+	MinRetryTime          time.Duration `yaml:"min_retry_time,omitempty"`
+}
+
+// CatalogZoneConfig defines one private RFC 9432 catalog secondary and the
+// transfer policy inherited by its members.
+type CatalogZoneConfig struct {
+	Name                  string `yaml:"name"`
+	CatalogTransferConfig `yaml:",inline"`
+	MemberDefaults        CatalogTransferConfig            `yaml:"member_defaults"`
+	Groups                map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
@@ -397,6 +426,9 @@ func Load(filename string) (*Config, error) {
 	}
 	if err := cfg.Runtime.Validate(); err != nil {
 		return nil, err
+	}
+	if len(cfg.CatalogZones) > 0 && cfg.CatalogStateFile == "" {
+		cfg.CatalogStateFile = "/var/lib/dnsscienced/catalog-state.json"
 	}
 
 	// Historical examples placed these sections at the top level while the

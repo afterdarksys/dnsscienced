@@ -19,6 +19,7 @@ import (
 	"github.com/dnsscience/dnsscienced/api/grpc/services"
 	"github.com/dnsscience/dnsscienced/internal/admin"
 	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/dnsscience/dnsscienced/internal/catalog"
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
@@ -326,11 +327,47 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error configuring secondary zones: %v\n", err)
 			os.Exit(1)
 		}
+		var secondaryStore secondary.ZoneStore = srv
+		var catalogRuntime *catalog.Runtime
+		if len(loadedCfg.CatalogZones) > 0 {
+			sources, catalogTransfers, err := buildCatalogConfigs(loadedCfg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring catalog zones: %v\n", err)
+				os.Exit(1)
+			}
+			reservedSecondaries := make([]string, 0, len(secondaryConfigs))
+			for _, secondaryConfig := range secondaryConfigs {
+				reservedSecondaries = append(reservedSecondaries, secondaryConfig.Name)
+			}
+			catalogRuntime, err = catalog.NewRuntime(
+				srv,
+				sources,
+				loadedCfg.CatalogStateFile,
+				reservedSecondaries,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading catalog state: %v\n", err)
+				os.Exit(1)
+			}
+			catalogConfigs, err := catalogRuntime.CatalogSecondaryConfigs(catalogTransfers)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring catalog transfers: %v\n", err)
+				os.Exit(1)
+			}
+			secondaryConfigs = append(secondaryConfigs, catalogConfigs...)
+			secondaryStore = catalogRuntime
+		}
 		if len(secondaryConfigs) > 0 {
-			secondaryMgr, err = secondary.NewManager(srv, nil, secondaryConfigs)
+			secondaryMgr, err = secondary.NewManager(secondaryStore, nil, secondaryConfigs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating secondary manager: %v\n", err)
 				os.Exit(1)
+			}
+			if catalogRuntime != nil {
+				if err := catalogRuntime.AttachController(secondaryMgr); err != nil {
+					fmt.Fprintf(os.Stderr, "Error restoring catalog members: %v\n", err)
+					os.Exit(1)
+				}
 			}
 			srv.SetSOANotifyHandler(secondaryMgr)
 			if err := secondaryMgr.Start(context.Background()); err != nil {
@@ -338,7 +375,7 @@ func main() {
 				os.Exit(1)
 			}
 			srv.EnableAuthoritative()
-			fmt.Printf("Loaded %d secondary zone(s)\n\n", len(secondaryConfigs))
+			fmt.Printf("Loaded %d secondary/catalog zone(s)\n\n", len(secondaryConfigs))
 		}
 	}
 
@@ -602,6 +639,88 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			)
 		}
 		result = append(result, secondaryCfg)
+	}
+	return result, nil
+}
+
+func buildCatalogConfigs(cfg *config.Config) (
+	[]catalog.SourceConfig,
+	map[string]secondary.Config,
+	error,
+) {
+	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
+	for _, key := range cfg.TsigKeys {
+		keys[strings.ToLower(dns.Fqdn(key.Name))] = key
+	}
+
+	sources := make([]catalog.SourceConfig, 0, len(cfg.CatalogZones))
+	transfers := make(map[string]secondary.Config, len(cfg.CatalogZones))
+	for _, configured := range cfg.CatalogZones {
+		name := strings.ToLower(dns.Fqdn(configured.Name))
+		transfer, err := catalogTransferConfig(name, configured.CatalogTransferConfig, keys)
+		if err != nil {
+			return nil, nil, err
+		}
+		defaults, err := catalogTransferConfig(name+" member default", configured.MemberDefaults, keys)
+		if err != nil {
+			return nil, nil, err
+		}
+		groups := make(map[string]secondary.Config, len(configured.Groups))
+		for group, groupConfig := range configured.Groups {
+			resolved, err := catalogTransferConfig(name+" group "+group, groupConfig, keys)
+			if err != nil {
+				return nil, nil, err
+			}
+			groups[group] = resolved
+		}
+		sources = append(sources, catalog.SourceConfig{
+			Name:     name,
+			Defaults: defaults,
+			Groups:   groups,
+		})
+		transfers[name] = transfer
+	}
+	return sources, transfers, nil
+}
+
+func catalogTransferConfig(
+	label string,
+	configured config.CatalogTransferConfig,
+	keys map[string]config.TsigKeyConfig,
+) (secondary.Config, error) {
+	result := secondary.Config{
+		Masters:               append([]string(nil), configured.Masters...),
+		TransferSource:        configured.TransferSource,
+		AllowUnsignedTransfer: configured.AllowUnsignedTransfer,
+		RefreshInterval:       configured.RefreshInterval,
+		MinRefreshTime:        configured.MinRefreshTime,
+		MaxRefreshTime:        configured.MaxRefreshTime,
+		MinRetryTime:          configured.MinRetryTime,
+		MaxRetryTime:          configured.MaxRetryTime,
+		AllowAXFRFallback:     true,
+	}
+	if configured.AllowAXFRFallback != nil {
+		result.AllowAXFRFallback = *configured.AllowAXFRFallback
+	}
+	if configured.TransferTSIGKey != "" {
+		keyName := strings.ToLower(dns.Fqdn(configured.TransferTSIGKey))
+		key, ok := keys[keyName]
+		if !ok {
+			return secondary.Config{}, fmt.Errorf("%s: transfer_tsig_key %q is not defined", label, configured.TransferTSIGKey)
+		}
+		result.TransferKey = &secondary.TransferKey{
+			Name:      key.Name,
+			Algorithm: key.Algorithm,
+			Secret:    key.Secret,
+		}
+	} else if !configured.AllowUnsignedTransfer {
+		return secondary.Config{}, fmt.Errorf(
+			"%s: transfer_tsig_key is required; unsigned catalog/member transfers require explicit allow_unsigned_transfer",
+			label,
+		)
+	}
+	if len(result.Masters) == 0 {
+		return secondary.Config{}, fmt.Errorf("%s: at least one master is required", label)
 	}
 	return result, nil
 }
