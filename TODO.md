@@ -114,9 +114,12 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
 - [ ] Integrate Linux batching into a feature-parity listener only after complete
   receive-parse-route-send load tests improve throughput and tail latency.
-- [ ] Evaluate XDP/eBPF as a separately deployable cache-hit fast path with explicit
-  security-policy parity, cache-coherency, privilege, observability, and portable
-  fallback requirements; do not couple it to the portable resolver by default.
+- [x] Define an opt-in XDP/AF_XDP architecture with guarded `XDP_PASS` fallback,
+  queue-owned workers, generation-based cache/policy coherence, least privilege,
+  observability, hardware qualification, and portable-path differential tests.
+- [ ] Implement and qualify guarded XSK-map redirection and the AF_XDP user-space
+  engine; keep direct in-kernel cache responses out of scope until separately
+  threat-modeled and proven faster.
 - [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.

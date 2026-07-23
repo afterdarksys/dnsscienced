@@ -1,5 +1,10 @@
 # DNS Netfilter Kernel Module (Reforged with RPZ)
 
+> **Experimental; do not load in production.** This module is not the planned
+> XDP/AF_XDP fast path. It has a separate, incomplete policy plane and currently
+> lacks the protocol, privilege, lifecycle, and parity guarantees required by
+> DNSScienced. See [the XDP design](../docs/XDP_FAST_PATH.md).
+
 This directory contains a Linux Kernel Module that integrates with Netfilter to inspect, mark, and **filter (RPZ)** DNS packets directly in the kernel.
 
 ## Features
