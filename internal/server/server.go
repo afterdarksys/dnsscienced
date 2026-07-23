@@ -228,7 +228,7 @@ type Server struct {
 	soaNotifyHandler SOANotifyHandler
 	ixfrJournal      *zone.Journal
 	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
-	persistMu        sync.Mutex        // Orders zone swaps and durable snapshots across UPDATE requests.
+	persistMu        sync.Mutex        // Stable linearization boundary for all zone-map mutations and durable UPDATE commits.
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus

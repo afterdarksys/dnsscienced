@@ -35,8 +35,14 @@ published atomically. A failed prerequisite or invalid mutation leaves the live
 zone unchanged. Successful responses are signed with the request key.
 
 When `persist_updates` is true, the validated replacement is written to the
-configured zone file using a temporary file and atomic rename. The in-memory
-update is acknowledged before disk persistence, so a host crash in that short
-window can leave the on-disk serial one update behind. Deployments that require
-strict write-ahead durability should keep dynamic updates disabled until a
-persistent journal is configured.
+configured zone file before it is published or acknowledged. DNSScienced
+writes and synchronizes a mode-`0600` temporary file, atomically renames it,
+and synchronizes the parent directory. A serialization, write, sync, or rename
+failure returns SERVFAIL and leaves the live zone and IXFR journal unchanged.
+After the durable commit, the in-memory snapshot is swapped atomically and the
+TSIG-signed NOERROR response is sent.
+
+All UPDATE prerequisite evaluation and zone publication share a stable server
+mutation boundary with administrative and catalog zone replacements. The lock
+is not stored in the replaceable zone snapshot, preventing concurrent requests
+that observed an older generation from overwriting a newer committed update.

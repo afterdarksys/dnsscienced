@@ -27,6 +27,7 @@ func testServerWithUpdate(allowUpdate []string) (*Server, error) {
 	}
 	cfg := Config{
 		Zones:              zones,
+		UDPListeners:       1,
 		ZoneUpdateCIDRs:    updateCIDRs,
 		ZoneUpdateTSIGKeys: map[string][]string{"example.com.": {"test."}},
 		TsigKeys: []tsig.KeyConfig{{
