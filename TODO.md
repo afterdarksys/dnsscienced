@@ -40,8 +40,8 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Enrich entries when the sharded cache stores them.
 - [x] Implement the `WatchCache` streaming RPC lifecycle and event-type filtering.
 - [x] Publish cache STORE events, including threat metadata.
-- [ ] Publish HIT, MISS, and EVICT events and implement the requested domain-pattern
-  filter; the protobuf fields exist but the service does not yet enforce all of them.
+- [x] Publish HIT, MISS, EVICT, STORE, and DELETE events; enforce event-type and
+  domain-pattern filters in the streaming service.
 - [ ] Aggregate multiple threat-intelligence providers with configurable refresh,
   scoring, provenance, and conflict handling.
 - [ ] Import operator-supplied threat lists.

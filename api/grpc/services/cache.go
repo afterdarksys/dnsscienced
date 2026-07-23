@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"path"
+	"strings"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/ports"
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
@@ -16,8 +19,8 @@ type CacheService struct {
 	Scorer *cache.ThreatScorer
 }
 
-func NewCacheService(m ports.CacheManager, scorer *cache.ThreatScorer) *CacheService { 
-	return &CacheService{Mgr: m, Scorer: scorer} 
+func NewCacheService(m ports.CacheManager, scorer *cache.ThreatScorer) *CacheService {
+	return &CacheService{Mgr: m, Scorer: scorer}
 }
 
 func (s *CacheService) GetStats(ctx context.Context, in *pb.GetCacheStatsRequest) (*pb.GetCacheStatsResponse, error) {
@@ -100,15 +103,14 @@ func (s *CacheService) WatchCache(req *pb.WatchCacheRequest, stream pb.CacheServ
 
 	// 3. Optimize filters
 	// Pre-calculate filter map for O(1) lookups
-	filterTypes := make(map[pb.CacheEvent_EventType]bool)
-	hasFilter := len(req.GetTypes()) > 0
-
-	if hasFilter {
-		// Map string types to enum
-		for _, tStr := range req.GetTypes() {
-			if tVal, ok := pb.CacheEvent_EventType_value[tStr]; ok {
-				filterTypes[pb.CacheEvent_EventType(tVal)] = true
-			}
+	filterTypes, err := cacheEventTypeFilter(req.GetTypes())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	domainPattern := normalizeDomainPattern(req.GetDomainPattern())
+	if domainPattern != "" {
+		if _, err := path.Match(domainPattern, "validation.example"); err != nil {
+			return status.Errorf(codes.InvalidArgument, "invalid domain_pattern: %v", err)
 		}
 	}
 
@@ -117,19 +119,50 @@ func (s *CacheService) WatchCache(req *pb.WatchCacheRequest, stream pb.CacheServ
 		select {
 		case <-ctx.Done():
 			return nil
-		case event := <-ch:
+		case event, open := <-ch:
+			if !open {
+				return nil
+			}
 			// Apply Filters
-			if hasFilter && !filterTypes[event.Type] {
+			if len(filterTypes) > 0 && !filterTypes[event.Type] {
 				continue
 			}
-
-			// Optional: Name filter
-			// TODO: Add NameFilter to protobuf definition
-			// if req.GetNameFilter() != "" { ... }
+			if domainPattern != "" && !matchesDomainPattern(domainPattern, event.GetName()) {
+				continue
+			}
 
 			if err := stream.Send(event); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func cacheEventTypeFilter(types []string) (map[pb.CacheEvent_EventType]bool, error) {
+	result := make(map[pb.CacheEvent_EventType]bool, len(types))
+	for _, requested := range types {
+		name := strings.ToUpper(strings.TrimSpace(requested))
+		if name == "" {
+			continue
+		}
+		if !strings.HasPrefix(name, "EVENT_TYPE_") {
+			name = "EVENT_TYPE_" + name
+		}
+		value, ok := pb.CacheEvent_EventType_value[name]
+		if !ok || pb.CacheEvent_EventType(value) == pb.CacheEvent_EVENT_TYPE_UNSPECIFIED {
+			return nil, fmt.Errorf("unknown cache event type %q", requested)
+		}
+		result[pb.CacheEvent_EventType(value)] = true
+	}
+	return result, nil
+}
+
+func normalizeDomainPattern(pattern string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(pattern)), ".")
+}
+
+func matchesDomainPattern(pattern, name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	matched, err := path.Match(pattern, name)
+	return err == nil && matched
 }

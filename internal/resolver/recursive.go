@@ -313,7 +313,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 
 	// 1. Check cache first.
 	cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)
-	if entry, ok := r.cache.Get(cacheKey); ok {
+	if entry, ok := r.cache.GetQuestion(cacheKey, question.Name, question.Qtype, question.Qclass); ok {
 		// Bogus entries are quarantined: serve SERVFAIL so clients don't use
 		// DNSSEC-invalid data, but avoid re-querying until BogusTTL expires.
 		if entry.DNSSECBogus {
@@ -356,7 +356,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	if err != nil {
 		// Upstream failure: attempt stale cache lookup before SERVFAIL (RFC 8767, D-07 bug 2).
 		if r.cfg.ServeStale {
-			if staleEntry, ok := r.cache.Get(cacheKey); ok {
+			if staleEntry, ok := r.cache.GetQuestion(cacheKey, question.Name, question.Qtype, question.Qclass); ok {
 				staleResp := pool.GetMessage()
 				if unpackErr := staleResp.Unpack(staleEntry.Data); unpackErr == nil {
 					staleResp.Id = q.Id
