@@ -247,10 +247,19 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	}
 
 	r.mu.RLock()
+	current := r.catalogs[name]
 	previous := cloneCatalogMap(r.catalogs)
 	next := cloneCatalogMap(r.catalogs)
 	ownership := cloneOwnership(r.ownership)
 	r.mu.RUnlock()
+	if current != nil && !zone.SerialGreater(accepted.Serial, current.Serial) {
+		return fmt.Errorf(
+			"catalog %s serial %d does not advance last-valid serial %d",
+			name,
+			accepted.Serial,
+			current.Serial,
+		)
+	}
 	next[name] = accepted
 
 	actions, err := Plan(previous, next, ownership, r.order, r.reserved)

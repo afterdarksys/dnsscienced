@@ -165,7 +165,8 @@ fleet-scale policy, operations, interoperability, and producer support.
   them unsafe default behavior.
 - [x] Validate SOA/NS presence, IN class, supported schema version, unique member
   labels, and unique member zones before applying a catalog.
-- [ ] Add explicit catalog serial-arithmetic and stale-snapshot rejection tests.
+- [x] Enforce RFC 1982 catalog serial progression and reject stale/equal snapshots
+  while retaining the last-valid fleet state.
 
 ### Consumer reconciliation
 
