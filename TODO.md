@@ -122,9 +122,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Wire the existing byte-buffer pools or an equivalent allocation strategy
   into measured production network paths; retain only changes that benchmarks
   show reduce allocations.
-- [ ] Bring the experimental assembly-parser UDP server to feature and security
-  parity before considering it for production; the primary UDP path remains the
-  audited `miekg/dns` server.
+- [x] Retire the unused experimental assembly-parser UDP server and its raw
+  resolver bypass instead of duplicating the production security pipeline.
+  DNSASM remains a research/benchmark library; production UDP remains on the
+  audited `miekg/dns` path with the faster scalar header check.
 - [x] Add a fixed-stride, recvmmsg-compatible batch header API with reusable output
   storage and measured zero-allocation steady-state parsing. Benchmarking showed
   scalar Go is faster than cgo even after amortizing the transition, so production

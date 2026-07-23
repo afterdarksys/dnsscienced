@@ -98,8 +98,10 @@ depth/rejections, cache hit/eviction rate, heap size, allocation rate, GC CPU,
 and process RSS. Compare one configuration change at a time under the same
 query mix.
 
-The assembly-parser UDP server is experimental. Its microbenchmarks do not
-establish feature, protocol, or security parity with the production server.
+The former assembly-parser UDP server was retired because it duplicated and
+bypassed the production protocol/security pipeline while its cgo header parser
+was slower than scalar Go. DNSASM remains available for differential tests and
+research benchmarks; it is not a network listener.
 
 ## Measured packet-header parsing
 
