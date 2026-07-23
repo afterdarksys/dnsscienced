@@ -113,6 +113,22 @@ func TestRPZ_Disabled(t *testing.T) {
 	assert.Equal(t, RPZActionNXDomain, action)
 }
 
+func TestRPZ_ClearRemovesRegexRules(t *testing.T) {
+	rpz := NewRPZ("blocklist")
+	if err := rpz.AddRegexRule(`^blocked\.example\.$`, RPZActionNXDomain, "", "test", "test"); err != nil {
+		t.Fatalf("AddRegexRule: %v", err)
+	}
+
+	rpz.Clear()
+
+	if rule, action := rpz.Check("blocked.example."); rule != nil || action != RPZActionNone {
+		t.Fatalf("cleared regex matched: rule=%+v action=%v", rule, action)
+	}
+	if stats := rpz.Stats(); stats.RegexRules != 0 {
+		t.Fatalf("regex rules after Clear = %d, want 0", stats.RegexRules)
+	}
+}
+
 func TestRPZAggregate(t *testing.T) {
 	agg := NewRPZAggregate()
 

@@ -37,9 +37,11 @@ type SecondaryController interface {
 // SourceConfig maps an authenticated catalog to transfer settings inherited by
 // its members. A matching RFC 9432 group overrides Defaults.
 type SourceConfig struct {
-	Name     string
-	Defaults secondary.Config
-	Groups   map[string]secondary.Config
+	Name                string
+	Defaults            secondary.Config
+	Groups              map[string]secondary.Config
+	MemberAllowSuffixes []string
+	MemberDenySuffixes  []string
 }
 
 // Runtime retains last-valid catalog state, plans RFC 9432 changes, and
@@ -108,6 +110,15 @@ func NewRuntime(
 			cfg.RetainOnError = true
 			source.Groups[group] = cfg
 		}
+		var err error
+		source.MemberAllowSuffixes, err = normalizeSuffixes(source.MemberAllowSuffixes)
+		if err != nil {
+			return nil, fmt.Errorf("catalog %s member allow suffixes: %w", source.Name, err)
+		}
+		source.MemberDenySuffixes, err = normalizeSuffixes(source.MemberDenySuffixes)
+		if err != nil {
+			return nil, fmt.Errorf("catalog %s member deny suffixes: %w", source.Name, err)
+		}
 		r.sources[source.Name] = source
 		r.order = append(r.order, source.Name)
 	}
@@ -117,10 +128,14 @@ func NewRuntime(
 		return nil, err
 	}
 	for zoneName, owner := range r.ownership {
-		if _, ok := r.sources[owner.Catalog]; !ok {
+		source, ok := r.sources[owner.Catalog]
+		if !ok {
 			delete(r.ownership, zoneName)
 			delete(r.memberZone, zoneName)
 			continue
+		}
+		if err := validateMemberName(owner.Catalog, zoneName, source); err != nil {
+			return nil, fmt.Errorf("catalog: persisted ownership violates current policy: %w", err)
 		}
 		if containsName(r.reserved, zoneName) {
 			return nil, fmt.Errorf("catalog: persisted member %s conflicts with an operator-configured zone", zoneName)
@@ -245,12 +260,24 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	if r.controller == nil {
 		return fmt.Errorf("catalog: secondary controller is not attached")
 	}
+	if err := r.validateMemberScope(name, accepted); err != nil {
+		return err
+	}
 
 	r.mu.RLock()
+	current := r.catalogs[name]
 	previous := cloneCatalogMap(r.catalogs)
 	next := cloneCatalogMap(r.catalogs)
 	ownership := cloneOwnership(r.ownership)
 	r.mu.RUnlock()
+	if current != nil && !zone.SerialGreater(accepted.Serial, current.Serial) {
+		return fmt.Errorf(
+			"catalog %s serial %d does not advance last-valid serial %d",
+			name,
+			accepted.Serial,
+			current.Serial,
+		)
+	}
 	next[name] = accepted
 
 	actions, err := Plan(previous, next, ownership, r.order, r.reserved)
@@ -333,6 +360,36 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	}
 
 	return nil
+}
+
+func (r *Runtime) validateMemberScope(catalogName string, accepted *Catalog) error {
+	source, ok := r.sources[normalizeName(catalogName)]
+	if !ok {
+		return fmt.Errorf("catalog: no source configuration for %s", catalogName)
+	}
+	for memberName := range accepted.Members {
+		if err := validateMemberName(catalogName, memberName, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMemberName(catalogName, memberName string, source SourceConfig) error {
+	for _, suffix := range source.MemberDenySuffixes {
+		if dns.IsSubDomain(suffix, memberName) {
+			return fmt.Errorf("catalog %s member %s is denied by suffix %s", catalogName, memberName, suffix)
+		}
+	}
+	if len(source.MemberAllowSuffixes) == 0 {
+		return nil
+	}
+	for _, suffix := range source.MemberAllowSuffixes {
+		if dns.IsSubDomain(suffix, memberName) {
+			return nil
+		}
+	}
+	return fmt.Errorf("catalog %s member %s is outside allowed suffixes", catalogName, memberName)
 }
 
 func (r *Runtime) memberConfig(catalogName string, member Member) (secondary.Config, error) {
@@ -530,6 +587,21 @@ func normalizeNames(names []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func normalizeSuffixes(suffixes []string) ([]string, error) {
+	result := make([]string, 0, len(suffixes))
+	for _, suffix := range suffixes {
+		if strings.TrimSpace(suffix) == "" {
+			return nil, fmt.Errorf("DNS suffix cannot be empty")
+		}
+		suffix = normalizeName(suffix)
+		if _, ok := dns.IsDomainName(suffix); !ok {
+			return nil, fmt.Errorf("invalid DNS suffix %q", suffix)
+		}
+		result = append(result, suffix)
+	}
+	return normalizeNames(result), nil
 }
 
 func containsName(names []string, target string) bool {

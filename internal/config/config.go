@@ -19,6 +19,9 @@ import (
 
 // Config is the top-level configuration structure
 type Config struct {
+	// Role selects a validated deployment profile. Empty preserves legacy
+	// behavior; "custom" explicitly opts into manually composed roles.
+	Role     string          `yaml:"role"`
 	Runtime  RuntimeConfig   `yaml:"runtime"`
 	Server   server.Config   `yaml:"server"`
 	Resolver resolver.Config `yaml:"resolver"`
@@ -215,6 +218,8 @@ type CatalogZoneConfig struct {
 	CatalogTransferConfig `yaml:",inline"`
 	MemberDefaults        CatalogTransferConfig            `yaml:"member_defaults"`
 	Groups                map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
+	MemberAllowSuffixes   []string                         `yaml:"member_allow_suffixes,omitempty"`
+	MemberDenySuffixes    []string                         `yaml:"member_deny_suffixes,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
@@ -451,6 +456,12 @@ func Load(filename string) (*Config, error) {
 		return nil, fmt.Errorf("parse experimental config: %w", err)
 	}
 	cfg.Experimental = cfg.Server.Experimental
+	if err := cfg.ApplyRoleProfile(); err != nil {
+		return nil, err
+	}
+	// Keep compatibility aliases synchronized with role-applied live settings.
+	cfg.Resolver = cfg.Server.RecursiveConfig
+	cfg.Cache = cfg.Server.RecursiveConfig.CacheConfig
 
 	// Post-processing
 	// 1. Parse RRL ExemptCIDRs into ExemptPrefixes

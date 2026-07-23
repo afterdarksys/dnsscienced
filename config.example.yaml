@@ -1,6 +1,10 @@
 # DNSScienced Configuration Example
 # Comprehensive configuration showing all defensive DNS features
 
+# This example intentionally combines authoritative and recursive service.
+# Production deployments should select a narrower validated role.
+role: custom
+
 # Go runtime tuning. Omit or leave at zero to preserve Go's environment- and
 # container-aware defaults (GOMAXPROCS, GOGC, and GOMEMLIMIT).
 runtime:
@@ -60,6 +64,21 @@ server:
     exempt_cidrs:                # Exempt from RRL
       - "127.0.0.0/8"
       - "::1/128"
+
+  # Response Policy Zones. Lower priority values are evaluated first.
+  # Files use standard RPZ QNAME CNAME policies and are atomically reloaded
+  # with SIGHUP. A failed reload retains the last valid policy.
+  rpz:
+    enabled: false
+    zones:
+      - name: "security-policy"
+        file: "/etc/dnsscienced/rpz/security-policy.bind"
+        reason: "operator security policy"
+        priority: 10
+        regex_rules:
+          - pattern: '(^|\.)blocked-[0-9]+\.example\.$'
+            action: "nxdomain"
+            reason: "generated blocked hostnames"
 
 # Admin gRPC API for control and monitoring
 admin:
@@ -161,6 +180,19 @@ zones:
   #   - name: "secondary-xfer.example."
   #     algorithm: "hmac-sha256"
   #     secret: "<base64-secret>"
+
+# RFC 9432 catalog consumers stay private and provision authenticated
+# secondaries. A scope violation rejects the complete new snapshot.
+# catalog_state_file: "/var/lib/dnsscienced/catalog-state.json"
+# catalog_zones:
+#   - name: "catalog.example."
+#     masters: ["192.0.2.10:53"]
+#     transfer_tsig_key: "secondary-xfer.example."
+#     member_allow_suffixes: ["customer.example."]
+#     member_deny_suffixes: ["suspended.customer.example."]
+#     member_defaults:
+#       masters: ["192.0.2.20:53"]
+#       transfer_tsig_key: "secondary-xfer.example."
 
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases
@@ -608,6 +640,16 @@ cache:
   max_ttl: 24h
   min_negative_ttl: 0s
   max_negative_ttl: 1h
+  # Explicit local/HTTPS sources only; no feed is contacted by default.
+  # threat_feeds:
+  #   - name: "operator-blocklist"
+  #     file: "/etc/dnsscienced/threats/domains.txt"
+  #     format: "domains"
+  #     score: 95
+  #     categories: ["malware", "operator"]
+  #     refresh_interval: 5m
+  #     max_bytes: 33554432
+  #     max_entries: 1000000
 
 # Logging
 logging:

@@ -191,13 +191,135 @@ func TestRuntimeBrokenCatalogRetainsLastValidMember(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectsStaleOrEqualCatalogSerial(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
+	valid := catalogZone(t, "catalog.example.", `a1.zones.catalog.example. 0 IN PTR alpha.example.`)
+	valid.SOA.Serial = 42
+	if err := runtime.AddZone(valid); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, serial := range []uint32{42, 41} {
+		stale := catalogZone(t, "catalog.example.")
+		stale.SOA.Serial = serial
+		if err := runtime.AddZone(stale); err == nil {
+			t.Fatalf("catalog serial %d was accepted after serial 42", serial)
+		}
+		if store.GetZone("alpha.example.") == nil {
+			t.Fatalf("catalog serial %d withdrew the last-valid member", serial)
+		}
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.removed) != 0 {
+		t.Fatalf("stale catalog removed members: %v", controller.removed)
+	}
+}
+
+func TestRuntimeAcceptsCatalogSerialWraparound(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, _ := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
+	beforeWrap := catalogZone(t, "catalog.example.", `a1.zones.catalog.example. 0 IN PTR alpha.example.`)
+	beforeWrap.SOA.Serial = ^uint32(0)
+	if err := runtime.AddZone(beforeWrap); err != nil {
+		t.Fatal(err)
+	}
+	afterWrap := catalogZone(t, "catalog.example.", `a1.zones.catalog.example. 0 IN PTR alpha.example.`)
+	afterWrap.SOA.Serial = 0
+	if err := runtime.AddZone(afterWrap); err != nil {
+		t.Fatalf("RFC 1982 serial wraparound rejected: %v", err)
+	}
+}
+
+func TestRuntimeEnforcesMemberSuffixPolicyAtomically(t *testing.T) {
+	store := newRuntimeStore()
+	source := runtimeSource("catalog.example.")
+	source.MemberAllowSuffixes = []string{"customer.example."}
+	source.MemberDenySuffixes = []string{"suspended.customer.example."}
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	valid := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.customer.example.`,
+	)
+	if err := runtime.AddZone(valid); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, member := range []string{"evil.suspended.customer.example.", "outside.example."} {
+		rejected := catalogZone(
+			t,
+			"catalog.example.",
+			`a2.zones.catalog.example. 0 IN PTR `+member,
+		)
+		rejected.SOA.Serial = valid.SOA.Serial + 1
+		if err := runtime.AddZone(rejected); err == nil {
+			t.Fatalf("out-of-scope member %s was accepted", member)
+		}
+		if store.GetZone("alpha.customer.example.") == nil {
+			t.Fatalf("rejected member %s disturbed last-valid state", member)
+		}
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.upserts) != 1 || len(controller.removed) != 0 {
+		t.Fatalf("scope rejection caused side effects: upserts=%v removed=%v", controller.upserts, controller.removed)
+	}
+}
+
+func TestRuntimeRejectsInvalidMemberSuffix(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.MemberAllowSuffixes = []string{""}
+	if _, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	); err == nil {
+		t.Fatal("empty member allow suffix was accepted")
+	}
+}
+
+func TestRuntimeRejectsPersistedMemberOutsideNarrowedScope(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "catalog-state.json")
+	first, _ := newTestRuntime(t, newRuntimeStore(), statePath)
+	if err := first.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.customer.example.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	narrowed := runtimeSource("catalog.example.")
+	narrowed.MemberAllowSuffixes = []string{"other.example."}
+	if _, err := NewRuntime(newRuntimeStore(), []SourceConfig{narrowed}, statePath, nil); err == nil {
+		t.Fatal("persisted member outside narrowed scope was restored")
+	}
+}
+
 func TestRuntimeRemovalWithdrawsOnlyOwnedMember(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
 	if err := runtime.AddZone(catalogZone(t, "catalog.example.", `a1.zones.catalog.example. 0 IN PTR alpha.example.`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.AddZone(catalogZone(t, "catalog.example.")); err != nil {
+	removed := catalogZone(t, "catalog.example.")
+	removed.SOA.Serial = 43
+	if err := runtime.AddZone(removed); err != nil {
 		t.Fatal(err)
 	}
 	if store.GetZone("alpha.example.") != nil {
@@ -328,12 +450,14 @@ func TestRuntimeOwnershipTransferAppliesDestinationPolicy(t *testing.T) {
 	)); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.AddZone(catalogZone(
+	ownershipTransfer := catalogZone(
 		t,
 		"catalog.example.",
 		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
 		`coo.a1.zones.catalog.example. 0 IN PTR next-catalog.example.`,
-	)); err != nil {
+	)
+	ownershipTransfer.SOA.Serial = 43
+	if err := runtime.AddZone(ownershipTransfer); err != nil {
 		t.Fatal(err)
 	}
 	controller.mu.Lock()

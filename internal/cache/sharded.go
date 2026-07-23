@@ -325,7 +325,8 @@ type Config struct {
 	ValidationMode ValidationMode `yaml:"validation_mode"`
 
 	// Threat Intelligence
-	DarkAPIKey string `yaml:"darkapi_key"`
+	DarkAPIKey  string             `yaml:"darkapi_key"`
+	ThreatFeeds []ThreatFeedConfig `yaml:"threat_feeds,omitempty"`
 
 	// TTL enforcement (Unbound cache-min-ttl / cache-max-ttl)
 	// Clamps TTLs on positive responses before caching. Prevents zero-TTL bypass
@@ -381,6 +382,9 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.PrefetchMinTTLPct < 0 || cfg.PrefetchMinTTLPct > 1 {
 		return fmt.Errorf("prefetch_min_ttl_pct must be between 0 and 1")
+	}
+	if err := ValidateThreatFeeds(cfg.ThreatFeeds); err != nil {
+		return err
 	}
 
 	shards := cfg.ShardCount
@@ -459,7 +463,7 @@ func NewShardedCache(cfg Config) *ShardedCache {
 
 		unwantedThreshold: cfg.UnwantedReplyThreshold,
 
-		enricher:       NewThreatScorer(cfg.DarkAPIKey),
+		enricher:       NewThreatScorerWithFeeds(cfg.DarkAPIKey, cfg.ThreatFeeds),
 		validationMode: cfg.ValidationMode,
 		broadcaster:    NewBroadcaster(),
 		stopCleanup:    make(chan struct{}),
@@ -908,6 +912,9 @@ func (c *ShardedCache) GetStats() Stats {
 func (c *ShardedCache) Close() {
 	close(c.stopCleanup)
 	c.cleanupDone.Wait()
+	if c.enricher != nil {
+		c.enricher.Close()
+	}
 }
 
 // ForEach iterates over all cache entries (for debugging/monitoring)

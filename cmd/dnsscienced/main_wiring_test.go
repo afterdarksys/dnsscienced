@@ -200,7 +200,9 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 			Secret:    "c2VjcmV0",
 		}},
 		CatalogZones: []config.CatalogZoneConfig{{
-			Name: "catalog.example.",
+			Name:                "catalog.example.",
+			MemberAllowSuffixes: []string{"customer.example."},
+			MemberDenySuffixes:  []string{"blocked.customer.example."},
 			CatalogTransferConfig: config.CatalogTransferConfig{
 				Masters:         []string{"192.0.2.1"},
 				TransferTSIGKey: "catalog-xfer.example.",
@@ -224,6 +226,8 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 	if len(sources) != 1 ||
 		sources[0].Defaults.TransferKey == nil ||
 		sources[0].Groups["blue"].TransferKey == nil ||
+		sources[0].MemberAllowSuffixes[0] != "customer.example." ||
+		sources[0].MemberDenySuffixes[0] != "blocked.customer.example." ||
 		transfers["catalog.example."].TransferKey == nil {
 		t.Fatalf("sources=%+v transfers=%+v", sources, transfers)
 	}

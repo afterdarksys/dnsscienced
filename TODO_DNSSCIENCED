@@ -1,5 +1,10 @@
 # DNSScienced + ads-httpproxy Integration TODO
 
+> Historical integration checklist. `TODO.md` is canonical. Checked dnsscienced
+> items reflect the current feature/bugfix branch stack; unchecked proxy items
+> require changes and end-to-end validation in the external `ads-httpproxy`
+> repository.
+
 ## Vision: Threat-Intel Aware DNS Cache as HTTP Proxy Data Source
 
 Transform dnsscienced's cache into a living threat intelligence database that ads-httpproxy
@@ -83,7 +88,7 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
 ## Phase 3: Advanced Threat Intelligence
 
 ### dnsscienced Features
-- [ ] Multi-source threat feed aggregation
+- [x] Multi-source threat feed aggregation
   - Integrate with public feeds (abuse.ch, Spamhaus, etc.)
   - Support custom threat list imports
   - Periodic refresh with configurable intervals
@@ -93,7 +98,7 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
   - Detect DGA (Domain Generation Algorithm) patterns
   - Identify DNS tunneling attempts
 
-- [ ] Response Policy Zones (RPZ) support
+- [x] Response Policy Zones (RPZ) QNAME support
   - Return NXDOMAIN for blocked domains
   - Support CNAME rewriting to sinkhole
   - Configurable policy actions per threat category

@@ -249,8 +249,19 @@ func main() {
 	if isFlagPassed("darkapi-key") {
 		cfg.RecursiveConfig.CacheConfig.DarkAPIKey = *darkApiKey
 	}
+	if loadedCfg != nil && loadedCfg.Role != "" {
+		loadedCfg.Server = cfg
+		if err := loadedCfg.ApplyRoleProfile(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error validating deployment role after CLI overrides: %v\n", err)
+			os.Exit(1)
+		}
+		cfg = loadedCfg.Server
+	}
 
 	fmt.Printf("Configuration:\n")
+	if loadedCfg != nil && loadedCfg.Role != "" {
+		fmt.Printf("  Role:               %s\n", loadedCfg.Role)
+	}
 	fmt.Printf("  UDP Address:      %s\n", cfg.UDPAddr)
 	fmt.Printf("  TCP Address:      %s\n", cfg.TCPAddr)
 	fmt.Printf("  UDP Listeners:    %d (SO_REUSEPORT)\n", cfg.UDPListeners)
@@ -469,8 +480,8 @@ sigloop:
 		switch sig {
 		case syscall.SIGHUP:
 			// D-09: Full config reload (not just API keys). D-11: atomic swap via ConfigHolder.
-			if configHolder == nil || *configFile == "" {
-				fmt.Println("SIGHUP received but no config file or config holder available; ignoring")
+			if *configFile == "" {
+				fmt.Println("SIGHUP received but no config file is configured; ignoring")
 				continue
 			}
 			reloaded, err := config.Load(*configFile)
@@ -478,18 +489,26 @@ sigloop:
 				fmt.Fprintf(os.Stderr, "SIGHUP: failed to parse config: %v; keeping current config\n", err)
 				continue
 			}
-			newGrpcCfg := grpcserver.Config{
-				ListenAddr:   reloaded.Admin.Listen,
-				APIKeys:      reloaded.Admin.APIKeys,
-				TLSCertFile:  reloaded.Admin.TLSCertFile,
-				TLSKeyFile:   reloaded.Admin.TLSKeyFile,
-				TLSClientCAs: reloaded.Admin.TLSClientCAs,
-			}
-			if err := configHolder.Reload(newGrpcCfg); err != nil {
-				fmt.Fprintf(os.Stderr, "SIGHUP: config reload failed: %v; keeping current config\n", err)
+			if err := srv.ReloadRPZ(reloaded.Server.RPZ); err != nil {
+				fmt.Fprintf(os.Stderr, "SIGHUP: RPZ reload failed: %v; keeping current policies\n", err)
 				continue
 			}
-			fmt.Printf("SIGHUP: admin config reloaded (%d keys)\n", len(reloaded.Admin.APIKeys))
+			if configHolder != nil {
+				newGrpcCfg := grpcserver.Config{
+					ListenAddr:   reloaded.Admin.Listen,
+					APIKeys:      reloaded.Admin.APIKeys,
+					TLSCertFile:  reloaded.Admin.TLSCertFile,
+					TLSKeyFile:   reloaded.Admin.TLSKeyFile,
+					TLSClientCAs: reloaded.Admin.TLSClientCAs,
+				}
+				if err := configHolder.Reload(newGrpcCfg); err != nil {
+					fmt.Fprintf(os.Stderr, "SIGHUP: admin config reload failed: %v; RPZ reload applied\n", err)
+					continue
+				}
+			}
+			loadedCfg = reloaded
+			fmt.Printf("SIGHUP: configuration reloaded (%d RPZ zones, %d admin keys)\n",
+				len(reloaded.Server.RPZ.Zones), len(reloaded.Admin.APIKeys))
 		case syscall.SIGINT, syscall.SIGTERM:
 			fmt.Println()
 			break sigloop
@@ -727,9 +746,11 @@ func buildCatalogConfigs(cfg *config.Config) (
 			groups[group] = resolved
 		}
 		sources = append(sources, catalog.SourceConfig{
-			Name:     name,
-			Defaults: defaults,
-			Groups:   groups,
+			Name:                name,
+			Defaults:            defaults,
+			Groups:              groups,
+			MemberAllowSuffixes: append([]string(nil), configured.MemberAllowSuffixes...),
+			MemberDenySuffixes:  append([]string(nil), configured.MemberDenySuffixes...),
 		})
 		transfers[name] = transfer
 	}

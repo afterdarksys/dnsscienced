@@ -2,7 +2,7 @@
 
 This is the canonical project checklist. It reconciles the older
 `TODO_DNSSCIENCED`, `TODO_DNSSCIENCED_2`, and relevant roadmap items against the
-implementation on `fixes/dns-audit-hardening` as of 2026-07-22.
+implementation available in the feature/bugfix branch stack as of 2026-07-22.
 
 Legend:
 
@@ -20,7 +20,7 @@ root-authoritative deployments.
 - [x] Define explicit role boundaries, data-plane tiers, correctness gates,
   Linux performance gates, and the distinction between loading `.` and operating
   a standards-conformant public root service.
-- [ ] Add validated role profiles that reject unsafe combinations and default
+- [x] Add validated role profiles that reject unsafe combinations and default
   authoritative/root listeners to recursion disabled.
 - [ ] Build differential protocol suites against current BIND and NSD releases.
 - [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate
@@ -42,9 +42,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Publish cache STORE events, including threat metadata.
 - [x] Publish HIT, MISS, EVICT, STORE, and DELETE events; enforce event-type and
   domain-pattern filters in the streaming service.
-- [ ] Aggregate multiple threat-intelligence providers with configurable refresh,
+- [x] Aggregate multiple threat-intelligence providers with configurable refresh,
   scoring, provenance, and conflict handling.
-- [ ] Import operator-supplied threat lists.
+- [x] Import operator-supplied threat lists.
 - [ ] Add historical, per-client query analysis and durable anomaly history.
 
 ## DNS protocol and security work
@@ -64,7 +64,7 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Wire durable per-client tunneling, subdomain-enumeration, and exfiltration
   correlation into the primary server path with actionable alerts.
 - [ ] Add GeoIP-based policy controls.
-- [ ] Add regex-based RPZ policy matching.
+- [x] Add regex-based RPZ policy matching.
 - [ ] Add per-client mTLS identities and authorization for DoT/DoH.
 - [ ] Add JWT-based authorization where HTTP APIs require it.
 - [ ] Add privacy-preserving, security-context audit logs and retention controls.
@@ -81,10 +81,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 
 - [x] Implement the in-memory RPZ rule engine for exact/wildcard query-name rules,
   passthrough, NXDOMAIN, NODATA, drop, and rewrite actions.
-- [ ] Wire RPZ loading and enforcement into the primary production server and its
+- [x] Wire RPZ loading and enforcement into the primary production server and its
   documented configuration path.
 - [ ] Implement response-IP and other RFC-defined RPZ triggers.
-- [ ] Add safe hot reload, precedence rules, source attribution, hit metrics, and
+- [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 
 ## Resolver performance and operator tuning
@@ -136,8 +136,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 
 ## Catalog Zones (RFC 9432)
 
-Catalog Zones are not currently implemented. The target is schema version 2 and
-safe automatic provisioning for authoritative server fleets.
+Catalog Zones implement the RFC 9432 schema-version-2 consumer core and safe
+automatic secondary provisioning. The remaining work below is primarily
+fleet-scale policy, operations, interoperability, and producer support.
 
 ### Transfer prerequisites
 
@@ -150,47 +151,52 @@ safe automatic provisioning for authoritative server fleets.
 
 ### Catalog data model and validation
 
-- [ ] Add explicit catalog producer/consumer configuration, primary endpoints,
-  TSIG/TLS credentials, refresh policy, and per-catalog group mappings.
-- [ ] Parse and validate `version.<catalog> TXT "2"` exactly as RFC 9432 requires.
-- [ ] Parse member nodes as one-PTR RRsets beneath
+- [x] Add explicit catalog consumer configuration, primary endpoints, TSIG
+  credentials, refresh policy, and per-catalog group mappings.
+- [ ] Add catalog producer support and RFC 9103 TLS transfer credentials.
+- [x] Parse and validate `version.<catalog> TXT "2"` exactly as RFC 9432 requires.
+- [x] Parse member nodes as one-PTR RRsets beneath
   `<unique>.zones.<catalog>` and reject duplicate member names or malformed sets.
-- [ ] Parse optional `group.<unique>.zones.<catalog>` TXT properties.
-- [ ] Parse the `coo.<unique>.zones.<catalog>` change-of-ownership property.
-- [ ] Ignore unsupported records and properties while rejecting malformed known
+- [x] Parse optional `group.<unique>.zones.<catalog>` TXT properties.
+- [x] Parse the `coo.<unique>.zones.<catalog>` change-of-ownership property.
+- [x] Ignore unsupported records and properties while rejecting malformed known
   properties.
-- [ ] Preserve and expose namespaced `*.ext` custom properties without assigning
+- [x] Preserve and expose namespaced `*.ext` custom properties without assigning
   them unsafe default behavior.
-- [ ] Validate SOA/NS presence, IN class, supported schema version, unique member
-  labels, unique member zones, and serial arithmetic before applying a catalog.
+- [x] Validate SOA/NS presence, IN class, supported schema version, unique member
+  labels, and unique member zones before applying a catalog.
+- [x] Enforce RFC 1982 catalog serial progression and reject stale/equal snapshots
+  while retaining the last-valid fleet state.
 
 ### Consumer reconciliation
 
-- [ ] Fetch catalog zones through authenticated AXFR/IXFR and refresh them after
+- [x] Fetch catalog zones through authenticated AXFR/IXFR and refresh them after
   SOA NOTIFY or timer expiry.
-- [ ] Compute a deterministic add/update/remove plan from the last valid catalog.
+- [x] Compute a deterministic add/update/remove plan from the last valid catalog.
 - [ ] Apply a valid catalog atomically so readers never observe a partial fleet.
-- [ ] Automatically provision newly listed member zones using the catalog's group
+- [x] Automatically provision newly listed member zones using the catalog's group
   mapping and transfer policy.
-- [ ] Remove a member and its associated state only when that same catalog created
+- [x] Remove a member and its associated state only when that same catalog created
   it; optionally archive state for recovery.
-- [ ] Treat a changed member-node label as remove-and-recreate, including the
+- [x] Treat a changed member-node label as remove-and-recreate, including the
   RFC-required associated-state reset.
-- [ ] Detect member-zone name clashes with static zones or other catalogs, retain
+- [x] Detect member-zone name clashes with static zones or other catalogs, retain
   the existing zone, and report the conflict.
-- [ ] Implement controlled cross-catalog migration through `coo`, including the
+- [x] Implement controlled cross-catalog migration through `coo`, including the
   required confirmation in the destination catalog.
-- [ ] Retain the last valid applied state when a catalog becomes malformed, stale,
+- [x] Retain the last valid applied state when a catalog becomes malformed, stale,
   expired, or temporarily unreachable.
-- [ ] Persist catalog ownership, member labels, serials, and the last valid plan so
-  restart behavior is deterministic.
+- [x] Persist last-valid catalog/member records, ownership, labels, and serials so
+  the reconciliation plan is deterministically recomputed after restart.
 
 ### Catalog safety and operations
 
-- [ ] Require authenticated catalog transfers and authenticated DNS UPDATE by
-  default; support confidential transfer using RFC 9103 when available.
+- [x] Require authenticated catalog transfers and authenticated DNS UPDATE by
+  default.
+- [ ] Support confidential catalog transfer using RFC 9103.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
-- [ ] Scope admissible member names with allow/deny suffixes or regular expressions.
+- [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
+  rules take precedence and reject the complete snapshot.
 - [ ] Add limits for catalogs, members per catalog, reconciliation rate, transfer
   size, and simultaneous member provisioning.
 - [ ] Reject recursive/self-referential ownership and provisioning cycles.
@@ -201,7 +207,8 @@ safe automatic provisioning for authoritative server fleets.
   members, reconcile outcomes, and transfer failures.
 - [ ] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.
-- [ ] Add unit, race, fuzz, restart, malformed-catalog, and failure-injection tests.
+- [x] Add unit, race, restart, malformed-catalog, and failure-injection tests.
+- [x] Add catalog parser and reconciliation fuzz tests.
 - [ ] Add interoperability tests with at least BIND, Knot DNS, and PowerDNS catalog
   producers/consumers.
 - [ ] Document configuration, migration, rollback, disaster recovery, and a complete
