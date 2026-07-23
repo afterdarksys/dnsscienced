@@ -22,7 +22,10 @@ root-authoritative deployments.
   a standards-conformant public root service.
 - [x] Add validated role profiles that reject unsafe combinations and default
   authoritative/root listeners to recursion disabled.
-- [ ] Build differential protocol suites against current BIND and NSD releases.
+- [x] Build a pinned Linux differential authoritative protocol suite against
+  current BIND and NSD releases, covering normalized UDP/TCP/EDNS answers,
+  common RR types, wildcard synthesis, authoritative negative answers, and
+  delegation referrals with glue.
 - [x] Build a root-authoritative conformance suite for RFC 7720 and a separate
   local-root suite for RFC 8806: signed authoritative answers and denial,
   EDNS(0), IPv4/IPv6 UDP/TCP, unique-root startup validation, loopback role

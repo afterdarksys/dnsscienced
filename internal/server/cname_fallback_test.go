@@ -68,8 +68,8 @@ func TestHandleAuthoritative_CNAMEReturnedForAQuery(t *testing.T) {
 	if resp.Rcode != dns.RcodeSuccess {
 		t.Fatalf("expected NOERROR, got rcode=%d", resp.Rcode)
 	}
-	if len(resp.Answer) != 1 {
-		t.Fatalf("expected 1 answer record (the CNAME), got %d: %v", len(resp.Answer), resp.Answer)
+	if len(resp.Answer) != 2 {
+		t.Fatalf("expected CNAME and in-zone target A, got %d: %v", len(resp.Answer), resp.Answer)
 	}
 	cname, ok := resp.Answer[0].(*dns.CNAME)
 	if !ok {
@@ -77,6 +77,9 @@ func TestHandleAuthoritative_CNAMEReturnedForAQuery(t *testing.T) {
 	}
 	if cname.Target != "example.com." {
 		t.Errorf("expected CNAME target example.com., got %q", cname.Target)
+	}
+	if _, ok := resp.Answer[1].(*dns.A); !ok {
+		t.Fatalf("expected terminal A answer, got %T", resp.Answer[1])
 	}
 }
 
@@ -152,5 +155,77 @@ func TestHandleAuthoritative_AAAAQueryAtCNAMEName(t *testing.T) {
 	}
 	if _, ok := resp.Answer[0].(*dns.CNAME); !ok {
 		t.Fatalf("expected CNAME answer for AAAA query at CNAME name, got %T", resp.Answer[0])
+	}
+}
+
+func TestHandleAuthoritative_CNAMECycleIsBounded(t *testing.T) {
+	z := cnameTestZone()
+	z.Records["a.example.com."] = map[uint16][]dns.RR{
+		dns.TypeCNAME: {
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "a.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+				Target: "b.example.com.",
+			},
+		},
+	}
+	z.Records["b.example.com."] = map[uint16][]dns.RR{
+		dns.TypeCNAME: {
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "b.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+				Target: "a.example.com.",
+			},
+		},
+	}
+	s, err := New(Config{Zones: map[string]*zone.Zone{"example.com.": z}})
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	req := new(dns.Msg)
+	req.SetQuestion("a.example.com.", dns.TypeA)
+	resp, ok := s.handleAuthoritative(req, net.ParseIP("192.0.2.1"))
+	if !ok {
+		t.Fatal("handleAuthoritative returned ok=false")
+	}
+	if len(resp.Answer) != 2 {
+		t.Fatalf("cycle returned %d answers, want two unique CNAMEs: %v", len(resp.Answer), resp.Answer)
+	}
+}
+
+func TestHandleAuthoritative_CNAMEChainIncludesEachDNSSECSignatureOnce(t *testing.T) {
+	z := cnameTestZone()
+	z.Records["www.example.com."][dns.TypeRRSIG] = []dns.RR{
+		&dns.RRSIG{
+			Hdr:         dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeRRSIG, Class: dns.ClassINET, Ttl: 300},
+			TypeCovered: dns.TypeCNAME,
+		},
+	}
+	z.Records["example.com."][dns.TypeRRSIG] = []dns.RR{
+		&dns.RRSIG{
+			Hdr:         dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeRRSIG, Class: dns.ClassINET, Ttl: 300},
+			TypeCovered: dns.TypeA,
+		},
+	}
+	s, err := New(Config{Zones: map[string]*zone.Zone{"example.com.": z}})
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	req := new(dns.Msg)
+	req.SetQuestion("www.example.com.", dns.TypeA)
+	req.SetEdns0(1232, true)
+	resp, ok := s.handleAuthoritative(req, net.ParseIP("192.0.2.1"))
+	if !ok {
+		t.Fatal("handleAuthoritative returned ok=false")
+	}
+
+	signatures := 0
+	for _, rr := range resp.Answer {
+		if rr.Header().Rrtype == dns.TypeRRSIG {
+			signatures++
+		}
+	}
+	if len(resp.Answer) != 4 || signatures != 2 {
+		t.Fatalf("answers=%v, want CNAME+RRSIG and A+RRSIG exactly once", resp.Answer)
 	}
 }

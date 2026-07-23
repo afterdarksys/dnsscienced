@@ -22,9 +22,6 @@ func ParseBIND(filename string, origin string, cfg Config) (*Zone, error) {
 		origin += "."
 	}
 
-	// Create zone
-	zone := New(origin)
-
 	// Parse using miekg/dns library
 	zoneParser := dns.NewZoneParser(strings.NewReader(string(data)), origin, filename)
 
@@ -38,8 +35,34 @@ func ParseBIND(filename string, origin string, cfg Config) (*Zone, error) {
 		zoneParser.SetIncludeAllowed(true)
 	}
 
-	// Parse all records
+	// Parse all records before constructing the Zone. When callers leave the
+	// initial origin empty, an in-file $ORIGIN directive is reflected in the
+	// absolute owner names returned by ZoneParser. The authoritative SOA owner
+	// is therefore the unambiguous zone origin.
+	records := make([]dns.RR, 0)
 	for rr, ok := zoneParser.Next(); ok; rr, ok = zoneParser.Next() {
+		records = append(records, rr)
+	}
+
+	// Check for parse errors before deriving metadata from partial input.
+	if err := zoneParser.Err(); err != nil {
+		return nil, fmt.Errorf("parse error: %w", err)
+	}
+
+	if origin == "" {
+		for _, rr := range records {
+			if soa, ok := rr.(*dns.SOA); ok {
+				origin = soa.Hdr.Name
+				break
+			}
+		}
+		if origin == "" {
+			return nil, fmt.Errorf("zone origin is empty and no SOA record defines it")
+		}
+	}
+
+	zone := New(origin)
+	for _, rr := range records {
 		if err := zone.AddRecord(rr); err != nil {
 			if cfg.Strict {
 				return nil, fmt.Errorf("add record %s: %w", rr.String(), err)
@@ -47,11 +70,6 @@ func ParseBIND(filename string, origin string, cfg Config) (*Zone, error) {
 			// In non-strict mode, skip invalid records
 			continue
 		}
-	}
-
-	// Check for parse errors
-	if err := zoneParser.Err(); err != nil {
-		return nil, fmt.Errorf("parse error: %w", err)
 	}
 
 	// Validate zone

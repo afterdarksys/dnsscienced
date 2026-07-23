@@ -1742,7 +1742,14 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	// query the exact CNAME type (i.e. every real-world client).
 	if len(records) == 0 && qtype != dns.TypeCNAME {
 		if cnameRecords := matchedZone.GetRecords(qname, dns.TypeCNAME); len(cnameRecords) > 0 {
-			records = cnameRecords
+			m.Answer = appendAuthoritativeCNAMEChain(
+				m.Answer,
+				matchedZone,
+				cnameRecords,
+				qtype,
+				wantsDNSSEC,
+			)
+			return m, true
 		}
 	}
 
@@ -1775,6 +1782,59 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	}
 
 	return m, true
+}
+
+// appendAuthoritativeCNAMEChain adds an alias RRset and follows targets that
+// remain authoritative in this zone. BIND and NSD include the terminal RRset
+// for an in-zone alias, avoiding an extra client round trip. The hop limit and
+// visited-owner set bound malformed or cyclic zone data.
+func appendAuthoritativeCNAMEChain(
+	answer []dns.RR,
+	z *zone.Zone,
+	cnameRecords []dns.RR,
+	qtype uint16,
+	wantsDNSSEC bool,
+) []dns.RR {
+	const maxCNAMEHops = 16
+
+	visited := make(map[string]struct{}, maxCNAMEHops)
+	current := cnameRecords
+	for hop := 0; hop < maxCNAMEHops && len(current) > 0; hop++ {
+		owner := strings.ToLower(dns.Fqdn(current[0].Header().Name))
+		if _, seen := visited[owner]; seen {
+			return answer
+		}
+		visited[owner] = struct{}{}
+
+		if wantsDNSSEC {
+			answer = append(answer, appendCoveringSignatures(current, z)...)
+		} else {
+			answer = append(answer, current...)
+		}
+
+		cname, ok := current[0].(*dns.CNAME)
+		if !ok {
+			return answer
+		}
+		target := strings.ToLower(dns.Fqdn(cname.Target))
+		if !dns.IsSubDomain(z.Origin, target) {
+			return answer
+		}
+		if cut, _ := z.FindDelegation(target); cut != "" {
+			return answer
+		}
+
+		if terminal := z.GetRecords(target, qtype); len(terminal) > 0 {
+			if wantsDNSSEC {
+				answer = append(answer, appendCoveringSignatures(terminal, z)...)
+			} else {
+				answer = append(answer, terminal...)
+			}
+			return answer
+		}
+		current = z.GetRecords(target, dns.TypeCNAME)
+	}
+	return answer
 }
 
 // shouldRateLimit checks if response should be rate limited
