@@ -1,8 +1,19 @@
+# Historical Security Capability Review
+
+This brainstorm is retained for provenance. `TODO.md` is the canonical,
+evidence-backed checklist. Status below reflects the current feature/bugfix
+branch stack as of 2026-07-22; “partial” means configuration stubs or isolated
+detectors do not count as production support.
+
 Based on my exploration, dnsscienced already has extensive security features built in. Here are additional security capabilities we can add:
 
   High-Priority Security Enhancements
 
   1. DNSSEC Validation (Critical Gap)
+
+  Status: **Partial** — signature/denial validation, algorithm policy, static
+  trust anchors, and NSEC3 limits are implemented; RFC 5011 durable rollover is
+  still pending.
 
   - Full DNSSEC signature verification
   - Algorithm downgrade protection
@@ -14,6 +25,8 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   2. Extended DNS Errors (RFC 8914)
 
+  Status: **Implemented for current validation and policy failure paths.**
+
   - Detailed error codes for security events
   - Better debugging and forensics
   - Client-side security awareness
@@ -22,12 +35,17 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   3. Query Name Minimization (RFC 7816)
 
+  Status: **Implemented in the production recursive resolver.**
+
   - The function exists in internal/engine/security.go:114 but isn't integrated
   - Would reduce query exposure to intermediate nameservers
 
   Impact: Enhanced privacy protection
 
   4. TSIG Authentication (RFC 8945)
+
+  Status: **Implemented** for UPDATE, AXFR/IXFR, RFC 1996 NOTIFY, constant-time
+  MAC validation, and live key rotation.
 
   - Cryptographic authentication for zone transfers
   - Secure dynamic updates
@@ -39,6 +57,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   5. DNS Firewall Enhancements
 
+  Status: **Partial** — regex/QNAME RPZ and configurable multi-source threat
+  feeds are implemented; GeoIP and durable per-client behavioral history remain.
+
   - Behavioral anomaly detection: ML-based detection of unusual query patterns
   - Geofencing: Block/allow queries based on GeoIP
   - Regex-based RPZ rules: More flexible filtering patterns
@@ -46,17 +67,27 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   6. Zero-Trust Architecture
 
+  Status: **Pending** for per-client mTLS authorization, JWT authorization, and
+  privacy/retention-aware security audit logs.
+
   - Per-client authentication: mTLS for DoT/DoH clients
   - JWT-based query authorization: API-style access control
   - Audit logging: Comprehensive query logs with security context
 
   7. Network Protocol Security
 
+  Status: **Partial** — DoT/DoH are available; operational DoQ, ODoH, and
+  authenticated confidential RFC 9103 transfer remain pending.
+
   - DNS over QUIC (DoQ) - RFC 9250 (more efficient than DoT)
   - Oblivious DoH (ODoH) - RFC 9230 (zero-knowledge privacy)
   - TLS 1.3 with 0-RTT for DoT/DoH (performance + security)
 
   8. Advanced DDoS Protection
+
+  Status: **Partial** — RRL, bounded worker queues, overload rejection, and
+  defensive controls exist; adaptive reputation limits and explicit SYN-flood
+  deployment qualification remain.
 
   - SYN flood protection: TCP connection rate limiting
   - Query complexity scoring: Penalize expensive queries (wildcards, ANY)
@@ -65,11 +96,16 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   9. Data Loss Prevention & Exfiltration Detection
 
+  Status: **Partial** — DGA/tunneling/exfiltration heuristics exist, but durable
+  per-client correlation and primary-path alerting remain pending.
+
   - DNS tunneling detection: Statistical analysis of payload sizes
   - Subdomain enumeration detection: Track excessive NXDOMAIN patterns
   - Data exfiltration alerts: Detect base64/hex-encoded subdomains
 
   10. Compliance & Forensics
+
+  Status: **Pending.**
 
   - Query auditing: GDPR-compliant logging with PII redaction
   - Forensic query replay: Reconstruct attack timelines
@@ -80,11 +116,17 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   11. Security Headers & Best Practices
 
+  Status: **Implemented** for constant-time TSIG comparison, randomized outbound
+  IDs, and aggressive NSEC/NSEC3 caching.
+
   - Integrate crypto/subtle.ConstantTimeCompare for TSIG (mentioned in internal/cookie/cookie.go:8)
   - Add query ID randomization to outbound queries
   - Implement aggressive NSEC/NSEC3 caching (RFC 8198)
 
   12. Monitoring & Alerting
+
+  Status: **Partial** — baseline Prometheus and policy/cache metrics exist;
+  maintained dashboards and end-to-end alerting remain pending.
 
   - Prometheus metrics for security events
   - Alert on RRL threshold breaches
@@ -95,12 +137,17 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   13. Post-Quantum Cryptography
 
+  Status: **Research only**; no standardized, assigned DNSSEC algorithm is
+  claimed.
+
   - Quantum-resistant DNSSEC algorithms (SPHINCS+)
   - Hybrid classical+PQC signatures
 
   14. Blockchain Integration
 
+  Status: **Out of production scope** absent a concrete threat-model advantage
+  over DNSSEC and conventional append-only audit storage.
+
   - Decentralized trust anchors (Ethereum/Solana)
   - Immutable audit logs
   - Handshake DNS integration
-

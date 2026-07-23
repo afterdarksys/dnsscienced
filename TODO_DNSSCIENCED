@@ -1,5 +1,10 @@
 # DNSScienced + ads-httpproxy Integration TODO
 
+> Historical integration checklist. `TODO.md` is canonical. Checked dnsscienced
+> items reflect the current feature/bugfix branch stack; unchecked proxy items
+> require changes and end-to-end validation in the external `ads-httpproxy`
+> repository.
+
 ## Vision: Threat-Intel Aware DNS Cache as HTTP Proxy Data Source
 
 Transform dnsscienced's cache into a living threat intelligence database that ads-httpproxy
