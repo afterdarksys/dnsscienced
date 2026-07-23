@@ -19,6 +19,11 @@ import (
 
 const stateVersion = 1
 
+var (
+	ErrCatalogNotFound = errors.New("catalog snapshot not found")
+	ErrCatalogChanged  = errors.New("catalog snapshot changed during pagination")
+)
+
 const (
 	maxCatalogSources           = 128
 	defaultMaxCatalogMembers    = 100_000
@@ -82,16 +87,35 @@ type Runtime struct {
 	budgets     map[string]*reconcileBudget
 	status      map[string]Status
 	now         func() time.Time
+	auditSink   AuditSink
+	generation  uint64
 }
 
 // Status is an immutable operator view of one configured catalog.
 type Status struct {
-	Name        string
-	Serial      uint32
-	Members     int
-	LastAttempt time.Time
-	LastSuccess time.Time
-	LastError   string
+	Name                string
+	Serial              uint32
+	Members             int
+	LastAttempt         time.Time
+	LastSuccess         time.Time
+	LastError           string
+	PendingSerial       uint32
+	PendingReason       string
+	PendingActionCounts map[string]int
+}
+
+// MemberStatus is the audit-safe operator view of one catalog member. Transfer
+// secrets are deliberately excluded.
+type MemberStatus struct {
+	Zone              string
+	Label             string
+	Groups            []string
+	ChangeOfOwnership string
+	OwnerCatalog      string
+	EffectiveGroup    string
+	Masters           []string
+	TransferKeyName   string
+	TransferAlgorithm string
 }
 
 type reconcileBudget struct {
@@ -119,6 +143,7 @@ func NewRuntime(
 	sources []SourceConfig,
 	statePath string,
 	reservedZones []string,
+	auditSinks ...AuditSink,
 ) (*Runtime, error) {
 	if store == nil {
 		return nil, fmt.Errorf("catalog: authoritative store is required")
@@ -128,6 +153,9 @@ func NewRuntime(
 	}
 	if len(sources) > maxCatalogSources {
 		return nil, fmt.Errorf("catalog: at most %d sources are allowed", maxCatalogSources)
+	}
+	if len(auditSinks) > 1 {
+		return nil, fmt.Errorf("catalog: at most one audit sink is allowed")
 	}
 	r := &Runtime{
 		store:       store,
@@ -141,6 +169,9 @@ func NewRuntime(
 		budgets:     make(map[string]*reconcileBudget, len(sources)),
 		status:      make(map[string]Status, len(sources)),
 		now:         time.Now,
+	}
+	if len(auditSinks) == 1 {
+		r.auditSink = auditSinks[0]
 	}
 	for _, source := range sources {
 		source.Name = normalizeName(source.Name)
@@ -353,17 +384,52 @@ func (r *Runtime) AddZone(z *zone.Zone) error {
 	}
 
 	started := r.recordAttempt(name)
+	r.emitAudit(AuditEvent{
+		Time:    started,
+		Kind:    AuditReceipt,
+		Catalog: name,
+		Outcome: "received",
+		Stage:   "receipt",
+	})
 	parsed, err := Parse(z)
 	if err != nil {
 		r.recordFailure(name, started, err)
+		r.emitAudit(AuditEvent{
+			Time:    r.now(),
+			Kind:    AuditRejected,
+			Catalog: name,
+			Outcome: "rejected",
+			Stage:   "validation",
+			Error:   err.Error(),
+		})
 		return fmt.Errorf("catalog %s rejected; retaining last valid state: %w", name, err)
 	}
 	actions, err := r.reconcile(name, parsed, z)
 	if err != nil {
 		r.recordFailure(name, started, err)
+		r.emitAudit(AuditEvent{
+			Time:    r.now(),
+			Kind:    AuditRejected,
+			Catalog: name,
+			Serial:  parsed.Serial,
+			Members: len(parsed.Members),
+			Outcome: "rejected",
+			Stage:   "reconciliation",
+			Error:   err.Error(),
+		})
 		return err
 	}
 	r.recordSuccess(name, started, parsed, actions)
+	r.emitAudit(AuditEvent{
+		Time:         r.now(),
+		Kind:         AuditReconciliation,
+		Catalog:      name,
+		Serial:       parsed.Serial,
+		Members:      len(parsed.Members),
+		Outcome:      "committed",
+		Stage:        "reconciliation",
+		ActionCounts: auditActionCounts(actions),
+	})
 	return nil
 }
 
@@ -373,9 +439,106 @@ func (r *Runtime) Statuses() []Status {
 	defer r.mu.RUnlock()
 	result := make([]Status, 0, len(r.order))
 	for _, name := range r.order {
-		result = append(result, r.status[name])
+		status := r.status[name]
+		status.PendingActionCounts = cloneIntMap(status.PendingActionCounts)
+		result = append(result, status)
 	}
 	return result
+}
+
+// CatalogMembers returns a bounded, lexicographically ordered page. cursor is
+// the last zone name from the previous page; empty starts at the beginning.
+func (r *Runtime) CatalogMembers(
+	catalogName string,
+	cursor string,
+	limit int,
+	expectedSerial *uint32,
+) ([]MemberStatus, string, int, uint32, error) {
+	catalogName = normalizeName(catalogName)
+	var err error
+	cursor, err = normalizeMemberCursor(cursor)
+	if err != nil {
+		return nil, "", 0, 0, err
+	}
+	if limit < 1 || limit > 1000 {
+		return nil, "", 0, 0, fmt.Errorf("catalog: page size must be between 1 and 1000")
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		r.mu.RLock()
+		accepted := r.catalogs[catalogName]
+		if accepted == nil {
+			r.mu.RUnlock()
+			return nil, "", 0, 0, fmt.Errorf("%w: %s", ErrCatalogNotFound, catalogName)
+		}
+		if expectedSerial != nil && accepted.Serial != *expectedSerial {
+			r.mu.RUnlock()
+			return nil, "", 0, 0, fmt.Errorf(
+				"%w: token serial %d, current serial %d",
+				ErrCatalogChanged,
+				*expectedSerial,
+				accepted.Serial,
+			)
+		}
+		total := len(accepted.Members)
+		generation := r.generation
+		r.mu.RUnlock()
+
+		// Accepted Catalog values are immutable after publication. Scan outside
+		// the runtime lock so a very large catalog cannot stall reconciliation.
+		names := boundedMemberPage(accepted.Members, cursor, limit)
+		owners := make(map[string]string, len(names))
+		r.mu.RLock()
+		if r.generation != generation {
+			r.mu.RUnlock()
+			continue
+		}
+		for _, name := range names {
+			if owner, ok := r.ownership[name]; ok {
+				owners[name] = owner.Catalog
+			}
+		}
+		r.mu.RUnlock()
+
+		result := make([]MemberStatus, 0, len(names))
+		for _, name := range names {
+			member := accepted.Members[name]
+			cfg, group, err := r.memberConfigWithGroup(catalogName, member)
+			if err != nil {
+				return nil, "", 0, 0, err
+			}
+			status := MemberStatus{
+				Zone:              member.Zone,
+				Label:             member.Label,
+				Groups:            memberGroupNames(member),
+				ChangeOfOwnership: member.ChangeOfOwnership,
+				EffectiveGroup:    group,
+				Masters:           append([]string(nil), cfg.Masters...),
+			}
+			status.OwnerCatalog = owners[name]
+			if cfg.TransferKey != nil {
+				status.TransferKeyName = cfg.TransferKey.Name
+				status.TransferAlgorithm = cfg.TransferKey.Algorithm
+			}
+			result = append(result, status)
+		}
+		hasMore := false
+		if len(names) > 0 {
+			last := names[len(names)-1]
+			for name := range accepted.Members {
+				if name > last {
+					hasMore = true
+					break
+				}
+			}
+		}
+		nextCursor := ""
+		if hasMore {
+			nextCursor = names[len(names)-1]
+		}
+		return result, nextCursor, total, accepted.Serial, nil
+	}
+	return nil, "", 0, 0, ErrCatalogChanged
 }
 
 // ObserveTransfer implements secondary.TransferObserver. Only configured
@@ -398,6 +561,34 @@ func (r *Runtime) ObserveTransfer(name string, err error) {
 		r.mu.Unlock()
 	}
 	catalogTransfersTotal.WithLabelValues(name, outcome).Inc()
+	event := AuditEvent{
+		Time:    r.now(),
+		Kind:    AuditTransfer,
+		Catalog: name,
+		Outcome: outcome,
+		Stage:   "transfer",
+	}
+	if err != nil {
+		event.Error = err.Error()
+	}
+	r.emitAudit(event)
+}
+
+func (r *Runtime) emitAudit(event AuditEvent) {
+	if r.auditSink != nil {
+		r.auditSink.EmitCatalogAudit(event)
+	}
+}
+
+func auditActionCounts(actions []Action) map[string]int {
+	counts := make(map[string]int)
+	for _, action := range actions {
+		counts[string(action.Kind)]++
+		if action.ResetState {
+			counts["state_reset"]++
+		}
+	}
+	return counts
 }
 
 // GetZone implements secondary.ZoneStore without exposing catalog zones to the
@@ -457,6 +648,7 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) ([]A
 	destructiveActions := countDestructiveActions(actions)
 	source := r.sources[name]
 	if source.DryRun {
+		r.recordPending(name, accepted.Serial, "dry_run", actions)
 		return nil, fmt.Errorf(
 			"catalog %s dry-run plan: serial %d has %d actions (%d destructive); retaining last valid state",
 			name,
@@ -468,6 +660,7 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) ([]A
 	if source.ApprovalRequiredAbove > 0 &&
 		destructiveActions > source.ApprovalRequiredAbove &&
 		(source.ApprovedSerial == nil || *source.ApprovedSerial != accepted.Serial) {
+		r.recordPending(name, accepted.Serial, "approval_required", actions)
 		return nil, fmt.Errorf(
 			"catalog %s serial %d requires explicit approval: %d destructive actions exceeds approval_required_above %d",
 			name,
@@ -598,6 +791,9 @@ func (r *Runtime) recordSuccess(name string, started time.Time, accepted *Catalo
 	status.Members = len(accepted.Members)
 	status.LastSuccess = completed
 	status.LastError = ""
+	status.PendingSerial = 0
+	status.PendingReason = ""
+	status.PendingActionCounts = nil
 	r.status[name] = status
 	r.mu.Unlock()
 
@@ -609,6 +805,16 @@ func (r *Runtime) recordSuccess(name string, started time.Time, accepted *Catalo
 	for _, action := range actions {
 		catalogReconcileActionsTotal.WithLabelValues(name, string(action.Kind)).Inc()
 	}
+}
+
+func (r *Runtime) recordPending(name string, serial uint32, reason string, actions []Action) {
+	r.mu.Lock()
+	status := r.status[name]
+	status.PendingSerial = serial
+	status.PendingReason = reason
+	status.PendingActionCounts = auditActionCounts(actions)
+	r.status[name] = status
+	r.mu.Unlock()
 }
 
 func (r *Runtime) takeReconcileBudget(name string, actions int) bool {
@@ -656,6 +862,7 @@ func (r *Runtime) commitReconciliation(
 	previousOwnership := r.ownership
 	previousMembers := r.memberZone
 	previousAcceptedAt := r.acceptedAt
+	previousGeneration := r.generation
 
 	nextCatalogZones := cloneZoneMap(previousCatalogZones)
 	nextCatalogZones[name] = raw.Clone()
@@ -684,12 +891,14 @@ func (r *Runtime) commitReconciliation(
 	r.ownership = cloneOwnership(finalOwnership)
 	r.memberZone = nextMembers
 	r.acceptedAt = nextAcceptedAt
+	r.generation++
 	if err := r.persistLocked(); err != nil {
 		r.catalogs = previousCatalogs
 		r.catalogZone = previousCatalogZones
 		r.ownership = previousOwnership
 		r.memberZone = previousMembers
 		r.acceptedAt = previousAcceptedAt
+		r.generation = previousGeneration
 		r.mu.Unlock()
 		return err
 	}
@@ -702,6 +911,7 @@ func (r *Runtime) commitReconciliation(
 		r.ownership = previousOwnership
 		r.memberZone = previousMembers
 		r.acceptedAt = previousAcceptedAt
+		r.generation = previousGeneration
 		rollbackErr := r.persistLocked()
 		r.mu.Unlock()
 		if rollbackErr != nil {
@@ -791,24 +1001,38 @@ func validateMemberName(catalogName, memberName string, source SourceConfig) err
 }
 
 func (r *Runtime) memberConfig(catalogName string, member Member) (secondary.Config, error) {
+	cfg, _, err := r.memberConfigWithGroup(catalogName, member)
+	return cfg, err
+}
+
+func (r *Runtime) memberConfigWithGroup(
+	catalogName string,
+	member Member,
+) (secondary.Config, string, error) {
 	source, ok := r.sources[normalizeName(catalogName)]
 	if !ok {
-		return secondary.Config{}, fmt.Errorf("catalog: no source configuration for %s", catalogName)
+		return secondary.Config{}, "", fmt.Errorf("catalog: no source configuration for %s", catalogName)
 	}
 	cfg := source.Defaults
+	effectiveGroup := ""
 	for _, group := range member.Groups {
 		groupName := strings.Join(group.Strings, "")
 		if groupCfg, found := source.Groups[groupName]; found {
 			cfg = groupCfg
+			effectiveGroup = groupName
 			break
 		}
 	}
 	cfg.Name = member.Zone
 	cfg.RetainOnError = true
 	if len(cfg.Masters) == 0 {
-		return secondary.Config{}, fmt.Errorf("catalog %s member %s has no configured masters", catalogName, member.Zone)
+		return secondary.Config{}, "", fmt.Errorf(
+			"catalog %s member %s has no configured masters",
+			catalogName,
+			member.Zone,
+		)
 	}
-	return cfg, nil
+	return cfg, effectiveGroup, nil
 }
 
 func (r *Runtime) load() error {
@@ -947,6 +1171,62 @@ func cloneTimes(input map[string]time.Time) map[string]time.Time {
 	result := make(map[string]time.Time, len(input))
 	for name, value := range input {
 		result[name] = value
+	}
+	return result
+}
+
+func cloneIntMap(input map[string]int) map[string]int {
+	if input == nil {
+		return nil
+	}
+	result := make(map[string]int, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func normalizeMemberCursor(cursor string) (string, error) {
+	cursor = strings.TrimSpace(strings.ToLower(cursor))
+	if cursor == "" {
+		return "", nil
+	}
+	cursor = dns.Fqdn(cursor)
+	if _, ok := dns.IsDomainName(cursor); !ok {
+		return "", fmt.Errorf("catalog: invalid member page cursor")
+	}
+	return cursor, nil
+}
+
+func boundedMemberPage(members map[string]Member, cursor string, limit int) []string {
+	result := make([]string, 0, min(limit, len(members)))
+	for name := range members {
+		if name <= cursor {
+			continue
+		}
+		index := sort.SearchStrings(result, name)
+		if index < len(result) && result[index] == name {
+			continue
+		}
+		if len(result) < limit {
+			result = append(result, "")
+			copy(result[index+1:], result[index:])
+			result[index] = name
+			continue
+		}
+		if index >= limit {
+			continue
+		}
+		copy(result[index+1:], result[index:limit-1])
+		result[index] = name
+	}
+	return result
+}
+
+func memberGroupNames(member Member) []string {
+	result := make([]string, 0, len(member.Groups))
+	for _, group := range member.Groups {
+		result = append(result, strings.Join(group.Strings, ""))
 	}
 	return result
 }

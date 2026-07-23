@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 var (
@@ -135,6 +137,10 @@ Cache:
   cache flush <zone> Flush cache for zone
   cache stats        Cache statistics
 
+Catalog zones:
+  catalog list
+  catalog members <catalog> [page-size] [page-token]
+
 Examples:
   # List zones on ns1
   %s -addr 166.0.192.27:9091 -key $ADMIN_KEY zone list
@@ -184,6 +190,7 @@ func main() {
 	zone := pb.NewZoneServiceClient(conn)
 	srv := pb.NewServerServiceClient(conn)
 	cache := pb.NewCacheServiceClient(conn)
+	admin := pb.NewAdminServiceClient(conn)
 
 	cmd := flag.Arg(0)
 	sub := ""
@@ -203,11 +210,115 @@ func main() {
 		handleServer(ctx, srv, sub)
 	case "cache":
 		handleCache(ctx, cache, sub, args)
+	case "catalog":
+		handleCatalog(ctx, admin, sub, args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
 		os.Exit(1)
 	}
+}
+
+// ── catalog ──────────────────────────────────────────────────────────────────
+
+func handleCatalog(ctx context.Context, c pb.AdminServiceClient, sub string, args []string) {
+	switch sub {
+	case "list":
+		response, err := c.ListCatalogs(ctx, &emptypb.Empty{})
+		must(err)
+		fmt.Printf("Catalogs (%d):\n", len(response.Catalogs))
+		for _, item := range response.Catalogs {
+			freshness := "unknown"
+			if item.LastSuccess != nil {
+				freshness = time.Since(item.LastSuccess.AsTime()).Round(time.Second).String()
+			}
+			fmt.Printf(
+				"  %-40s serial=%-10d members=%-8d freshness=%s\n",
+				item.Name,
+				item.Serial,
+				item.MemberCount,
+				freshness,
+			)
+			if item.LastError != "" {
+				fmt.Printf("    last error: %s\n", item.LastError)
+			}
+			if item.PendingReason != "" {
+				fmt.Printf(
+					"    pending serial=%d reason=%s actions=%s\n",
+					item.PendingSerial,
+					item.PendingReason,
+					formatActionCounts(item.PendingActionCounts),
+				)
+			}
+		}
+
+	case "members":
+		if len(args) < 1 {
+			die("catalog members <catalog> [page-size] [page-token]")
+		}
+		pageSize := uint64(100)
+		if len(args) > 1 {
+			parsed, err := strconv.ParseUint(args[1], 10, 32)
+			if err != nil || parsed < 1 || parsed > 1000 {
+				die("page-size must be between 1 and 1000")
+			}
+			pageSize = parsed
+		}
+		pageToken := ""
+		if len(args) > 2 {
+			pageToken = args[2]
+		}
+		response, err := c.ListCatalogMembers(ctx, &pb.AdminListCatalogMembersRequest{
+			Catalog:   args[0],
+			PageSize:  uint32(pageSize),
+			PageToken: pageToken,
+		})
+		must(err)
+		fmt.Printf(
+			"Catalog members (%d total, snapshot serial %d):\n",
+			response.TotalCount,
+			response.SnapshotSerial,
+		)
+		for _, member := range response.Members {
+			fmt.Printf(
+				"  %-40s label=%-16s owner=%s group=%s\n",
+				member.Zone,
+				member.Label,
+				member.OwnerCatalog,
+				member.EffectiveGroup,
+			)
+			fmt.Printf(
+				"    groups=%v masters=%v transfer_key=%s algorithm=%s coo=%s\n",
+				member.Groups,
+				member.Masters,
+				member.TransferKeyName,
+				member.TransferAlgorithm,
+				member.ChangeOfOwnership,
+			)
+		}
+		if response.NextPageToken != "" {
+			fmt.Printf("Next page token: %s\n", response.NextPageToken)
+		}
+
+	default:
+		die("catalog [list|members]")
+	}
+}
+
+func formatActionCounts(counts map[string]uint64) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ",")
 }
 
 // ── zone ─────────────────────────────────────────────────────────────────────

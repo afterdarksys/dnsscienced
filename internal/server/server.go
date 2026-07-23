@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -40,6 +41,7 @@ type Config struct {
 	TCPAddr string              `yaml:"tcp_addr"`
 	DoH     transport.DoHConfig `yaml:"doh"`
 	DoT     transport.DoTConfig `yaml:"dot"`
+	XoT     XoTConfig           `yaml:"xot"`
 
 	// Number of UDP listeners (SO_REUSEPORT)
 	// Set to runtime.NumCPU() for maximum performance
@@ -91,6 +93,7 @@ type Config struct {
 	// Populated by main.go from config.ZoneConfig.AllowTransfer.
 	// Empty/absent = deny all (D-01).
 	ZoneTransferCIDRs     map[string][]string `yaml:"-"`
+	ZoneTransferTLSOnly   map[string]bool     `yaml:"-"`
 	ZoneAllowAXFRFallback map[string]bool     `yaml:"-"`
 
 	// ZoneUpdateCIDRs maps zone FQDN origin to CIDR strings allowed to send RFC 2136 UPDATE.
@@ -101,6 +104,10 @@ type Config struct {
 	// ZoneUpdateTSIGKeys maps zone FQDN origin to TSIG key names authorized to
 	// send RFC 2136 UPDATE. Empty/absent = deny all.
 	ZoneUpdateTSIGKeys map[string][]string `yaml:"-"`
+
+	// UpdateReplayCacheSize bounds remembered authenticated UPDATE request MACs.
+	// Zero selects the secure default. Entries expire with the request TSIG.
+	UpdateReplayCacheSize int `yaml:"update_replay_cache_size"`
 
 	// PersistPaths maps zone FQDN origin to the .dnszone file path for write-back
 	// after a successful RFC 2136 UPDATE (D-11, D-13).
@@ -160,9 +167,10 @@ func DefaultConfig() Config {
 	rcfg.MaxIterations = 20
 
 	return Config{
-		UDPAddr:      ":53",
-		TCPAddr:      ":53",
-		UDPListeners: runtime.NumCPU(),
+		UDPAddr:               ":53",
+		TCPAddr:               ":53",
+		UDPListeners:          runtime.NumCPU(),
+		UpdateReplayCacheSize: defaultUpdateReplayCacheSize,
 
 		// Recursion is opt-in. When enabled without an explicit ACL, New limits it
 		// to loopback clients so a default deployment cannot become an open resolver.
@@ -225,7 +233,8 @@ type Server struct {
 	soaNotifyHandler SOANotifyHandler
 	ixfrJournal      *zone.Journal
 	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
-	persistMu        sync.Mutex        // Orders zone swaps and durable snapshots across UPDATE requests.
+	persistMu        sync.Mutex        // Stable linearization boundary for all zone-map mutations and durable UPDATE commits.
+	updateReplay     *updateReplayCache
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -236,6 +245,9 @@ type Server struct {
 	tcpLimiter *transport.LimitedListener
 	dohServer  *transport.DoHListener
 	dotServer  *transport.DoTListener
+	xotServer  *dns.Server
+	xotTLS     *tls.Config
+	xotLimiter *transport.LimitedListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -247,6 +259,8 @@ type Server struct {
 	udpQueries         atomic.Uint64
 	tcpQueries         atomic.Uint64
 	complexityRejected atomic.Uint64
+	updateReplays      atomic.Uint64
+	updateReplayFull   atomic.Uint64
 
 	// Lifecycle
 	ctx    context.Context
@@ -261,6 +275,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
 		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
+	}
+	if cfg.UpdateReplayCacheSize == 0 {
+		cfg.UpdateReplayCacheSize = defaultUpdateReplayCacheSize
+	}
+	if cfg.UpdateReplayCacheSize < 1 || cfg.UpdateReplayCacheSize > 16_777_216 {
+		return nil, fmt.Errorf("update_replay_cache_size must be zero (default) or between 1 and 16777216 (got %d)", cfg.UpdateReplayCacheSize)
 	}
 	if err := cfg.TCPProtection.Validate(); err != nil {
 		return nil, err
@@ -278,11 +298,12 @@ func New(cfg Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		cfg:         cfg,
-		ctx:         ctx,
-		cancel:      cancel,
-		ixfrJournal: zone.NewJournal(100),
-		reputation:  clientReputation,
+		cfg:          cfg,
+		ctx:          ctx,
+		cancel:       cancel,
+		ixfrJournal:  zone.NewJournal(100),
+		reputation:   clientReputation,
+		updateReplay: newUpdateReplayCache(cfg.UpdateReplayCacheSize),
 	}
 
 	// Initialize recursive resolver if enabled
@@ -588,6 +609,25 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("init DNS-over-TLS listener: %w", err)
 		}
 	}
+	if cfg.XoT.Enabled {
+		var err error
+		s.xotTLS, err = loadXoTTLSConfig(cfg.XoT)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init XFR-over-TLS listener: %w", err)
+		}
+		s.xotServer = &dns.Server{
+			Net:          "tcp-tls",
+			Handler:      dns.HandlerFunc(s.handleXoT),
+			ReadTimeout:  cfg.ReadTimeout,
+			WriteTimeout: cfg.WriteTimeout,
+			IdleTimeout: func() time.Duration {
+				return cfg.IdleTimeout
+			},
+			MaxTCPQueries: cfg.TCPProtection.MaxQueriesPerConnection,
+			TsigProvider:  s.tsigKeyRing,
+		}
+	}
 
 	return s, nil
 }
@@ -616,8 +656,33 @@ func (s *Server) Start() error {
 			s.tcpLimiter = nil
 		}
 	}
+	closeXoTListener := func() {
+		if s.xotServer != nil && s.xotServer.Listener != nil {
+			_ = s.xotServer.Listener.Close()
+			s.xotServer.Listener = nil
+			s.xotLimiter = nil
+		}
+	}
+	if s.xotServer != nil {
+		baseListener, err := net.Listen("tcp", xotAddress(s.cfg.XoT))
+		if err != nil {
+			closeTCPListener()
+			return fmt.Errorf("listen XFR-over-TLS: %w", err)
+		}
+		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
+		if err != nil {
+			_ = baseListener.Close()
+			closeTCPListener()
+			return fmt.Errorf("protect XFR-over-TLS listener: %w", err)
+		}
+		if limited, ok := listener.(*transport.LimitedListener); ok {
+			s.xotLimiter = limited
+		}
+		s.xotServer.Listener = tls.NewListener(listener, s.xotTLS)
+	}
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
@@ -627,6 +692,7 @@ func (s *Server) Start() error {
 			if s.dohServer != nil {
 				_ = s.dohServer.Stop()
 			}
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
@@ -639,6 +705,7 @@ func (s *Server) Start() error {
 			if s.dotServer != nil {
 				_ = s.dotServer.Stop()
 			}
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
@@ -673,6 +740,16 @@ func (s *Server) Start() error {
 			}
 		}()
 	}
+	if s.xotServer != nil && s.xotServer.Listener != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			fmt.Printf("XFR-over-TLS listener started on %s\n", xotAddress(s.cfg.XoT))
+			if err := s.xotServer.ActivateAndServe(); err != nil {
+				fmt.Printf("XFR-over-TLS listener error: %v\n", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -691,6 +768,11 @@ func (s *Server) Stop() error {
 	if s.dotServer != nil {
 		if err := s.dotServer.Stop(); err != nil {
 			fmt.Printf("Error shutting down DNS-over-TLS listener: %v\n", err)
+		}
+	}
+	if s.xotServer != nil && s.xotServer.Listener != nil {
+		if err := s.xotServer.Shutdown(); err != nil {
+			fmt.Printf("Error shutting down XFR-over-TLS listener: %v\n", err)
 		}
 	}
 
@@ -880,6 +962,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		clientIP = addr.IP
 	}
 
+	// RFC 8945 applies to every signed DNS request, independent of opcode.
+	// Reject failed authentication before any handler can observe or act on it.
+	if r.IsTsig() != nil {
+		if verificationErr := w.TsigStatus(); verificationErr != nil {
+			writeTSIGVerificationError(w, r, verificationErr)
+			return
+		}
+		w = newTSIGSigningResponseWriter(w, r.IsTsig())
+	}
+
 	// RFC 9859: dispatch NOTIFY opcode before query processing.
 	// This must be FIRST — before pool.GetMessage, before defensive checks.
 	if r.Opcode == dns.OpcodeNotify {
@@ -895,13 +987,6 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				m := new(dns.Msg)
 				m.SetReply(r)
 				m.Rcode = dns.RcodeRefused
-				writeMsg(w, m) //nolint:errcheck
-				return
-			}
-			if r.IsTsig() != nil && w.TsigStatus() != nil {
-				m := new(dns.Msg)
-				m.SetReply(r)
-				m.Rcode = dns.RcodeNotAuth
 				writeMsg(w, m) //nolint:errcheck
 				return
 			}
@@ -1548,9 +1633,12 @@ type Stats struct {
 	UDPQueries         uint64
 	TCPQueries         uint64
 	ComplexityRejected uint64
+	UpdateReplays      uint64
+	UpdateReplayFull   uint64
 
 	ClientReputation reputation.Stats
 	TCPConnections   transport.TCPConnectionStats
+	XoTConnections   transport.TCPConnectionStats
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1567,12 +1655,17 @@ func (s *Server) GetStats() Stats {
 		UDPQueries:         s.udpQueries.Load(),
 		TCPQueries:         s.tcpQueries.Load(),
 		ComplexityRejected: s.complexityRejected.Load(),
+		UpdateReplays:      s.updateReplays.Load(),
+		UpdateReplayFull:   s.updateReplayFull.Load(),
 	}
 	if s.reputation != nil {
 		stats.ClientReputation = s.reputation.Stats()
 	}
 	if s.tcpLimiter != nil {
 		stats.TCPConnections = s.tcpLimiter.Stats()
+	}
+	if s.xotLimiter != nil {
+		stats.XoTConnections = s.xotLimiter.Stats()
 	}
 
 	if s.recursive != nil {

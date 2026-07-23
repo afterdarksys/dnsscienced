@@ -71,7 +71,11 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Implement DNS over QUIC (RFC 9250); the experimental configuration stub is
   not an operational listener.
 - [ ] Implement Oblivious DoH (RFC 9230).
-- [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103).
+- [x] Add authenticated and confidential zone transfer over TLS (RFC 9103):
+  strict TLS 1.3 AXFR/IXFR in both directions, ALPN `dot`, primary
+  authentication, optional mTLS, TSIG/source-ACL authorization, per-zone
+  cleartext refusal, EDE 21, and no client fallback. RFC 9103 does not define
+  zone transfer over QUIC; DoQ remains tracked separately.
 - [x] Add configurable query-complexity admission scoring before policy,
   authoritative, and recursive processing, with Prometheus rejection counters.
 - [x] Add bounded adaptive IP-reputation admission limits with lazy score decay,
@@ -200,7 +204,8 @@ fleet-scale policy, operations, interoperability, and producer support.
 
 - [x] Require authenticated catalog transfers and authenticated DNS UPDATE by
   default.
-- [ ] Support confidential catalog transfer using RFC 9103.
+- [x] Support confidential catalog and catalog-member transfer using strict
+  RFC 9103 TLS 1.3 with optional mTLS and no cleartext fallback.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.
@@ -212,17 +217,17 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [x] Reject configured catalogs as member zones, self-referential `coo`, and
   deterministic cross-catalog ownership cycles before persistence or side effects.
 - [x] Provide dry-run and serial-bound approval modes for mass deletion or replacement.
-- [ ] Add structured audit events for catalog receipt, validation, reconciliation,
+- [x] Add structured audit events for catalog receipt, validation, reconciliation,
   conflicts, migrations, and state resets.
 - [x] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
   members, reconcile outcomes, and transfer failures.
-- [ ] Add CLI/admin operations to list catalogs, members, effective group config,
+- [x] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.
 - [x] Add unit, race, restart, malformed-catalog, and failure-injection tests.
 - [x] Add catalog parser and reconciliation fuzz tests.
 - [ ] Add interoperability tests with at least BIND, Knot DNS, and PowerDNS catalog
   producers/consumers.
-- [ ] Document configuration, migration, rollback, disaster recovery, and a complete
+- [x] Document configuration, migration, rollback, disaster recovery, and a complete
   RFC 9432 schema-v2 example.
 
 ## ads-httpproxy integration (external repository)

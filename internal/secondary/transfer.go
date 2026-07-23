@@ -2,6 +2,7 @@ package secondary
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
@@ -59,7 +60,7 @@ func transferRecords(ctx context.Context, cfg Config, master string, timeout tim
 		}
 		dialer.LocalAddr = &net.TCPAddr{IP: ip}
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", master)
+	conn, err := dialTransfer(ctx, &dialer, cfg.TransferTLS, master)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +96,34 @@ func transferRecords(ctx context.Context, cfg Config, master string, timeout tim
 		}
 	}
 	return accumulator.records, nil
+}
+
+func dialTransfer(
+	ctx context.Context,
+	dialer *net.Dialer,
+	tlsConfig *tls.Config,
+	master string,
+) (net.Conn, error) {
+	if tlsConfig == nil {
+		return dialer.DialContext(ctx, "tcp", master)
+	}
+	conn, err := (&tls.Dialer{
+		NetDialer: dialer,
+		Config:    tlsConfig.Clone(),
+	}).DialContext(ctx, "tcp", master)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		_ = conn.Close()
+		return nil, fmt.Errorf("transfer TLS dial returned %T", conn)
+	}
+	if negotiated := tlsConn.ConnectionState().NegotiatedProtocol; negotiated != "dot" {
+		_ = conn.Close()
+		return nil, fmt.Errorf("transfer TLS did not negotiate required ALPN protocol %q", "dot")
+	}
+	return conn, nil
 }
 
 type transferAccumulator struct {

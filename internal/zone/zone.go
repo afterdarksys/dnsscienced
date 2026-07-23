@@ -5,7 +5,6 @@ import (
 	"math"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -24,10 +23,6 @@ type Zone struct {
 	// Records organized by owner name
 	// Map: owner name -> record type -> []RR
 	Records map[string]map[uint16][]dns.RR
-
-	// updateMu serializes concurrent RFC 2136 UPDATE operations per zone (D-06).
-	// The UPDATE handler acquires this lock before applying mutations to the cloned zone.
-	updateMu sync.Mutex
 
 	// DNSSEC configuration
 	DNSSEC *DNSSECConfig
@@ -554,17 +549,6 @@ func parseIP(s string) (net.IP, error) {
 		return nil, fmt.Errorf("invalid IP address: %s", s)
 	}
 	return ip, nil
-}
-
-// Lock acquires the zone's updateMu for RFC 2136 UPDATE serialization (D-06).
-// Call before prerequisite evaluation and hold through the atomic zone swap.
-func (z *Zone) Lock() {
-	z.updateMu.Lock()
-}
-
-// Unlock releases the zone's updateMu.
-func (z *Zone) Unlock() {
-	z.updateMu.Unlock()
 }
 
 // GetTypeMap returns the type→[]RR map for the given owner name, or nil if absent.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,26 @@ func TestConfiguredZonesDefersSecondaryToTransferManager(t *testing.T) {
 	loaded, err := loadConfiguredZones(srv, []config.ZoneConfig{{Name: "secondary.test", Type: "secondary", Masters: []string{"192.0.2.1"}}})
 	if err != nil || loaded != 0 {
 		t.Fatalf("loaded=%d error=%v, want secondary deferred without error", loaded, err)
+	}
+}
+
+func TestWireZoneTransferPoliciesIncludesTLSOnly(t *testing.T) {
+	disabled := false
+	cfg := server.Config{}
+	wireZoneTransferPolicies(&cfg, []config.ZoneConfig{{
+		Name:              "Primary.Example",
+		AllowTransfer:     []string{"192.0.2.0/24"},
+		TransferTLSOnly:   true,
+		AllowAXFRFallback: &disabled,
+	}})
+	if cfg.ZoneTransferCIDRs["primary.example."][0] != "192.0.2.0/24" ||
+		!cfg.ZoneTransferTLSOnly["primary.example."] ||
+		cfg.ZoneAllowAXFRFallback["primary.example."] {
+		t.Fatalf("transfer policies = ACL:%v TLS-only:%v fallback:%v",
+			cfg.ZoneTransferCIDRs,
+			cfg.ZoneTransferTLSOnly,
+			cfg.ZoneAllowAXFRFallback,
+		)
 	}
 }
 
@@ -198,6 +219,68 @@ func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T)
 	}
 }
 
+func TestBuildSecondaryConfigsEnablesStrictTransferTLS(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "xfer.example.",
+			Algorithm: "hmac-sha256",
+			Secret:    "c2VjcmV0",
+		}},
+		Zones: []config.ZoneConfig{{
+			Name:            "secondary.test.",
+			Type:            "secondary",
+			Masters:         []string{"primary.test"},
+			TransferTSIGKey: "xfer.example.",
+			TransferTLS: &config.TransferTLSConfig{
+				ServerName: "primary.test",
+			},
+		}},
+	}
+	got, err := buildSecondaryConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TransferTLS == nil {
+		t.Fatalf("secondary configs = %#v", got)
+	}
+	if got[0].TransferTLS.ServerName != "primary.test" ||
+		got[0].TransferTLS.MinVersion != tls.VersionTLS13 ||
+		len(got[0].TransferTLS.NextProtos) != 1 ||
+		got[0].TransferTLS.NextProtos[0] != "dot" {
+		t.Fatalf("transfer TLS config = %#v", got[0].TransferTLS)
+	}
+}
+
+func TestBuildTransferTLSRejectsIncompleteConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.TransferTLSConfig
+		want string
+	}{
+		{
+			name: "missing server name",
+			cfg:  &config.TransferTLSConfig{},
+			want: "server_name is required",
+		},
+		{
+			name: "missing client key",
+			cfg: &config.TransferTLSConfig{
+				ServerName: "primary.test",
+				CertFile:   "client.pem",
+			},
+			want: "cert_file and key_file must be configured together",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := buildTransferTLS("test zone", test.cfg)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 	approvedSerial := uint32(43)
 	cfg := &config.Config{
@@ -220,12 +303,14 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 			CatalogTransferConfig: config.CatalogTransferConfig{
 				Masters:            []string{"192.0.2.1"},
 				TransferTSIGKey:    "catalog-xfer.example.",
+				TransferTLS:        &config.TransferTLSConfig{ServerName: "catalog-primary.example."},
 				MaxTransferRecords: 200000,
 				MaxTransferBytes:   67108864,
 			},
 			MemberDefaults: config.CatalogTransferConfig{
 				Masters:            []string{"192.0.2.2"},
 				TransferTSIGKey:    "catalog-xfer.example.",
+				TransferTLS:        &config.TransferTLSConfig{ServerName: "member-primary.example."},
 				MaxTransferRecords: 300000,
 				MaxTransferBytes:   100663296,
 			},
@@ -233,6 +318,7 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 				"blue": {
 					Masters:            []string{"192.0.2.3"},
 					TransferTSIGKey:    "catalog-xfer.example.",
+					TransferTLS:        &config.TransferTLSConfig{ServerName: "blue-primary.example."},
 					MaxTransferRecords: 400000,
 					MaxTransferBytes:   134217728,
 				},
@@ -245,7 +331,9 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 	}
 	if len(sources) != 1 ||
 		sources[0].Defaults.TransferKey == nil ||
+		sources[0].Defaults.TransferTLS == nil ||
 		sources[0].Groups["blue"].TransferKey == nil ||
+		sources[0].Groups["blue"].TransferTLS == nil ||
 		sources[0].Defaults.MaxTransferRecords != 300000 ||
 		sources[0].Defaults.MaxTransferBytes != 100663296 ||
 		sources[0].Groups["blue"].MaxTransferRecords != 400000 ||
@@ -262,6 +350,7 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 		*sources[0].ApprovedSerial != 43 ||
 		transfers["catalog.example."].MaxTransferRecords != 200000 ||
 		transfers["catalog.example."].MaxTransferBytes != 67108864 ||
+		transfers["catalog.example."].TransferTLS == nil ||
 		transfers["catalog.example."].TransferKey == nil {
 		t.Fatalf("sources=%+v transfers=%+v", sources, transfers)
 	}

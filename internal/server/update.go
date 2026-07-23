@@ -2,8 +2,10 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -155,24 +157,30 @@ func containsRRValue(records []dns.RR, candidate dns.RR, zoneClass uint16) bool 
 //
 // Guard chain (each failure returns immediately with the specified rcode):
 //  1. TSIG presence (D-16): absent TSIG → NOTAUTH (rcode 9)
-//  2. TSIG validity (D-16): bad/replayed TSIG → NOTAUTH
+//  2. TSIG validity (D-16): bad key/MAC/time → NOTAUTH
 //  3. Empty Zone section guard → FORMERR
 //  4. Zone lookup: unknown zone → REFUSED
 //  5. Per-zone TSIG identity authorization: absent/unlisted key → REFUSED
 //  6. ACL check (D-15, D-17): nil ACL (no allow_update) or IP not allowed → REFUSED
 //  7. Zone containment: out-of-zone prerequisite/update owner → NOTZONE
-//  8. Lock zone.updateMu
-//  9. Evaluate prerequisites (r.Answer) against live zone
-//  10. Clone live zone
-//  11. Apply Update section (r.Ns) to clone
-//  12. clone.Validate() → SERVFAIL on failure
-//  13. clone.IncrementSerial()
-//  14. Atomic swap: s.cfg.Zones[zoneName] = clone
-//  15. Unlock zone.updateMu
-//  16. Reply NOERROR
+//  8. Reserve the authenticated request MAC; coalesce exact replays
+//  9. Lock the stable server mutation boundary and re-read the live zone
+//  10. Evaluate prerequisites (r.Answer) against live zone
+//  11. Clone live zone
+//  12. Apply Update section (r.Ns) to clone
+//  13. clone.Validate() → SERVFAIL on failure
+//  14. clone.IncrementSerial()
+//  15. Durably persist when configured
+//  16. Atomic swap: s.cfg.Zones[zoneName] = clone
+//  17. Reply NOERROR
 func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
+	var replayReservation *updateReplayEntry
 	// Local helper to send an error rcode without the pooled message path.
 	sendRcode := func(rcode int) {
+		if replayReservation != nil {
+			s.updateReplay.finishUpdate(replayReservation, rcode)
+			replayReservation = nil
+		}
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Rcode = rcode
@@ -190,9 +198,9 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 2. TSIG validity check (D-16): bad key, bad sig, replay attack.
-	if w.TsigStatus() != nil {
-		sendRcode(dns.RcodeNotAuth)
+	// 2. TSIG validity check (D-16): bad key, MAC, time, or truncation.
+	if verificationErr := w.TsigStatus(); verificationErr != nil {
+		writeTSIGVerificationError(w, r, verificationErr)
 		return
 	}
 
@@ -250,12 +258,52 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		}
 	}
 
-	// 8. Lock zone.updateMu to serialize concurrent UPDATE requests (D-06, T-13-08).
-	// Hold through prereq evaluation, clone, apply, swap.
-	z.Lock()
-	defer z.Unlock()
+	// RFC 2136 §5 permits duplicate delivery and explicitly identifies malicious
+	// duplication as a replay attack. TSIG's time window rejects old packets but
+	// permits an exact captured request during the Fudge interval. Reserve the
+	// authenticated request MAC before mutation. A duplicate waits for the first
+	// transaction and receives its rcode without applying the UPDATE again.
+	entry, duplicate, saturated := s.updateReplay.beginUpdate(reqTSIG, time.Now())
+	if duplicate {
+		s.updateReplays.Add(1)
+		updateReplaysTotal.Inc()
+		sendRcode(entry.wait())
+		return
+	}
+	if saturated {
+		s.updateReplayFull.Add(1)
+		updateReplaySaturatedTotal.Inc()
+		sendRcode(dns.RcodeServerFailure)
+		return
+	}
+	replayReservation = entry
+	defer func() {
+		if replayReservation != nil {
+			s.updateReplay.finishUpdate(replayReservation, dns.RcodeServerFailure)
+		}
+	}()
 
-	// 9. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
+	// 9. Serialize against every zone-map mutation using a lock owned by the
+	// server rather than by the Zone object. A successful UPDATE replaces that
+	// object, so locking z.updateMu would allow requests that captured the old
+	// pointer to overwrite a newer generation. Re-read after locking to make
+	// prerequisite evaluation and commit linearizable with AddZone and batches.
+	s.persistMu.Lock()
+	mutationLocked := true
+	defer func() {
+		if mutationLocked {
+			s.persistMu.Unlock()
+		}
+	}()
+	s.zonesMu.RLock()
+	z, ok = s.cfg.Zones[zoneName]
+	s.zonesMu.RUnlock()
+	if !ok || z == nil {
+		sendRcode(dns.RcodeRefused)
+		return
+	}
+
+	// 10. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
 	// Evaluated against the LIVE zone (before cloning) so that concurrent updates
 	// are correctly serialized.  Any failure → return error rcode; zero updates applied (D-03).
 	if rcode, ok := evaluatePrereqs(r.Answer, z); !ok {
@@ -263,11 +311,11 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 10. Clone the live zone. All mutations are applied to the clone only.
+	// 11. Clone the live zone. All mutations are applied to the clone only.
 	// The live zone remains readable and consistent until the atomic swap (D-05, T-13-07).
 	clone := z.Clone()
 
-	// 11. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
+	// 12. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
 	for _, rr := range r.Ns {
 		hdr := rr.Header()
 		owner := strings.ToLower(hdr.Name)
@@ -376,31 +424,39 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		}
 	}
 
-	// 12. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
+	// 13. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
 	// If validation fails the live zone is untouched (no swap).
 	if err := clone.Validate(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 13. Auto-increment serial (D-09).
+	// 14. Auto-increment serial (D-09).
 	if err := clone.IncrementSerial(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 14. Atomic swap: replace the live zone with the validated, serial-incremented clone (D-05, DYNUP-04).
-	// CR-01: write lock protects concurrent write to cfg.Zones map.
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
+	// 15. For a persistent primary, make the replacement durable before it can
+	// be published or acknowledged. A write, fsync, rename, and directory fsync
+	// form the commit boundary. Failure leaves the live zone and IXFR journal
+	// untouched and returns SERVFAIL.
+	if err := s.persistZone(zoneName, clone); err != nil {
+		fmt.Fprintf(os.Stderr, "persist_updates: commit zone %s: %v\n", zoneName, err)
+		sendRcode(dns.RcodeServerFailure)
+		return
+	}
+
+	// 16. Atomic swap: replace the live zone with the validated,
+	// serial-incremented clone (D-05, DYNUP-04).
 	s.ixfrJournal.Record(z, clone)
 	s.zonesMu.Lock()
 	s.cfg.Zones[zoneName] = clone
 	s.zonesMu.Unlock()
+	s.persistMu.Unlock()
+	mutationLocked = false
 
-	// 15. updateMu released by defer above.
-
-	// 16. Reply NOERROR.
+	// 17. Reply NOERROR.
 	// CR-04: RFC 2845 §3.2 requires the response to be TSIG-signed when the request was
 	// TSIG-authenticated. Sign using the same key that authenticated the request.
 	m := new(dns.Msg)
@@ -408,50 +464,73 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	if reqTsig := r.IsTsig(); reqTsig != nil {
 		m.SetTsig(reqTsig.Hdr.Name, reqTsig.Algorithm, reqTsig.Fudge, time.Now().Unix())
 	}
+	if replayReservation != nil {
+		s.updateReplay.finishUpdate(replayReservation, dns.RcodeSuccess)
+		replayReservation = nil
+	}
 	w.WriteMsg(m) //nolint:errcheck
 
 	if s.primaryNotifier != nil {
 		_ = s.primaryNotifier.Notify(zoneName, clone.SOA)
 	}
-
-	// 17. Persist to disk if configured (D-11, D-14).
-	// WR-04: run in a goroutine so blocking disk I/O does not hold z.Lock() (released
-	// by defer above when handleUpdate returns) and does not stall subsequent UPDATE
-	// clients waiting on the zone lock. The in-memory swap already succeeded; the
-	// acknowledged trade-off (D-14) is that a crash between reply and persist leaves
-	// the zone file one serial behind the response already sent to the client.
-	s.persistZone(zoneName, clone)
 }
 
 // persistZone writes the zone to disk if a persist path is configured for it (D-11, D-13).
 // This is a no-op if persistPaths is empty or the zone has no configured path (D-12).
-// Write errors are intentionally non-fatal: the in-memory UPDATE already succeeded (D-14).
 // Only the path already configured in zone config File field is used — no user-controlled
 // path injection is possible (T-13-12).
-func (s *Server) persistZone(zoneName string, z *zone.Zone) {
+func (s *Server) persistZone(zoneName string, z *zone.Zone) error {
 	if len(s.persistPaths) == 0 {
-		return
+		return nil
 	}
 	path, ok := s.persistPaths[zoneName]
 	if !ok || path == "" {
-		return
+		return nil
 	}
 
 	data, err := zone.SerializeDNSZone(z)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "persist_updates: serialize zone %s: %v\n", zoneName, err)
-		return
+		return fmt.Errorf("serialize: %w", err)
 	}
 
-	// Write atomically: write to a temp file then rename over the target.
-	// This prevents a partial-write from leaving a corrupt zone file (T-13-12).
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "persist_updates: write zone %s to %s: %v\n", zoneName, tmpPath, err)
-		return
+	directoryPath := filepath.Dir(path)
+	file, err := os.CreateTemp(directoryPath, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("open temporary file: %w", err)
+	}
+	tmpPath := file.Name()
+	cleanup := true
+	defer func() {
+		_ = file.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	written, err := file.Write(data)
+	if err != nil {
+		return fmt.Errorf("write temporary file: %w", err)
+	}
+	if written != len(data) {
+		return fmt.Errorf("write temporary file: %w", io.ErrShortWrite)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync temporary file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close temporary file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		fmt.Fprintf(os.Stderr, "persist_updates: rename %s → %s: %v\n", tmpPath, path, err)
-		_ = os.Remove(tmpPath) // best-effort cleanup
+		return fmt.Errorf("rename temporary file: %w", err)
 	}
+	cleanup = false
+
+	directory, err := os.Open(directoryPath)
+	if err != nil {
+		return fmt.Errorf("open parent directory: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync parent directory: %w", err)
+	}
+	return nil
 }

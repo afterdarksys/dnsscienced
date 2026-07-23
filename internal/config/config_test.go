@@ -19,6 +19,13 @@ server:
   primary_notify_workers: 6
   enable_recursive: true
   read_timeout: 2s
+  xot:
+    enabled: true
+    address: ":8853"
+    cert_file: "/etc/dnsscienced/tls/xot.pem"
+    key_file: "/etc/dnsscienced/tls/xot-key.pem"
+    client_ca_file: "/etc/dnsscienced/tls/secondary-ca.pem"
+    require_client_cert: true
   rrl:
     enabled: true
     responses_per_second: 50
@@ -115,6 +122,12 @@ dhcp:
 	assert.Equal(t, 6, cfg.Server.PrimaryNotifyWorkers)
 	assert.Equal(t, true, cfg.Server.EnableRecursive)
 	assert.Equal(t, 2*time.Second, cfg.Server.ReadTimeout)
+	assert.True(t, cfg.Server.XoT.Enabled)
+	assert.Equal(t, ":8853", cfg.Server.XoT.Address)
+	assert.Equal(t, "/etc/dnsscienced/tls/xot.pem", cfg.Server.XoT.CertFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/xot-key.pem", cfg.Server.XoT.KeyFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/secondary-ca.pem", cfg.Server.XoT.ClientCAFile)
+	assert.True(t, cfg.Server.XoT.RequireClientCert)
 
 	// Verify RRL Config
 	assert.Equal(t, true, cfg.Server.RRLConfig.Enabled)
@@ -302,6 +315,7 @@ zones:
     enable_scrubbing: true
     allow_transfer:
       - "192.0.2.0/24"
+    transfer_tls_only: true
     allow_update:
       - "198.51.100.0/24"
     update_tsig_keys:
@@ -330,6 +344,11 @@ zones:
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
     transfer_tsig_key: "secondary-xfer.example."
+    transfer_tls:
+      server_name: "primary.example.net"
+      ca_file: "/etc/dnsscienced/tls/transfer-ca.pem"
+      cert_file: "/etc/dnsscienced/tls/secondary.pem"
+      key_file: "/etc/dnsscienced/tls/secondary-key.pem"
     allow_unsigned_transfer: true
     refresh_interval: 3600s
 
@@ -371,6 +390,7 @@ zones:
 	assert.True(t, *primaryZone.EnableScrubbing)
 	assert.Len(t, primaryZone.AllowTransfer, 1)
 	assert.Equal(t, "192.0.2.0/24", primaryZone.AllowTransfer[0])
+	assert.True(t, primaryZone.TransferTLSOnly)
 	assert.Equal(t, []string{"198.51.100.0/24"}, primaryZone.AllowUpdate)
 	assert.Equal(t, []string{"update-key.example."}, primaryZone.UpdateTSIGKeys)
 	assert.Len(t, primaryZone.AlsoNotify, 1)
@@ -399,6 +419,11 @@ zones:
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
 	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
+	require.NotNil(t, secondaryZone.TransferTLS)
+	assert.Equal(t, "primary.example.net", secondaryZone.TransferTLS.ServerName)
+	assert.Equal(t, "/etc/dnsscienced/tls/transfer-ca.pem", secondaryZone.TransferTLS.CAFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/secondary.pem", secondaryZone.TransferTLS.CertFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/secondary-key.pem", secondaryZone.TransferTLS.KeyFile)
 	assert.True(t, secondaryZone.AllowUnsignedTransfer)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 

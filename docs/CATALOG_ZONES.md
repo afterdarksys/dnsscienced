@@ -4,6 +4,9 @@ DNSScienced's catalog model implements RFC 9432 schema version 2. Catalog zones
 are parsed as ordinary IN-class DNS zones and then validated as catalogs before
 any reconciliation is planned.
 
+For migration, rollback, backup, disaster recovery, and a complete producer
+zone example, see [Catalog Zone Operations](CATALOG_OPERATIONS.md).
+
 The model recognizes:
 
 - the mandatory single `version.$CATZ TXT "2"` RR;
@@ -36,6 +39,10 @@ unsigned transfer requires an explicit `allow_unsigned_transfer: true` at the
 specific catalog, default-member, or group boundary. Catalog zones remain
 private and are never answered from the authoritative zone store.
 
+Each transfer boundary can also set `transfer_tls` for strict RFC 9103
+confidentiality. It enforces TLS 1.3+, ALPN `dot`, primary-name verification,
+and no cleartext fallback. A missing master port defaults to 853 under TLS.
+
 ```yaml
 catalog_state_file: /var/lib/dnsscienced/catalog-state.json
 
@@ -48,6 +55,9 @@ catalog_zones:
   - name: catalog.example.
     masters: [192.0.2.10]
     transfer_tsig_key: catalog-xfer.example.
+    transfer_tls:
+      server_name: catalog-primary.example.
+      ca_file: /etc/dnsscienced/tls/catalog-ca.pem
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
     max_members: 100000
@@ -63,11 +73,17 @@ catalog_zones:
     member_defaults:
       masters: [192.0.2.20]
       transfer_tsig_key: catalog-xfer.example.
+      transfer_tls:
+        server_name: member-primary.example.
+        ca_file: /etc/dnsscienced/tls/member-ca.pem
 
     groups:
       blue:
         masters: [192.0.2.21, 192.0.2.22]
         transfer_tsig_key: catalog-xfer.example.
+        transfer_tls:
+          server_name: blue-primary.example.
+          ca_file: /etc/dnsscienced/tls/member-ca.pem
 ```
 
 Each `group` key matches the concatenated character-strings of one RFC 9432
@@ -130,3 +146,32 @@ Prometheus exports bounded-label catalog metrics:
 The `catalog` label is bounded by the configured 128-source limit. Outcome and
 action labels are fixed enums, so malformed input cannot create metric
 cardinality.
+
+Catalog control-plane decisions are also written to the configured structured
+system log with `message="catalog audit"`. Fixed event types cover transfer,
+receipt, rejection, and committed reconciliation. Each record includes the
+catalog, serial, member count, outcome, stage, error, and aggregate action
+counts. The action summary explicitly records conflicts, ownership migrations,
+and state resets without emitting an attacker-controlled number of log lines.
+The logger is initialized before initial catalog transfers, so startup failures
+are included in the audit trail.
+
+## Admin inspection
+
+The authenticated admin gRPC service exposes `ListCatalogs` and
+`ListCatalogMembers`. Catalog summaries include freshness, errors, and any
+dry-run or approval-blocked serial with fixed action counts. Member inspection
+is lexicographically cursor-paginated with a hard page-size ceiling of 1,000;
+selecting a page uses bounded auxiliary memory even for very large catalogs.
+Page tokens are bound to the snapshot serial, and a concurrent reconciliation
+returns gRPC `ABORTED` instead of mixing member or ownership data from different
+snapshots.
+It reports member labels, advertised groups, effective group selection,
+ownership, masters, and TSIG key name/algorithm. TSIG secrets are never exposed.
+
+The companion CLI commands are:
+
+```text
+dnsscienced-admin catalog list
+dnsscienced-admin catalog members <catalog> [page-size] [page-token]
+```

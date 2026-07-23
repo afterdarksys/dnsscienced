@@ -44,6 +44,10 @@ service AdminService {
   rpc GetMetrics(google.protobuf.Empty) returns (AdminMetricsResponse);
   rpc ShutdownServer(AdminShutdownRequest) returns (AdminShutdownResponse);
 
+  // RFC 9432 catalog inspection
+  rpc ListCatalogs(google.protobuf.Empty) returns (AdminListCatalogsResponse);
+  rpc ListCatalogMembers(AdminListCatalogMembersRequest) returns (AdminListCatalogMembersResponse);
+
   // Connection management
   rpc ListConnections(AdminListConnectionsRequest) returns (AdminListConnectionsResponse);
   rpc KillConnection(AdminKillConnectionRequest) returns (AdminKillConnectionResponse);
@@ -213,6 +217,47 @@ message AdminShutdownRequest {
 message AdminShutdownResponse {
   bool success = 1;
   string message = 2;
+}
+
+message AdminListCatalogsResponse {
+  repeated AdminCatalogInfo catalogs = 1;
+}
+
+message AdminCatalogInfo {
+  string name = 1;
+  uint32 serial = 2;
+  uint64 member_count = 3;
+  google.protobuf.Timestamp last_attempt = 4;
+  google.protobuf.Timestamp last_success = 5;
+  string last_error = 6;
+  uint32 pending_serial = 7;
+  string pending_reason = 8;
+  map<string, uint64> pending_action_counts = 9;
+}
+
+message AdminListCatalogMembersRequest {
+  string catalog = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+}
+
+message AdminListCatalogMembersResponse {
+  repeated AdminCatalogMember members = 1;
+  string next_page_token = 2;
+  uint64 total_count = 3;
+  uint32 snapshot_serial = 4;
+}
+
+message AdminCatalogMember {
+  string zone = 1;
+  string label = 2;
+  repeated string groups = 3;
+  string change_of_ownership = 4;
+  string owner_catalog = 5;
+  string effective_group = 6;
+  repeated string masters = 7;
+  string transfer_key_name = 8;
+  string transfer_algorithm = 9;
 }
 
 // Connection management

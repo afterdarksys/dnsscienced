@@ -2,6 +2,7 @@ package secondary
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -28,10 +29,14 @@ type TransferKey struct {
 
 // Config defines one secondary zone.
 type Config struct {
-	Name                  string
-	Masters               []string
-	TransferSource        string
-	TransferKey           *TransferKey
+	Name           string
+	Masters        []string
+	TransferSource string
+	TransferKey    *TransferKey
+	// TransferTLS enables strict RFC 9103 XFR-over-TLS. It must authenticate
+	// the primary by name, negotiate ALPN "dot", and use TLS 1.3 or later.
+	// A client certificate in this config enables mutual TLS.
+	TransferTLS           *tls.Config
 	AllowUnsignedTransfer bool
 	// RetainOnError permits startup with an already-published zone when its
 	// masters are temporarily unavailable. It is intended for persisted
@@ -536,9 +541,28 @@ func prepareManagedZone(cfg Config) (*managedZone, error) {
 		return nil, fmt.Errorf("secondary %s: at least one master is required", cfg.Name)
 	}
 	cfg.Masters = append([]string(nil), cfg.Masters...)
+	if cfg.TransferTLS != nil {
+		tlsConfig := cfg.TransferTLS.Clone()
+		if tlsConfig.InsecureSkipVerify {
+			return nil, fmt.Errorf("secondary %s: transfer TLS cannot skip server verification", cfg.Name)
+		}
+		tlsConfig.ServerName = strings.TrimSpace(tlsConfig.ServerName)
+		if tlsConfig.ServerName == "" {
+			return nil, fmt.Errorf("secondary %s: transfer TLS server_name is required", cfg.Name)
+		}
+		if tlsConfig.MinVersion != 0 && tlsConfig.MinVersion < tls.VersionTLS13 {
+			return nil, fmt.Errorf("secondary %s: transfer TLS minimum version must be TLS 1.3 or later", cfg.Name)
+		}
+		if tlsConfig.MaxVersion != 0 && tlsConfig.MaxVersion < tls.VersionTLS13 {
+			return nil, fmt.Errorf("secondary %s: transfer TLS maximum version excludes TLS 1.3", cfg.Name)
+		}
+		tlsConfig.MinVersion = tls.VersionTLS13
+		tlsConfig.NextProtos = []string{"dot"}
+		cfg.TransferTLS = tlsConfig
+	}
 	var allowedMasterIPs []net.IP
 	for i, master := range cfg.Masters {
-		cfg.Masters[i] = withDNSPort(master)
+		cfg.Masters[i] = withTransferPort(master, cfg.TransferTLS != nil)
 		host, _, err := net.SplitHostPort(cfg.Masters[i])
 		if err != nil {
 			return nil, fmt.Errorf("secondary %s: invalid master %q: %w", cfg.Name, master, err)
@@ -620,10 +644,14 @@ func masterAllows(masters []net.IP, source net.IP) bool {
 	return false
 }
 
-func withDNSPort(address string) string {
+func withTransferPort(address string, encrypted bool) string {
 	address = strings.TrimSpace(address)
 	if _, _, err := net.SplitHostPort(address); err == nil {
 		return address
 	}
-	return net.JoinHostPort(strings.Trim(address, "[]"), "53")
+	port := "53"
+	if encrypted {
+		port = "853"
+	}
+	return net.JoinHostPort(strings.Trim(address, "[]"), port)
 }

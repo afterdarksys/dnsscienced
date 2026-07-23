@@ -15,6 +15,23 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+type auditRecorder struct {
+	mu     sync.Mutex
+	events []AuditEvent
+}
+
+func (r *auditRecorder) EmitCatalogAudit(event AuditEvent) {
+	r.mu.Lock()
+	r.events = append(r.events, event)
+	r.mu.Unlock()
+}
+
+func (r *auditRecorder) snapshot() []AuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]AuditEvent(nil), r.events...)
+}
+
 func TestRuntimeStatusAndMetricsRetainLastSuccessAfterFailure(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, _ := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
@@ -136,6 +153,59 @@ func TestRuntimeObservesConfiguredCatalogTransferFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimeEmitsStructuredCatalogAuditEvents(t *testing.T) {
+	recorder := &auditRecorder{}
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+		recorder,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	accepted := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(accepted); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := runtime.AddZone(accepted); err == nil {
+		t.Fatal("stale catalog was accepted")
+	}
+	runtime.ObserveTransfer("catalog.example.", errors.New("master timeout"))
+
+	events := recorder.snapshot()
+	if len(events) != 5 {
+		t.Fatalf("audit events = %+v", events)
+	}
+	if events[0].Kind != AuditReceipt ||
+		events[1].Kind != AuditReconciliation ||
+		events[1].Serial != 42 ||
+		events[1].Members != 1 ||
+		events[1].ActionCounts[string(ActionAdd)] != 1 {
+		t.Fatalf("successful audit events = %+v", events[:2])
+	}
+	if events[2].Kind != AuditReceipt ||
+		events[3].Kind != AuditRejected ||
+		events[3].Stage != "reconciliation" ||
+		events[3].Error == "" {
+		t.Fatalf("rejection audit events = %+v", events[2:4])
+	}
+	if events[4].Kind != AuditTransfer ||
+		events[4].Outcome != "failure" ||
+		events[4].Error != "master timeout" {
+		t.Fatalf("transfer audit event = %+v", events[4])
+	}
+}
+
 func TestRuntimeDryRunRetainsFleet(t *testing.T) {
 	source := runtimeSource("catalog.example.")
 	source.DryRun = true
@@ -162,6 +232,12 @@ func TestRuntimeDryRunRetainsFleet(t *testing.T) {
 	}
 	if runtime.GetZone("alpha.example.") != nil || runtime.catalogs["catalog.example."] != nil {
 		t.Fatal("dry-run mutated catalog fleet")
+	}
+	status := runtime.Statuses()[0]
+	if status.PendingSerial != 42 ||
+		status.PendingReason != "dry_run" ||
+		status.PendingActionCounts[string(ActionAdd)] != 1 {
+		t.Fatalf("dry-run pending status = %+v", status)
 	}
 }
 
@@ -210,6 +286,104 @@ func TestRuntimeRequiresSerialBoundApprovalForMassDestruction(t *testing.T) {
 		runtime.GetZone("beta.example.") != nil ||
 		runtime.GetZone("gamma.example.") == nil {
 		t.Fatalf("approved fleet not applied; removed=%v", controller.removed)
+	}
+	status := runtime.Statuses()[0]
+	if status.PendingSerial != 0 ||
+		status.PendingReason != "" ||
+		status.PendingActionCounts != nil {
+		t.Fatalf("approved plan left pending status = %+v", status)
+	}
+}
+
+func TestRuntimeCatalogMembersUsesBoundedCursorPagination(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.Defaults.TransferKey = &secondary.TransferKey{
+		Name:      "default-key.example.",
+		Algorithm: "hmac-sha256",
+		Secret:    "not-exposed",
+	}
+	source.Groups["blue"] = secondary.Config{
+		Masters: []string{"192.0.2.20", "192.0.2.21"},
+		TransferKey: &secondary.TransferKey{
+			Name:      "blue-key.example.",
+			Algorithm: "hmac-sha512",
+			Secret:    "also-not-exposed",
+		},
+	}
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`c1.zones.catalog.example. 0 IN PTR charlie.example.`,
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+		`group.b1.zones.catalog.example. 0 IN TXT "blue"`,
+	)); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+
+	first, cursor, total, serial, err := runtime.CatalogMembers("catalog.example.", "", 2, nil)
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if total != 3 ||
+		serial != 42 ||
+		len(first) != 2 ||
+		first[0].Zone != "alpha.example." ||
+		first[1].Zone != "beta.example." ||
+		cursor != "beta.example." {
+		t.Fatalf("first page = %+v cursor=%q total=%d", first, cursor, total)
+	}
+	if first[1].EffectiveGroup != "blue" ||
+		first[1].TransferKeyName != "blue-key.example." ||
+		first[1].TransferAlgorithm != "hmac-sha512" ||
+		len(first[1].Masters) != 2 {
+		t.Fatalf("effective grouped member = %+v", first[1])
+	}
+
+	second, cursor, total, serial, err := runtime.CatalogMembers(
+		"catalog.example.",
+		cursor,
+		2,
+		&serial,
+	)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if total != 3 ||
+		serial != 42 ||
+		len(second) != 1 ||
+		second[0].Zone != "charlie.example." ||
+		cursor != "" {
+		t.Fatalf("second page = %+v cursor=%q total=%d", second, cursor, total)
+	}
+	if second[0].TransferKeyName != "default-key.example." ||
+		second[0].TransferAlgorithm != "hmac-sha256" {
+		t.Fatalf("default member = %+v", second[0])
+	}
+	if _, _, _, _, err := runtime.CatalogMembers("catalog.example.", "", 1001, nil); err == nil {
+		t.Fatal("oversized catalog member page was accepted")
+	}
+	staleSerial := uint32(41)
+	if _, _, _, _, err := runtime.CatalogMembers(
+		"catalog.example.",
+		"",
+		2,
+		&staleSerial,
+	); !errors.Is(err, ErrCatalogChanged) {
+		t.Fatalf("stale page serial error = %v", err)
 	}
 }
 

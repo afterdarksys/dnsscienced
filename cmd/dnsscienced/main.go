@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"net"
@@ -161,20 +163,7 @@ func main() {
 		// Wire per-zone allow_transfer CIDRs from zone config into server config.
 		// config.Config.Zones holds AllowTransfer; server.Config.ZoneTransferCIDRs
 		// carries them to the AXFR handler. Wired here to avoid import cycle.
-		if len(loadedCfg.Zones) > 0 {
-			cfg.ZoneTransferCIDRs = make(map[string][]string, len(loadedCfg.Zones))
-			cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(loadedCfg.Zones))
-			for _, zc := range loadedCfg.Zones {
-				// Ensure zone name is FQDN (trailing dot)
-				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
-				cfg.ZoneTransferCIDRs[zoneName] = zc.AllowTransfer
-				allowFallback := true
-				if zc.AllowAXFRFallback != nil {
-					allowFallback = *zc.AllowAXFRFallback
-				}
-				cfg.ZoneAllowAXFRFallback[zoneName] = allowFallback
-			}
-		}
+		wireZoneTransferPolicies(&cfg, loadedCfg.Zones)
 
 		// Wire per-zone allow_update CIDRs from zone config into server config.
 		// Same pattern as ZoneTransferCIDRs; wired here to avoid import cycle.
@@ -288,6 +277,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Catalog reconciliation and admin RPCs share one structured control-plane
+	// logger. Initialize it before secondary startup so initial catalog transfer
+	// and validation decisions are auditable.
+	var controlLogger *logging.Logger
+	if loadedCfg != nil && (loadedCfg.Admin.Enabled || len(loadedCfg.CatalogZones) > 0) {
+		logCfg := loadedCfg.Logging
+		controlLogger, err = logging.NewLogger(logCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating control-plane logger: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Attach event bus for real-time query streaming (256-event buffer).
 	queryBus := eventbus.New(256)
 	srv.SetBus(queryBus)
@@ -360,6 +362,7 @@ func main() {
 				sources,
 				loadedCfg.CatalogStateFile,
 				reservedSecondaries,
+				catalog.NewLoggingAuditSink(controlLogger),
 			)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading catalog state: %v\n", err)
@@ -422,27 +425,16 @@ func main() {
 			TLSClientCAs: loadedCfg.Admin.TLSClientCAs,
 		}
 
-		// Build a logger for admin middleware audit entries.
-		logCfg := logging.DefaultConfig()
-		if loadedCfg != nil {
-			logCfg = loadedCfg.Logging
-		}
-		adminLogger, err := logging.NewLogger(logCfg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating admin logger: %v\n", err)
-			os.Exit(1)
-		}
-
 		// adminSvc is captured from the Register closure and used post-construction
 		// to wire the ConnRegistry (chicken-and-egg: connReg isn't available until after
 		// grpcserver.New returns, but Register runs inside New).
 		var adminSvc *admin.Service
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger, queryBus, catalogRuntime)
+				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), controlLogger, queryBus, catalogRuntime)
 			},
-			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
-			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
+			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(controlLogger)},
+			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(controlLogger)},
 		}
 
 		var connReg *grpcserver.ConnRegistry
@@ -692,6 +684,11 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			MaxTransferBytes:      zc.MaxTransferBytes,
 			AllowAXFRFallback:     true,
 		}
+		transferTLS, err := buildTransferTLS("zone "+zc.Name, zc.TransferTLS)
+		if err != nil {
+			return nil, err
+		}
+		secondaryCfg.TransferTLS = transferTLS
 		if zc.AllowAXFRFallback != nil {
 			secondaryCfg.AllowAXFRFallback = *zc.AllowAXFRFallback
 		}
@@ -715,6 +712,25 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 		result = append(result, secondaryCfg)
 	}
 	return result, nil
+}
+
+func wireZoneTransferPolicies(cfg *server.Config, zones []config.ZoneConfig) {
+	if len(zones) == 0 {
+		return
+	}
+	cfg.ZoneTransferCIDRs = make(map[string][]string, len(zones))
+	cfg.ZoneTransferTLSOnly = make(map[string]bool, len(zones))
+	cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(zones))
+	for _, zoneConfig := range zones {
+		zoneName := strings.ToLower(dns.Fqdn(zoneConfig.Name))
+		cfg.ZoneTransferCIDRs[zoneName] = append([]string(nil), zoneConfig.AllowTransfer...)
+		cfg.ZoneTransferTLSOnly[zoneName] = zoneConfig.TransferTLSOnly
+		allowFallback := true
+		if zoneConfig.AllowAXFRFallback != nil {
+			allowFallback = *zoneConfig.AllowAXFRFallback
+		}
+		cfg.ZoneAllowAXFRFallback[zoneName] = allowFallback
+	}
 }
 
 func buildCatalogConfigs(cfg *config.Config) (
@@ -784,6 +800,11 @@ func catalogTransferConfig(
 		MaxTransferBytes:      configured.MaxTransferBytes,
 		AllowAXFRFallback:     true,
 	}
+	transferTLS, err := buildTransferTLS(label, configured.TransferTLS)
+	if err != nil {
+		return secondary.Config{}, err
+	}
+	result.TransferTLS = transferTLS
 	if configured.AllowAXFRFallback != nil {
 		result.AllowAXFRFallback = *configured.AllowAXFRFallback
 	}
@@ -808,6 +829,44 @@ func catalogTransferConfig(
 		return secondary.Config{}, fmt.Errorf("%s: at least one master is required", label)
 	}
 	return result, nil
+}
+
+func buildTransferTLS(label string, configured *config.TransferTLSConfig) (*tls.Config, error) {
+	if configured == nil {
+		return nil, nil
+	}
+	serverName := strings.TrimSpace(configured.ServerName)
+	if serverName == "" {
+		return nil, fmt.Errorf("%s: transfer_tls.server_name is required", label)
+	}
+	if (configured.CertFile == "") != (configured.KeyFile == "") {
+		return nil, fmt.Errorf("%s: transfer_tls.cert_file and key_file must be configured together", label)
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: serverName,
+		NextProtos: []string{"dot"},
+	}
+	if configured.CAFile != "" {
+		caPEM, err := os.ReadFile(configured.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: read transfer TLS CA file: %w", label, err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("%s: transfer TLS CA file contains no certificates", label)
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if configured.CertFile != "" {
+		certificate, err := tls.LoadX509KeyPair(configured.CertFile, configured.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: load transfer TLS client certificate: %w", label, err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+	return tlsConfig, nil
 }
 
 // loadZonesFromDir scans a directory for source and compiled zone files. A
@@ -901,6 +960,15 @@ func printStats(srv *server.Server) {
 		fmt.Printf("  Answers:    %10d\n", stats.Answers)
 		fmt.Printf("  Errors:     %10d\n", stats.Errors)
 		fmt.Printf("  NXDOMAIN:   %10d\n", stats.NXDOMAIN)
+		if stats.XoTConnections.Active != 0 ||
+			stats.XoTConnections.Accepted != 0 ||
+			stats.XoTConnections.Rejected != 0 {
+			fmt.Printf("  XoT TCP:    %10d active  (%d accepted, %d rejected)\n",
+				stats.XoTConnections.Active,
+				stats.XoTConnections.Accepted,
+				stats.XoTConnections.Rejected,
+			)
+		}
 
 		if stats.Recursive != nil {
 			fmt.Printf("\nRecursive Resolver:\n")
