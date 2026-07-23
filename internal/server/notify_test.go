@@ -14,6 +14,7 @@ type testResponseWriter struct {
 	rcode              int
 	written            bool
 	recursionAvailable bool
+	msg                *dns.Msg
 	remoteAddr         net.Addr
 }
 
@@ -28,6 +29,7 @@ func (t *testResponseWriter) RemoteAddr() net.Addr { return t.remoteAddr }
 func (t *testResponseWriter) WriteMsg(m *dns.Msg) error {
 	t.rcode = m.Rcode
 	t.recursionAvailable = m.RecursionAvailable
+	t.msg = m.Copy()
 	t.written = true
 	return nil
 }

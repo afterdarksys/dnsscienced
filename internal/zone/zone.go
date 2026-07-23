@@ -273,40 +273,37 @@ func (z *Zone) GetRecords(owner string, rrtype uint16) []dns.RR {
 	// (used by Google's resolver and others) resolve correctly.
 	owner = strings.ToLower(owner)
 
-	// Check exact match first
-	if typeMap, ok := z.Records[owner]; ok {
-		if records, ok := typeMap[rrtype]; ok {
-			return records
-		}
+	// An exact owner suppresses wildcard synthesis even when the requested type
+	// is absent (RFC 4592). Empty non-terminals also count as existing names.
+	if z.nameExists(owner) {
+		return z.recordsAt(owner, rrtype)
 	}
 
-	// Check for wildcard match
-	// Example: *.example.com. matches foo.example.com.
+	// Wildcard expansion may use only the wildcard immediately below the
+	// closest encloser. Searching progressively higher wildcards crosses DNS
+	// tree nodes and produces answers forbidden by RFC 4592.
 	labels := dns.SplitDomainName(owner)
-	if len(labels) > 0 {
-		// Try wildcard at each level
-		for i := 0; i < len(labels); i++ {
-			wildcard := "*." + dns.Fqdn(joinLabels(labels[i+1:]))
-			if typeMap, ok := z.Records[wildcard]; ok {
-				if records, ok := typeMap[rrtype]; ok {
-					// Copy records and adjust owner name
-					result := make([]dns.RR, len(records))
-					for j, rr := range records {
-						// Clone and update owner
-						clone := dns.Copy(rr)
-						clone.Header().Name = dns.Fqdn(owner)
-						result[j] = clone
-					}
-					return result
-				}
-			}
+	for i := 1; i < len(labels); i++ {
+		encloser := dns.Fqdn(joinLabels(labels[i:]))
+		if !z.nameExists(encloser) {
+			continue
 		}
+		wildcard := "*." + encloser
+		records := z.recordsAt(wildcard, rrtype)
+		result := make([]dns.RR, len(records))
+		for j, rr := range records {
+			clone := dns.Copy(rr)
+			clone.Header().Name = owner
+			result[j] = clone
+		}
+		return result
 	}
 
 	return nil
 }
 
-// HasName returns true if the owner name exists in the zone (exact or wildcard match)
+// HasName returns true when an exact owner or empty non-terminal exists.
+// Wildcard synthesis does not make the queried owner exist in the zone tree.
 func (z *Zone) HasName(owner string) bool {
 	// WR-06: guard against empty owner to prevent index-out-of-range panic.
 	if len(owner) == 0 {
@@ -317,15 +314,53 @@ func (z *Zone) HasName(owner string) bool {
 	}
 	// DNS names are case-insensitive per RFC 1035 §2.3.3.
 	owner = strings.ToLower(owner)
-	// Check exact match
+	return z.nameExists(owner)
+}
+
+// ExactRecords returns records at an exact owner without wildcard expansion.
+func (z *Zone) ExactRecords(owner string, rrtype uint16) []dns.RR {
+	owner = strings.ToLower(dns.Fqdn(owner))
+	return z.recordsAt(owner, rrtype)
+}
+
+// FindDelegation returns the closest zone cut at or above qname, excluding the
+// zone apex. The returned NS RRset belongs in a referral authority section.
+func (z *Zone) FindDelegation(qname string) (string, []dns.RR) {
+	qname = strings.ToLower(dns.Fqdn(qname))
+	labels := dns.SplitDomainName(qname)
+	for i := 0; i < len(labels); i++ {
+		candidate := dns.Fqdn(joinLabels(labels[i:]))
+		if strings.EqualFold(candidate, z.Origin) {
+			break
+		}
+		if records := z.recordsAt(candidate, dns.TypeNS); len(records) > 0 {
+			return candidate, records
+		}
+	}
+	return "", nil
+}
+
+func (z *Zone) recordsAt(owner string, rrtype uint16) []dns.RR {
+	typeMap, ok := z.Records[owner]
+	if !ok {
+		return nil
+	}
+	if rrtype != dns.TypeANY {
+		return typeMap[rrtype]
+	}
+	var records []dns.RR
+	for _, rrset := range typeMap {
+		records = append(records, rrset...)
+	}
+	return records
+}
+
+func (z *Zone) nameExists(owner string) bool {
 	if _, ok := z.Records[owner]; ok {
 		return true
 	}
-	// Check wildcard match
-	labels := dns.SplitDomainName(owner)
-	for i := 0; i < len(labels); i++ {
-		wildcard := "*." + dns.Fqdn(joinLabels(labels[i+1:]))
-		if _, ok := z.Records[wildcard]; ok {
+	for recordOwner := range z.Records {
+		if !strings.EqualFold(recordOwner, owner) && dns.IsSubDomain(owner, recordOwner) {
 			return true
 		}
 	}
