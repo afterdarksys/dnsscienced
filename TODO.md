@@ -74,7 +74,7 @@ Legend:
   independent client transaction IDs and cancellation.
 - [x] Route recursive cache misses through an operational bounded worker pool and
   expose truthful queue, saturation, and rejection metrics.
-- [ ] Add safe parallel or hedged nameserver queries with cancellation and bounded
+- [x] Add safe parallel or hedged nameserver queries with cancellation and bounded
   fan-out.
 - [x] Wire the existing byte-buffer pools or an equivalent allocation strategy
   into measured production network paths; retain only changes that benchmarks

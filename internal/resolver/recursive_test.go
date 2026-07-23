@@ -84,12 +84,20 @@ func TestNewRecursive_WithDefaults(t *testing.T) {
 	if r.cfg.WorkerQueueSize != 1000 {
 		t.Errorf("WorkerQueueSize = %d, want 1000", r.cfg.WorkerQueueSize)
 	}
+	if r.cfg.NameserverParallelism != 2 {
+		t.Errorf("NameserverParallelism = %d, want 2", r.cfg.NameserverParallelism)
+	}
+	if r.cfg.NameserverHedgeDelay != 25*time.Millisecond {
+		t.Errorf("NameserverHedgeDelay = %v, want 25ms", r.cfg.NameserverHedgeDelay)
+	}
 }
 
 func TestNewRecursiveRejectsInvalidWorkerLimits(t *testing.T) {
 	for _, cfg := range []Config{
 		{Workers: -1},
 		{Workers: 1, WorkerQueueSize: -1},
+		{NameserverParallelism: -1},
+		{NameserverHedgeDelay: -time.Millisecond},
 	} {
 		if _, err := NewRecursive(cfg); err == nil {
 			t.Fatalf("NewRecursive(%+v) succeeded, want validation error", cfg)

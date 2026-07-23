@@ -410,6 +410,8 @@ func TestDistributedExampleConfigsParse(t *testing.T) {
 			assert.Equal(t, 100, cfg.Server.RecursiveConfig.Workers)
 			assert.Equal(t, 1000, cfg.Server.RecursiveConfig.WorkerQueueSize)
 			assert.Equal(t, 2*time.Second, cfg.Server.RecursiveConfig.QueryTimeout)
+			assert.Equal(t, 2, cfg.Server.RecursiveConfig.NameserverParallelism)
+			assert.Equal(t, 25*time.Millisecond, cfg.Server.RecursiveConfig.NameserverHedgeDelay)
 			if name == "config.example.yaml" {
 				assert.Equal(t, 10000, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
 				assert.Equal(t, "json", cfg.Logging.Format)

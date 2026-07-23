@@ -35,6 +35,8 @@ server:
     worker_queue_size: 1000
     query_timeout: 2s
     max_iterations: 20
+    nameserver_parallelism: 2
+    nameserver_hedge_delay: 25ms
     enable_0x20: true
     enable_scrubbing: true
     qname_minimization: true     # QNAME minimization (RFC 7816 / RFC 9156)

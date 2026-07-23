@@ -19,6 +19,8 @@ server:
     worker_queue_size: 1000      # Bounded waiting lookups; excess receives SERVFAIL
     query_timeout: 2s            # Timeout for each authoritative nameserver query
     max_iterations: 20           # Bound iterative/referral processing
+    nameserver_parallelism: 2    # Maximum in-flight authorities per delegation
+    nameserver_hedge_delay: 25ms # Delay before trying a second slow authority
 
     # Security features (cache poisoning resistance)
     enable_0x20: true            # 0x20 encoding (case randomization)
