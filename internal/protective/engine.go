@@ -25,13 +25,11 @@ type Engine struct {
 
 // Statistics tracks protective DNS metrics
 type Statistics struct {
-	mu sync.RWMutex
-
-	QueriesTotal     int64
-	QueriesBlocked   int64
-	QueriesAllowed   int64
+	QueriesTotal      int64
+	QueriesBlocked    int64
+	QueriesAllowed    int64
 	BlockedByCategory map[string]int64
-	LastUpdate       time.Time
+	LastUpdate        time.Time
 }
 
 // NewEngine creates a new Protective DNS engine
@@ -69,35 +67,35 @@ func NewEngine(config experimental.ProtectiveDNSConfig) (*Engine, error) {
 
 // CheckQuery checks if a query should be blocked
 func (e *Engine) CheckQuery(qname string, clientIP net.IP) (*BlockResult, error) {
-	e.stats.mu.Lock()
+	e.mu.Lock()
 	e.stats.QueriesTotal++
-	e.stats.mu.Unlock()
+	e.mu.Unlock()
 
 	// Normalize domain
 	qname = normalizeDomain(qname)
 
 	// Check exemptions
 	if e.isExempt(qname, clientIP) {
-		e.stats.mu.Lock()
+		e.mu.Lock()
 		e.stats.QueriesAllowed++
-		e.stats.mu.Unlock()
+		e.mu.Unlock()
 		return &BlockResult{Blocked: false}, nil
 	}
 
 	// Check blocklist
 	entry, blocked := e.blocklist.GetEntry(qname)
 	if !blocked {
-		e.stats.mu.Lock()
+		e.mu.Lock()
 		e.stats.QueriesAllowed++
-		e.stats.mu.Unlock()
+		e.mu.Unlock()
 		return &BlockResult{Blocked: false}, nil
 	}
 
 	// Domain is blocked
-	e.stats.mu.Lock()
+	e.mu.Lock()
 	e.stats.QueriesBlocked++
 	e.stats.BlockedByCategory[entry.Category]++
-	e.stats.mu.Unlock()
+	e.mu.Unlock()
 
 	// Log block if enabled
 	if e.config.LogBlocks {
@@ -391,8 +389,8 @@ func (e *Engine) logBlock(domain, category string, clientIP net.IP) {
 
 // GetStats returns protective DNS statistics
 func (e *Engine) GetStats() Statistics {
-	e.stats.mu.RLock()
-	defer e.stats.mu.RUnlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	// Create a copy
 	stats := Statistics{
@@ -432,5 +430,5 @@ func (e *Engine) Shutdown() {
 func contains(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 &&
 		(s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr))
+			(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr))
 }
