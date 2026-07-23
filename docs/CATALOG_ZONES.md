@@ -4,6 +4,9 @@ DNSScienced's catalog model implements RFC 9432 schema version 2. Catalog zones
 are parsed as ordinary IN-class DNS zones and then validated as catalogs before
 any reconciliation is planned.
 
+For migration, rollback, backup, disaster recovery, and a complete producer
+zone example, see [Catalog Zone Operations](CATALOG_OPERATIONS.md).
+
 The model recognizes:
 
 - the mandatory single `version.$CATZ TXT "2"` RR;

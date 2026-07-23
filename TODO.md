@@ -222,7 +222,7 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [x] Add catalog parser and reconciliation fuzz tests.
 - [ ] Add interoperability tests with at least BIND, Knot DNS, and PowerDNS catalog
   producers/consumers.
-- [ ] Document configuration, migration, rollback, disaster recovery, and a complete
+- [x] Document configuration, migration, rollback, disaster recovery, and a complete
   RFC 9432 schema-v2 example.
 
 ## ads-httpproxy integration (external repository)
