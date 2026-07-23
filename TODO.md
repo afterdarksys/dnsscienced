@@ -110,8 +110,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Make the x86 SIMD header parser read exactly the 12-byte DNS header, use
   baseline SSE2 instead of assuming optional CPU features, and repair the assembly
   response-header builder's corrupted output pointer.
-- [ ] Add a Linux-only recvmmsg/sendmmsg transport prototype and benchmark complete
-  receive-parse-route-send batches before changing the production listener.
+- [x] Add a bounded Linux-only recvmmsg/sendmmsg transport primitive with reusable
+  packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
+- [ ] Integrate Linux batching into a feature-parity listener only after complete
+  receive-parse-route-send load tests improve throughput and tail latency.
 - [ ] Evaluate XDP/eBPF as a separately deployable cache-hit fast path with explicit
   security-policy parity, cache-coherency, privilege, observability, and portable
   fallback requirements; do not couple it to the portable resolver by default.

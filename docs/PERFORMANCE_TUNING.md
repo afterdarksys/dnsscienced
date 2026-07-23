@@ -129,6 +129,25 @@ XDP/eBPF is a separate deployment architecture: it needs cache-coherency,
 policy-parity, privilege, observability, and fallback designs before code is
 attached to a network interface.
 
+## Measured Linux UDP batching
+
+The experimental `UDPBatchConn` uses the Go `x/net` wrappers that issue
+`recvmmsg` and `sendmmsg` on Linux. It bounds batches at 256 datagrams, defaults
+to 64, reuses receive storage, reports truncation, and has IPv4 and IPv6
+loopback coverage.
+
+In a Linux/amd64 Docker loopback benchmark on an Intel i9-9880H:
+
+| Operation | Conventional syscalls | Batched syscall | Observed change |
+|---|---:|---:|---:|
+| Receive 64-byte datagrams | 23.7–26.9 MB/s | 29.3–30.6 MB/s | about 10–29% higher |
+| Send 64 datagrams per operation | 28.0–28.4 MB/s | 38.6–39.8 MB/s | about 37–42% higher |
+
+The receive generator queued only about 1.6 datagrams per `recvmmsg` call, so
+this is evidence to retain the prototype, not a production capacity claim.
+Promotion requires a real Linux NIC/RSS setup, one socket per fixed worker,
+full request processing, security-policy equivalence, and p99/p99.9 results.
+
 ## Measured cache eviction
 
 The per-shard indexed expiry heap replaces a full map scan at capacity. On the
