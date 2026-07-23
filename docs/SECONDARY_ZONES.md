@@ -15,10 +15,16 @@ zones:
   - name: "secondary.example."
     type: "secondary"
     masters:
-      - "192.0.2.10:53"
-      - "[2001:db8::10]:53"
+      - "192.0.2.10:853"
+      - "[2001:db8::10]:853"
     transfer_source: "192.0.2.20"
     transfer_tsig_key: "secondary-xfer.example."
+    transfer_tls:
+      server_name: "primary.example.net"
+      ca_file: "/etc/dnsscienced/tls/transfer-ca.pem"
+      # Optional: configure both fields for mutual TLS.
+      cert_file: "/etc/dnsscienced/tls/secondary.pem"
+      key_file: "/etc/dnsscienced/tls/secondary-key.pem"
     allow_axfr_fallback: true
     min_refresh_time: 5m
     max_refresh_time: 24h
@@ -26,10 +32,24 @@ zones:
     max_retry_time: 1h
 ```
 
-`masters` is required. A missing port defaults to 53. Master hostnames are
+`masters` is required. A missing port defaults to 53 for TCP transfers and to
+the RFC 9103 port 853 when `transfer_tls` is configured. Master hostnames are
 resolved at startup and their addresses form the inbound NOTIFY allowlist.
 Using fixed IP addresses avoids DNS-dependent startup and makes authorization
 changes explicit.
+
+`transfer_tls` enables strict RFC 9103 AXFR/IXFR over TLS. DNSScienced requires
+TLS 1.3 or later, requires the peer to select ALPN `dot`, verifies
+`server_name`, and never falls back to a cleartext transfer. `ca_file` selects
+an explicit private trust store; when omitted, the operating system trust store
+is used. Configure both `cert_file` and `key_file` to present a client identity
+for mutual TLS. There is intentionally no certificate-verification bypass.
+
+TSIG remains required by default even with TLS. This authenticates transfer
+requests at the DNS message layer and also secures UDP NOTIFY, while TLS
+protects transfer confidentiality and authenticates the channel. Keep the same
+strict XoT policy for AXFR and IXFR on every primary and secondary in the
+transfer group.
 
 `transfer_tsig_key` is required by default:
 

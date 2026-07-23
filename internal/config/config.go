@@ -162,8 +162,9 @@ type ZoneConfig struct {
 	PersistUpdates *bool    `yaml:"persist_updates,omitempty"`  // nil/false = in-memory only; true = write-back to zone file (D-11)
 
 	// Zone transfer options (for secondary zones)
-	TransferSource  string `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
-	TransferTSIGKey string `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
+	TransferSource  string             `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
+	TransferTSIGKey string             `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
+	TransferTLS     *TransferTLSConfig `yaml:"transfer_tls,omitempty"`
 	// AllowUnsignedTransfer is an explicit compatibility escape hatch for
 	// secondaries whose primary cannot authenticate AXFR/IXFR and RFC 1996
 	// NOTIFY with TSIG. The secure default is false.
@@ -198,21 +199,32 @@ type ZoneConfig struct {
 	DSYNC *ZoneDSYNCConfig `yaml:"dsync,omitempty"`
 }
 
+// TransferTLSConfig enables strict RFC 9103 XFR-over-TLS. The server name is
+// always verified; there is deliberately no insecure or cleartext fallback
+// option. Supplying the client certificate and key enables mutual TLS.
+type TransferTLSConfig struct {
+	ServerName string `yaml:"server_name"`
+	CAFile     string `yaml:"ca_file,omitempty"`
+	CertFile   string `yaml:"cert_file,omitempty"`
+	KeyFile    string `yaml:"key_file,omitempty"`
+}
+
 // CatalogTransferConfig is the shared authenticated-secondary policy used for
 // a catalog zone and for member defaults/group overrides.
 type CatalogTransferConfig struct {
-	Masters               []string      `yaml:"masters"`
-	TransferSource        string        `yaml:"transfer_source,omitempty"`
-	TransferTSIGKey       string        `yaml:"transfer_tsig_key,omitempty"`
-	AllowUnsignedTransfer bool          `yaml:"allow_unsigned_transfer,omitempty"`
-	RefreshInterval       time.Duration `yaml:"refresh_interval,omitempty"`
-	AllowAXFRFallback     *bool         `yaml:"allow_axfr_fallback,omitempty"`
-	MaxRefreshTime        time.Duration `yaml:"max_refresh_time,omitempty"`
-	MinRefreshTime        time.Duration `yaml:"min_refresh_time,omitempty"`
-	MaxRetryTime          time.Duration `yaml:"max_retry_time,omitempty"`
-	MinRetryTime          time.Duration `yaml:"min_retry_time,omitempty"`
-	MaxTransferRecords    int           `yaml:"max_transfer_records,omitempty"`
-	MaxTransferBytes      int64         `yaml:"max_transfer_bytes,omitempty"`
+	Masters               []string           `yaml:"masters"`
+	TransferSource        string             `yaml:"transfer_source,omitempty"`
+	TransferTSIGKey       string             `yaml:"transfer_tsig_key,omitempty"`
+	TransferTLS           *TransferTLSConfig `yaml:"transfer_tls,omitempty"`
+	AllowUnsignedTransfer bool               `yaml:"allow_unsigned_transfer,omitempty"`
+	RefreshInterval       time.Duration      `yaml:"refresh_interval,omitempty"`
+	AllowAXFRFallback     *bool              `yaml:"allow_axfr_fallback,omitempty"`
+	MaxRefreshTime        time.Duration      `yaml:"max_refresh_time,omitempty"`
+	MinRefreshTime        time.Duration      `yaml:"min_refresh_time,omitempty"`
+	MaxRetryTime          time.Duration      `yaml:"max_retry_time,omitempty"`
+	MinRetryTime          time.Duration      `yaml:"min_retry_time,omitempty"`
+	MaxTransferRecords    int                `yaml:"max_transfer_records,omitempty"`
+	MaxTransferBytes      int64              `yaml:"max_transfer_bytes,omitempty"`
 }
 
 // CatalogZoneConfig defines one private RFC 9432 catalog secondary and the

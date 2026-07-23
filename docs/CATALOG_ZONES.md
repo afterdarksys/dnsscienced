@@ -39,6 +39,10 @@ unsigned transfer requires an explicit `allow_unsigned_transfer: true` at the
 specific catalog, default-member, or group boundary. Catalog zones remain
 private and are never answered from the authoritative zone store.
 
+Each transfer boundary can also set `transfer_tls` for strict RFC 9103
+confidentiality. It enforces TLS 1.3+, ALPN `dot`, primary-name verification,
+and no cleartext fallback. A missing master port defaults to 853 under TLS.
+
 ```yaml
 catalog_state_file: /var/lib/dnsscienced/catalog-state.json
 
@@ -51,6 +55,9 @@ catalog_zones:
   - name: catalog.example.
     masters: [192.0.2.10]
     transfer_tsig_key: catalog-xfer.example.
+    transfer_tls:
+      server_name: catalog-primary.example.
+      ca_file: /etc/dnsscienced/tls/catalog-ca.pem
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
     max_members: 100000
@@ -66,11 +73,17 @@ catalog_zones:
     member_defaults:
       masters: [192.0.2.20]
       transfer_tsig_key: catalog-xfer.example.
+      transfer_tls:
+        server_name: member-primary.example.
+        ca_file: /etc/dnsscienced/tls/member-ca.pem
 
     groups:
       blue:
         masters: [192.0.2.21, 192.0.2.22]
         transfer_tsig_key: catalog-xfer.example.
+        transfer_tls:
+          server_name: blue-primary.example.
+          ca_file: /etc/dnsscienced/tls/member-ca.pem
 ```
 
 Each `group` key matches the concatenated character-strings of one RFC 9432

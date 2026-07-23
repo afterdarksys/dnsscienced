@@ -71,7 +71,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Implement DNS over QUIC (RFC 9250); the experimental configuration stub is
   not an operational listener.
 - [ ] Implement Oblivious DoH (RFC 9230).
-- [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103).
+- [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103):
+  strict TLS 1.3 outbound AXFR/IXFR with ALPN, server authentication, optional
+  mTLS, and no cleartext fallback is complete; primary-side XoT and QUIC remain.
 - [x] Add configurable query-complexity admission scoring before policy,
   authoritative, and recursive processing, with Prometheus rejection counters.
 - [x] Add bounded adaptive IP-reputation admission limits with lazy score decay,
@@ -200,7 +202,8 @@ fleet-scale policy, operations, interoperability, and producer support.
 
 - [x] Require authenticated catalog transfers and authenticated DNS UPDATE by
   default.
-- [ ] Support confidential catalog transfer using RFC 9103.
+- [x] Support confidential catalog and catalog-member transfer using strict
+  RFC 9103 TLS 1.3 with optional mTLS and no cleartext fallback.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.

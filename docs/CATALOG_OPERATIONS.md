@@ -46,10 +46,13 @@ tsig_keys:
 catalog_zones:
   - name: catalog-east.example.
     masters:
-      - 192.0.2.10:53
-      - 192.0.2.11:53
+      - 192.0.2.10:853
+      - 192.0.2.11:853
     transfer_source: 192.0.2.53
     transfer_tsig_key: catalog-transfer.example.
+    transfer_tls:
+      server_name: catalog-primary.example.
+      ca_file: /etc/dnsscienced/tls/catalog-ca.pem
     refresh_interval: 5m
     min_refresh_time: 30s
     max_refresh_time: 1h
@@ -75,9 +78,12 @@ catalog_zones:
 
     member_defaults:
       masters:
-        - 192.0.2.20:53
-        - 192.0.2.21:53
+        - 192.0.2.20:853
+        - 192.0.2.21:853
       transfer_tsig_key: standard-members.example.
+      transfer_tls:
+        server_name: member-primary.example.
+        ca_file: /etc/dnsscienced/tls/member-ca.pem
       min_refresh_time: 1m
       max_refresh_time: 12h
       min_retry_time: 30s
@@ -88,9 +94,14 @@ catalog_zones:
     groups:
       regulated:
         masters:
-          - 192.0.2.30:53
-          - 192.0.2.31:53
+          - 192.0.2.30:853
+          - 192.0.2.31:853
         transfer_tsig_key: regulated-members.example.
+        transfer_tls:
+          server_name: regulated-primary.example.
+          ca_file: /etc/dnsscienced/tls/member-ca.pem
+          cert_file: /etc/dnsscienced/tls/catalog-secondary.pem
+          key_file: /etc/dnsscienced/tls/catalog-secondary-key.pem
         min_refresh_time: 30s
         max_refresh_time: 1h
         min_retry_time: 10s
@@ -107,6 +118,12 @@ install -d -m 0750 -o dnsscienced -g dnsscienced /var/lib/dnsscienced
 ```
 
 DNSScienced writes the state file atomically with mode `0600`.
+
+The example uses strict RFC 9103 transfer TLS throughout the transfer group.
+DNSScienced requires TLS 1.3+, verifies each configured primary name, requires
+ALPN `dot`, and never falls back to cleartext. The regulated group also
+presents a client certificate for mutual TLS. TSIG remains configured because
+it authenticates DNS messages and the UDP NOTIFY path as well as transfers.
 
 ## Complete RFC 9432 schema-v2 zone
 

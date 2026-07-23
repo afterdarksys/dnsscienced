@@ -330,6 +330,11 @@ zones:
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
     transfer_tsig_key: "secondary-xfer.example."
+    transfer_tls:
+      server_name: "primary.example.net"
+      ca_file: "/etc/dnsscienced/tls/transfer-ca.pem"
+      cert_file: "/etc/dnsscienced/tls/secondary.pem"
+      key_file: "/etc/dnsscienced/tls/secondary-key.pem"
     allow_unsigned_transfer: true
     refresh_interval: 3600s
 
@@ -399,6 +404,11 @@ zones:
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
 	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
+	require.NotNil(t, secondaryZone.TransferTLS)
+	assert.Equal(t, "primary.example.net", secondaryZone.TransferTLS.ServerName)
+	assert.Equal(t, "/etc/dnsscienced/tls/transfer-ca.pem", secondaryZone.TransferTLS.CAFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/secondary.pem", secondaryZone.TransferTLS.CertFile)
+	assert.Equal(t, "/etc/dnsscienced/tls/secondary-key.pem", secondaryZone.TransferTLS.KeyFile)
 	assert.True(t, secondaryZone.AllowUnsignedTransfer)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 

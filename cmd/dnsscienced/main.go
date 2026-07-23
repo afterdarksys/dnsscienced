@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"net"
@@ -695,6 +697,11 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			MaxTransferBytes:      zc.MaxTransferBytes,
 			AllowAXFRFallback:     true,
 		}
+		transferTLS, err := buildTransferTLS("zone "+zc.Name, zc.TransferTLS)
+		if err != nil {
+			return nil, err
+		}
+		secondaryCfg.TransferTLS = transferTLS
 		if zc.AllowAXFRFallback != nil {
 			secondaryCfg.AllowAXFRFallback = *zc.AllowAXFRFallback
 		}
@@ -787,6 +794,11 @@ func catalogTransferConfig(
 		MaxTransferBytes:      configured.MaxTransferBytes,
 		AllowAXFRFallback:     true,
 	}
+	transferTLS, err := buildTransferTLS(label, configured.TransferTLS)
+	if err != nil {
+		return secondary.Config{}, err
+	}
+	result.TransferTLS = transferTLS
 	if configured.AllowAXFRFallback != nil {
 		result.AllowAXFRFallback = *configured.AllowAXFRFallback
 	}
@@ -811,6 +823,44 @@ func catalogTransferConfig(
 		return secondary.Config{}, fmt.Errorf("%s: at least one master is required", label)
 	}
 	return result, nil
+}
+
+func buildTransferTLS(label string, configured *config.TransferTLSConfig) (*tls.Config, error) {
+	if configured == nil {
+		return nil, nil
+	}
+	serverName := strings.TrimSpace(configured.ServerName)
+	if serverName == "" {
+		return nil, fmt.Errorf("%s: transfer_tls.server_name is required", label)
+	}
+	if (configured.CertFile == "") != (configured.KeyFile == "") {
+		return nil, fmt.Errorf("%s: transfer_tls.cert_file and key_file must be configured together", label)
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: serverName,
+		NextProtos: []string{"dot"},
+	}
+	if configured.CAFile != "" {
+		caPEM, err := os.ReadFile(configured.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: read transfer TLS CA file: %w", label, err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("%s: transfer TLS CA file contains no certificates", label)
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if configured.CertFile != "" {
+		certificate, err := tls.LoadX509KeyPair(configured.CertFile, configured.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: load transfer TLS client certificate: %w", label, err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+	return tlsConfig, nil
 }
 
 // loadZonesFromDir scans a directory for source and compiled zone files. A
