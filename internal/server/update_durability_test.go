@@ -157,3 +157,98 @@ func TestConcurrentUpdatesDoNotLoseCommittedRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestConcurrentTSIGReplayReturnsOriginalResultWithoutReapplying(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	expected := s.GetZone("example.com.").Clone()
+	if err := expected.IncrementSerial(); err != nil {
+		t.Fatal(err)
+	}
+	added, err := dns.NewRR("replay-safe.example.com. 300 IN A 192.0.2.82")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := makeUpdateMsg("example.com.", nil, []dns.RR{added})
+	request.IsTsig().MAC = "9f84f4f86a6a9dcfd8e62cf4a2d7bd6f50d5c91e5c0be0cc59db2d8f58ecf59e"
+	request.IsTsig().MACSize = 32
+
+	const duplicates = 32
+	start := make(chan struct{})
+	results := make(chan int, duplicates)
+	var wg sync.WaitGroup
+	for i := 0; i < duplicates; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			writer := newAXFRTestWriter("192.0.2.1")
+			s.handleUpdate(writer, request.Copy(), net.ParseIP("192.0.2.1"))
+			if len(writer.msgs) != 1 {
+				results <- -1
+				return
+			}
+			results <- writer.msgs[0].Rcode
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for rcode := range results {
+		if rcode != dns.RcodeSuccess {
+			t.Fatalf("duplicate response rcode = %d, want NOERROR", rcode)
+		}
+	}
+
+	live := s.GetZone("example.com.")
+	if live.SOA.Serial != expected.SOA.Serial {
+		t.Fatalf("serial = %d, want exactly one application (%d)", live.SOA.Serial, expected.SOA.Serial)
+	}
+	if got := live.GetRecords("replay-safe.example.com.", dns.TypeA); len(got) != 1 {
+		t.Fatalf("records = %v, want one replay-safe A record", got)
+	}
+	if got := s.GetStats().UpdateReplays; got != duplicates-1 {
+		t.Fatalf("update replays = %d, want %d", got, duplicates-1)
+	}
+}
+
+func TestUpdateReplayCacheSaturationFailsClosed(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	s.updateReplay = newUpdateReplayCache(1)
+
+	first := makeUpdateMsg("example.com.", nil, []dns.RR{
+		makeAddRR("first.example.com.", "192.0.2.83"),
+	})
+	first.IsTsig().MAC = "aaaaaaaa"
+	first.IsTsig().MACSize = 4
+	firstWriter := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(firstWriter, first, net.ParseIP("192.0.2.1"))
+	if len(firstWriter.msgs) != 1 || firstWriter.msgs[0].Rcode != dns.RcodeSuccess {
+		t.Fatalf("first response = %+v, want NOERROR", firstWriter.msgs)
+	}
+
+	second := makeUpdateMsg("example.com.", nil, []dns.RR{
+		makeAddRR("blocked.example.com.", "192.0.2.84"),
+	})
+	second.IsTsig().MAC = "bbbbbbbb"
+	second.IsTsig().MACSize = 4
+	secondWriter := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(secondWriter, second, net.ParseIP("192.0.2.1"))
+	if len(secondWriter.msgs) != 1 || secondWriter.msgs[0].Rcode != dns.RcodeServerFailure {
+		t.Fatalf("saturated response = %+v, want SERVFAIL", secondWriter.msgs)
+	}
+	if got := s.GetZone("example.com.").GetRecords("blocked.example.com.", dns.TypeA); len(got) != 0 {
+		t.Fatalf("saturated cache allowed mutation: %v", got)
+	}
+	if got := s.GetStats().UpdateReplayFull; got != 1 {
+		t.Fatalf("replay cache saturation count = %d, want 1", got)
+	}
+}

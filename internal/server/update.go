@@ -157,24 +157,30 @@ func containsRRValue(records []dns.RR, candidate dns.RR, zoneClass uint16) bool 
 //
 // Guard chain (each failure returns immediately with the specified rcode):
 //  1. TSIG presence (D-16): absent TSIG → NOTAUTH (rcode 9)
-//  2. TSIG validity (D-16): bad/replayed TSIG → NOTAUTH
+//  2. TSIG validity (D-16): bad key/MAC/time → NOTAUTH
 //  3. Empty Zone section guard → FORMERR
 //  4. Zone lookup: unknown zone → REFUSED
 //  5. Per-zone TSIG identity authorization: absent/unlisted key → REFUSED
 //  6. ACL check (D-15, D-17): nil ACL (no allow_update) or IP not allowed → REFUSED
 //  7. Zone containment: out-of-zone prerequisite/update owner → NOTZONE
-//  8. Lock the stable server mutation boundary and re-read the live zone
-//  9. Evaluate prerequisites (r.Answer) against live zone
-//  10. Clone live zone
-//  11. Apply Update section (r.Ns) to clone
-//  12. clone.Validate() → SERVFAIL on failure
-//  13. clone.IncrementSerial()
-//  14. Durably persist when configured
-//  15. Atomic swap: s.cfg.Zones[zoneName] = clone
-//  16. Reply NOERROR
+//  8. Reserve the authenticated request MAC; coalesce exact replays
+//  9. Lock the stable server mutation boundary and re-read the live zone
+//  10. Evaluate prerequisites (r.Answer) against live zone
+//  11. Clone live zone
+//  12. Apply Update section (r.Ns) to clone
+//  13. clone.Validate() → SERVFAIL on failure
+//  14. clone.IncrementSerial()
+//  15. Durably persist when configured
+//  16. Atomic swap: s.cfg.Zones[zoneName] = clone
+//  17. Reply NOERROR
 func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
+	var replayReservation *updateReplayEntry
 	// Local helper to send an error rcode without the pooled message path.
 	sendRcode := func(rcode int) {
+		if replayReservation != nil {
+			s.updateReplay.finishUpdate(replayReservation, rcode)
+			replayReservation = nil
+		}
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Rcode = rcode
@@ -192,7 +198,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 2. TSIG validity check (D-16): bad key, bad sig, replay attack.
+	// 2. TSIG validity check (D-16): bad key, MAC, time, or truncation.
 	if w.TsigStatus() != nil {
 		sendRcode(dns.RcodeNotAuth)
 		return
@@ -252,7 +258,32 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		}
 	}
 
-	// 8. Serialize against every zone-map mutation using a lock owned by the
+	// RFC 2136 §5 permits duplicate delivery and explicitly identifies malicious
+	// duplication as a replay attack. TSIG's time window rejects old packets but
+	// permits an exact captured request during the Fudge interval. Reserve the
+	// authenticated request MAC before mutation. A duplicate waits for the first
+	// transaction and receives its rcode without applying the UPDATE again.
+	entry, duplicate, saturated := s.updateReplay.beginUpdate(reqTSIG, time.Now())
+	if duplicate {
+		s.updateReplays.Add(1)
+		updateReplaysTotal.Inc()
+		sendRcode(entry.wait())
+		return
+	}
+	if saturated {
+		s.updateReplayFull.Add(1)
+		updateReplaySaturatedTotal.Inc()
+		sendRcode(dns.RcodeServerFailure)
+		return
+	}
+	replayReservation = entry
+	defer func() {
+		if replayReservation != nil {
+			s.updateReplay.finishUpdate(replayReservation, dns.RcodeServerFailure)
+		}
+	}()
+
+	// 9. Serialize against every zone-map mutation using a lock owned by the
 	// server rather than by the Zone object. A successful UPDATE replaces that
 	// object, so locking z.updateMu would allow requests that captured the old
 	// pointer to overwrite a newer generation. Re-read after locking to make
@@ -272,7 +303,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 9. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
+	// 10. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
 	// Evaluated against the LIVE zone (before cloning) so that concurrent updates
 	// are correctly serialized.  Any failure → return error rcode; zero updates applied (D-03).
 	if rcode, ok := evaluatePrereqs(r.Answer, z); !ok {
@@ -280,11 +311,11 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 10. Clone the live zone. All mutations are applied to the clone only.
+	// 11. Clone the live zone. All mutations are applied to the clone only.
 	// The live zone remains readable and consistent until the atomic swap (D-05, T-13-07).
 	clone := z.Clone()
 
-	// 11. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
+	// 12. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
 	for _, rr := range r.Ns {
 		hdr := rr.Header()
 		owner := strings.ToLower(hdr.Name)
@@ -393,20 +424,20 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		}
 	}
 
-	// 12. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
+	// 13. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
 	// If validation fails the live zone is untouched (no swap).
 	if err := clone.Validate(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 13. Auto-increment serial (D-09).
+	// 14. Auto-increment serial (D-09).
 	if err := clone.IncrementSerial(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 14. For a persistent primary, make the replacement durable before it can
+	// 15. For a persistent primary, make the replacement durable before it can
 	// be published or acknowledged. A write, fsync, rename, and directory fsync
 	// form the commit boundary. Failure leaves the live zone and IXFR journal
 	// untouched and returns SERVFAIL.
@@ -416,7 +447,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 15. Atomic swap: replace the live zone with the validated,
+	// 16. Atomic swap: replace the live zone with the validated,
 	// serial-incremented clone (D-05, DYNUP-04).
 	s.ixfrJournal.Record(z, clone)
 	s.zonesMu.Lock()
@@ -425,13 +456,17 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	s.persistMu.Unlock()
 	mutationLocked = false
 
-	// 16. Reply NOERROR.
+	// 17. Reply NOERROR.
 	// CR-04: RFC 2845 §3.2 requires the response to be TSIG-signed when the request was
 	// TSIG-authenticated. Sign using the same key that authenticated the request.
 	m := new(dns.Msg)
 	m.SetReply(r)
 	if reqTsig := r.IsTsig(); reqTsig != nil {
 		m.SetTsig(reqTsig.Hdr.Name, reqTsig.Algorithm, reqTsig.Fudge, time.Now().Unix())
+	}
+	if replayReservation != nil {
+		s.updateReplay.finishUpdate(replayReservation, dns.RcodeSuccess)
+		replayReservation = nil
 	}
 	w.WriteMsg(m) //nolint:errcheck
 

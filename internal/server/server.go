@@ -105,6 +105,10 @@ type Config struct {
 	// send RFC 2136 UPDATE. Empty/absent = deny all.
 	ZoneUpdateTSIGKeys map[string][]string `yaml:"-"`
 
+	// UpdateReplayCacheSize bounds remembered authenticated UPDATE request MACs.
+	// Zero selects the secure default. Entries expire with the request TSIG.
+	UpdateReplayCacheSize int `yaml:"update_replay_cache_size"`
+
 	// PersistPaths maps zone FQDN origin to the .dnszone file path for write-back
 	// after a successful RFC 2136 UPDATE (D-11, D-13).
 	// Populated by main.go from config.ZoneConfig.PersistUpdates + File.
@@ -163,9 +167,10 @@ func DefaultConfig() Config {
 	rcfg.MaxIterations = 20
 
 	return Config{
-		UDPAddr:      ":53",
-		TCPAddr:      ":53",
-		UDPListeners: runtime.NumCPU(),
+		UDPAddr:               ":53",
+		TCPAddr:               ":53",
+		UDPListeners:          runtime.NumCPU(),
+		UpdateReplayCacheSize: defaultUpdateReplayCacheSize,
 
 		// Recursion is opt-in. When enabled without an explicit ACL, New limits it
 		// to loopback clients so a default deployment cannot become an open resolver.
@@ -229,6 +234,7 @@ type Server struct {
 	ixfrJournal      *zone.Journal
 	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
 	persistMu        sync.Mutex        // Stable linearization boundary for all zone-map mutations and durable UPDATE commits.
+	updateReplay     *updateReplayCache
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -253,6 +259,8 @@ type Server struct {
 	udpQueries         atomic.Uint64
 	tcpQueries         atomic.Uint64
 	complexityRejected atomic.Uint64
+	updateReplays      atomic.Uint64
+	updateReplayFull   atomic.Uint64
 
 	// Lifecycle
 	ctx    context.Context
@@ -267,6 +275,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
 		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
+	}
+	if cfg.UpdateReplayCacheSize == 0 {
+		cfg.UpdateReplayCacheSize = defaultUpdateReplayCacheSize
+	}
+	if cfg.UpdateReplayCacheSize < 1 || cfg.UpdateReplayCacheSize > 16_777_216 {
+		return nil, fmt.Errorf("update_replay_cache_size must be zero (default) or between 1 and 16777216 (got %d)", cfg.UpdateReplayCacheSize)
 	}
 	if err := cfg.TCPProtection.Validate(); err != nil {
 		return nil, err
@@ -284,11 +298,12 @@ func New(cfg Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		cfg:         cfg,
-		ctx:         ctx,
-		cancel:      cancel,
-		ixfrJournal: zone.NewJournal(100),
-		reputation:  clientReputation,
+		cfg:          cfg,
+		ctx:          ctx,
+		cancel:       cancel,
+		ixfrJournal:  zone.NewJournal(100),
+		reputation:   clientReputation,
+		updateReplay: newUpdateReplayCache(cfg.UpdateReplayCacheSize),
 	}
 
 	// Initialize recursive resolver if enabled
@@ -1615,6 +1630,8 @@ type Stats struct {
 	UDPQueries         uint64
 	TCPQueries         uint64
 	ComplexityRejected uint64
+	UpdateReplays      uint64
+	UpdateReplayFull   uint64
 
 	ClientReputation reputation.Stats
 	TCPConnections   transport.TCPConnectionStats
@@ -1635,6 +1652,8 @@ func (s *Server) GetStats() Stats {
 		UDPQueries:         s.udpQueries.Load(),
 		TCPQueries:         s.tcpQueries.Load(),
 		ComplexityRejected: s.complexityRejected.Load(),
+		UpdateReplays:      s.updateReplays.Load(),
+		UpdateReplayFull:   s.updateReplayFull.Load(),
 	}
 	if s.reputation != nil {
 		stats.ClientReputation = s.reputation.Stats()

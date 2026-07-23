@@ -12,6 +12,14 @@ import (
 	"github.com/miekg/dns"
 )
 
+func TestNewRejectsInvalidUpdateReplayCacheSize(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.UpdateReplayCacheSize = -1
+	if _, err := New(cfg); err == nil {
+		t.Fatal("New accepted a negative update_replay_cache_size")
+	}
+}
+
 // testServerWithUpdate creates a minimal Server configured for UPDATE testing.
 // allowUpdate is the CIDR list for example.com.; pass nil for no-entry,
 // []string{} for empty-entry (deny-all, D-15), or real CIDRs.

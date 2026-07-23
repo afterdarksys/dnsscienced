@@ -34,6 +34,19 @@ invariants are validated, the SOA serial is advanced, and the replacement is
 published atomically. A failed prerequisite or invalid mutation leaves the live
 zone unchanged. Successful responses are signed with the request key.
 
+Authenticated UPDATE request MACs are remembered until their TSIG validity
+window expires. Exact duplicates—including concurrent delivery and replay
+within TSIG's normal clock-skew allowance—wait for the original transaction and
+receive its response code without applying the mutation or advancing the SOA
+serial again. The sharded replay cache defaults to 65,536 entries and can be
+tuned with `server.update_replay_cache_size`. Size it above the maximum number
+of authenticated UPDATEs expected during the largest allowed TSIG window. If
+every slot is still valid, new UPDATEs fail closed with SERVFAIL rather than
+evicting replay protection. `UpdateReplays` and `UpdateReplayFull` server
+statistics plus the `dnsscienced_update_replays_total` and
+`dnsscienced_update_replay_cache_saturated_total` Prometheus counters expose
+duplicates and saturation.
+
 When `persist_updates` is true, the validated replacement is written to the
 configured zone file before it is published or acknowledged. DNSScienced
 writes and synchronizes a mode-`0600` temporary file, atomically renames it,
