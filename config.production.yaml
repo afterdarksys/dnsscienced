@@ -5,6 +5,21 @@ server:
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4
 
+  # Encrypted DNS listeners are opt-in and require a certificate/key pair.
+  doh:
+    enabled: false
+    address: "0.0.0.0:443"
+    path: "/dns-query"
+    cert_file: "/run/secrets/dns_tls_cert.pem"
+    key_file: "/run/secrets/dns_tls_key.pem"
+    timeout: 5s
+  dot:
+    enabled: false
+    address: "0.0.0.0:853"
+    cert_file: "/run/secrets/dns_tls_cert.pem"
+    key_file: "/run/secrets/dns_tls_key.pem"
+    timeout: 5s
+
   # Enable modes
   enable_authoritative: true
   enable_recursive: true

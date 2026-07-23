@@ -24,6 +24,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/transport"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
@@ -33,8 +34,10 @@ import (
 // Config holds DNS server configuration
 type Config struct {
 	// Listen addresses
-	UDPAddr string `yaml:"udp_addr"`
-	TCPAddr string `yaml:"tcp_addr"`
+	UDPAddr string              `yaml:"udp_addr"`
+	TCPAddr string              `yaml:"tcp_addr"`
+	DoH     transport.DoHConfig `yaml:"doh"`
+	DoT     transport.DoTConfig `yaml:"dot"`
 
 	// Number of UDP listeners (SO_REUSEPORT)
 	// Set to runtime.NumCPU() for maximum performance
@@ -196,6 +199,8 @@ type Server struct {
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
 	tcpServer  *dns.Server
+	dohServer  *transport.DoHListener
+	dotServer  *transport.DoTListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -434,11 +439,41 @@ func New(cfg Config) (*Server, error) {
 		TsigProvider: s.tsigKeyRing,
 	}
 
+	if cfg.DoH.Enabled {
+		var err error
+		s.dohServer, err = transport.NewDoHListener(cfg.DoH, s)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init DNS-over-HTTPS listener: %w", err)
+		}
+	}
+	if cfg.DoT.Enabled {
+		var err error
+		s.dotServer, err = transport.NewDoTListener(cfg.DoT, s)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init DNS-over-TLS listener: %w", err)
+		}
+	}
+
 	return s, nil
 }
 
 // Start starts all DNS listeners
 func (s *Server) Start() error {
+	if s.dohServer != nil {
+		if err := s.dohServer.Start(); err != nil {
+			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
+		}
+	}
+	if s.dotServer != nil {
+		if err := s.dotServer.Start(); err != nil {
+			if s.dohServer != nil {
+				_ = s.dohServer.Stop()
+			}
+			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
+		}
+	}
 	// Start UDP listeners (SO_REUSEPORT)
 	for i, udpServer := range s.udpServers {
 		i := i
@@ -477,6 +512,16 @@ func (s *Server) Stop() error {
 
 	// Cancel context
 	s.cancel()
+	if s.dohServer != nil {
+		if err := s.dohServer.Stop(); err != nil {
+			fmt.Printf("Error shutting down DNS-over-HTTPS listener: %v\n", err)
+		}
+	}
+	if s.dotServer != nil {
+		if err := s.dotServer.Stop(); err != nil {
+			fmt.Printf("Error shutting down DNS-over-TLS listener: %v\n", err)
+		}
+	}
 
 	// Shutdown all UDP servers
 	for i, udpServer := range s.udpServers {
@@ -564,6 +609,55 @@ func (s *Server) SetBus(b *eventbus.Bus) {
 // GetEventBus returns the server's event bus (may be nil if not configured).
 func (s *Server) GetEventBus() *eventbus.Bus {
 	return s.bus
+}
+
+// HandleDNS adapts the core DNS handler to encrypted transports. The source
+// address is preserved so recursion, update, transfer, firewall, and RRL ACLs
+// behave exactly as they do on port 53.
+func (s *Server) HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("nil DNS request")
+	}
+	w := &messageResponseWriter{remoteAddr: remoteAddr}
+	// The encrypted transport adapters do not currently retain the original
+	// TSIG wire image. Fail closed for signed operations rather than treating an
+	// unverified signature as valid.
+	if req.IsTsig() != nil {
+		w.tsigStatus = fmt.Errorf("TSIG verification unavailable on encrypted transport")
+	}
+	s.handleDNS(w, req)
+	if w.msg == nil {
+		return nil, fmt.Errorf("DNS request produced no response")
+	}
+	return w.msg, nil
+}
+
+type messageResponseWriter struct {
+	remoteAddr net.Addr
+	msg        *dns.Msg
+	tsigStatus error
+}
+
+func (w *messageResponseWriter) LocalAddr() net.Addr  { return &net.TCPAddr{} }
+func (w *messageResponseWriter) RemoteAddr() net.Addr { return w.remoteAddr }
+func (w *messageResponseWriter) Close() error         { return nil }
+func (w *messageResponseWriter) TsigStatus() error    { return w.tsigStatus }
+func (w *messageResponseWriter) TsigTimersOnly(bool)  {}
+func (w *messageResponseWriter) Hijack()              {}
+func (w *messageResponseWriter) WriteMsg(msg *dns.Msg) error {
+	w.msg = msg.Copy()
+	return nil
+}
+func (w *messageResponseWriter) Write(p []byte) (int, error) {
+	msg := new(dns.Msg)
+	if err := msg.Unpack(p); err != nil {
+		return 0, err
+	}
+	w.msg = msg
+	return len(p), nil
 }
 
 // handleDNS is the main DNS query handler

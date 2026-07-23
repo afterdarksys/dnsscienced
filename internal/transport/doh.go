@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -27,16 +28,20 @@ type DoHListener struct {
 
 // DoHConfig holds configuration for the DoH listener.
 type DoHConfig struct {
-	Address   string        // Listen address (default ":443")
-	Path      string        // URL path for DNS queries (default "/dns-query")
+	Enabled   bool          `yaml:"enabled"`
+	Address   string        `yaml:"address"` // Listen address (default ":443")
+	Path      string        `yaml:"path"`    // URL path for DNS queries (default "/dns-query")
 	TLSConfig *tls.Config   // TLS configuration
-	CertFile  string        // Path to TLS certificate (if TLSConfig not provided)
-	KeyFile   string        // Path to TLS private key (if TLSConfig not provided)
-	Timeout   time.Duration // Request timeout
+	CertFile  string        `yaml:"cert_file"` // Path to TLS certificate (if TLSConfig not provided)
+	KeyFile   string        `yaml:"key_file"`  // Path to TLS private key (if TLSConfig not provided)
+	Timeout   time.Duration `yaml:"timeout"`   // Request timeout
 }
 
 // NewDoHListener creates a new DNS-over-HTTPS listener.
 func NewDoHListener(cfg DoHConfig, handler Handler) (*DoHListener, error) {
+	if handler == nil {
+		return nil, fmt.Errorf("DNS handler is required")
+	}
 	if cfg.Address == "" {
 		cfg.Address = ":443"
 	}
@@ -61,6 +66,9 @@ func NewDoHListener(cfg DoHConfig, handler Handler) (*DoHListener, error) {
 		}
 	} else {
 		return nil, fmt.Errorf("TLS configuration required: provide TLSConfig or CertFile/KeyFile")
+	}
+	if tlsConfig.MinVersion < tls.VersionTLS12 {
+		tlsConfig.MinVersion = tls.VersionTLS12
 	}
 
 	l := &DoHListener{
@@ -156,7 +164,8 @@ func (l *DoHListener) handleDoH(w http.ResponseWriter, r *http.Request) {
 
 	// Handle the DNS query
 	ctx := r.Context()
-	dnsResponse, err := l.handler.HandleDNS(ctx, dnsRequest)
+	remoteAddr, _ := net.ResolveTCPAddr("tcp", r.RemoteAddr)
+	dnsResponse, err := l.handler.HandleDNS(ctx, dnsRequest, remoteAddr)
 	if err != nil {
 		// Return SERVFAIL
 		dnsResponse = new(dns.Msg)
@@ -173,6 +182,7 @@ func (l *DoHListener) handleDoH(w http.ResponseWriter, r *http.Request) {
 	// Set appropriate headers
 	w.Header().Set("Content-Type", "application/dns-message")
 	w.Header().Set("Cache-Control", l.getCacheControl(dnsResponse))
+	w.Header().Set("Vary", "Accept")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respBytes)
 }
@@ -183,20 +193,13 @@ func (l *DoHListener) parseGET(r *http.Request) (*dns.Msg, error) {
 		return nil, fmt.Errorf("missing 'dns' query parameter")
 	}
 
-	// Decode base64url-encoded DNS message
-	// Handle both padded and unpadded base64url
-	dnsParam = strings.ReplaceAll(dnsParam, "-", "+")
-	dnsParam = strings.ReplaceAll(dnsParam, "_", "/")
-
-	// Add padding if needed
-	switch len(dnsParam) % 4 {
-	case 2:
-		dnsParam += "=="
-	case 3:
-		dnsParam += "="
+	// The largest DNS message is 65,535 bytes. Reject oversized encoded input
+	// before decoding so an HTTP client cannot force an unbounded allocation.
+	if len(dnsParam) > base64.RawURLEncoding.EncodedLen(65535) {
+		return nil, fmt.Errorf("DNS message exceeds 65535 bytes")
 	}
 
-	msgBytes, err := base64.StdEncoding.DecodeString(dnsParam)
+	msgBytes, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(dnsParam, "="))
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 encoding: %w", err)
 	}
@@ -210,15 +213,18 @@ func (l *DoHListener) parseGET(r *http.Request) (*dns.Msg, error) {
 }
 
 func (l *DoHListener) parsePOST(r *http.Request) (*dns.Msg, error) {
-	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "application/dns-message") {
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/dns-message" {
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
 
-	// Limit request body size
-	body, err := io.ReadAll(io.LimitReader(r.Body, 65535))
+	// Read one byte beyond the DNS wire-format limit so truncation is detected.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 65536))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+	if len(body) > 65535 {
+		return nil, fmt.Errorf("DNS message exceeds 65535 bytes")
 	}
 
 	msg := new(dns.Msg)
@@ -239,9 +245,20 @@ func (l *DoHListener) getCacheControl(resp *dns.Msg) string {
 		}
 	}
 
+	if resp.Rcode == dns.RcodeNameError || (resp.Rcode == dns.RcodeSuccess && len(resp.Answer) == 0) {
+		for _, rr := range resp.Ns {
+			if soa, ok := rr.(*dns.SOA); ok {
+				negativeTTL := soa.Hdr.Ttl
+				if soa.Minttl < negativeTTL {
+					negativeTTL = soa.Minttl
+				}
+				return fmt.Sprintf("max-age=%d", negativeTTL)
+			}
+		}
+		return "no-store"
+	}
 	if resp.Rcode != dns.RcodeSuccess {
-		// Negative responses - shorter cache time
-		return "max-age=60"
+		return "no-store"
 	}
 
 	return fmt.Sprintf("max-age=%d", minTTL)
