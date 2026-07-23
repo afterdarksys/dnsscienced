@@ -52,6 +52,10 @@ type Config struct {
 	// Worker pool for concurrent queries
 	Workers int `yaml:"workers"`
 
+	// WorkerQueueSize bounds distinct cache-miss lookups waiting for a worker.
+	// Requests are rejected with SERVFAIL when the queue is full.
+	WorkerQueueSize int `yaml:"worker_queue_size"`
+
 	// Query timeout
 	QueryTimeout time.Duration `yaml:"query_timeout"`
 
@@ -161,6 +165,15 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.Workers == 0 {
 		cfg.Workers = 100
 	}
+	if cfg.Workers < 1 || cfg.Workers > 65536 {
+		return nil, fmt.Errorf("workers must be between 1 and 65536 (got %d)", cfg.Workers)
+	}
+	if cfg.WorkerQueueSize == 0 {
+		cfg.WorkerQueueSize = cfg.Workers * 10
+	}
+	if cfg.WorkerQueueSize < 1 || cfg.WorkerQueueSize > 1_000_000 {
+		return nil, fmt.Errorf("worker_queue_size must be between 1 and 1000000 (got %d)", cfg.WorkerQueueSize)
+	}
 
 	// Wire resolver feature flags into cache config (D-11: avoid duplication).
 	if cfg.ServeStale {
@@ -180,7 +193,7 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 		cache: cache.NewShardedCache(cfg.CacheConfig),
 		workerPool: worker.NewPool(worker.Config{
 			Workers:   cfg.Workers,
-			QueueSize: cfg.Workers * 10,
+			QueueSize: cfg.WorkerQueueSize,
 		}),
 		client: &dns.Client{
 			Timeout: cfg.QueryTimeout,
@@ -357,10 +370,16 @@ func (r *Recursive) resolveCoalesced(ctx context.Context, question dns.Question)
 		question.Qclass,
 	)
 	result := r.lookups.DoChan(key, func() (any, error) {
-		// Do not bind shared work to the first caller's cancellation. Every
-		// network exchange and iterative chain remains bounded by resolver
-		// timeouts and MaxIterations.
-		return r.resolveFresh(r.ctx, question)
+		var response *dns.Msg
+		err := r.workerPool.TrySubmit(r.ctx, worker.JobFunc(func(jobCtx context.Context) error {
+			var resolveErr error
+			response, resolveErr = r.resolveFresh(jobCtx, question)
+			return resolveErr
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return response, nil
 	})
 
 	select {
@@ -370,7 +389,11 @@ func (r *Recursive) resolveCoalesced(ctx context.Context, question dns.Question)
 		if completed.Err != nil {
 			return nil, completed.Err
 		}
-		return completed.Val.(*dns.Msg), nil
+		response, ok := completed.Val.(*dns.Msg)
+		if !ok || response == nil {
+			return nil, errors.New("resolver worker returned no response")
+		}
+		return response, nil
 	}
 }
 

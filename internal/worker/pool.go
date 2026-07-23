@@ -18,6 +18,10 @@ var (
 
 	// ErrQueueFull indicates the job queue is full
 	ErrQueueFull = errors.New("job queue is full")
+
+	// ErrResizeDownUnsupported indicates that this fixed pool cannot safely
+	// remove already-running workers.
+	ErrResizeDownUnsupported = errors.New("shrinking a running worker pool is not supported")
 )
 
 // Job represents a unit of work to be executed
@@ -50,13 +54,14 @@ type Config struct {
 
 // Pool is a bounded worker pool that prevents goroutine exhaustion
 type Pool struct {
-	workers    int
-	queue      chan *jobWrapper
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	closed     atomic.Bool
-	queueSize  int
+	workers      int
+	queue        chan *jobWrapper
+	wg           sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	closed       atomic.Bool
+	submitMu     sync.RWMutex
+	queueSize    int
 	queueTimeout time.Duration
 
 	// Panic handling
@@ -69,13 +74,14 @@ type Pool struct {
 	jobsFailed    atomic.Uint64
 	jobsTimedOut  atomic.Uint64
 	totalLatency  atomic.Uint64 // Nanoseconds
+	activeWorkers atomic.Int64
 }
 
 // jobWrapper wraps a job with context and result channel
 type jobWrapper struct {
-	job       Job
-	ctx       context.Context
-	resultCh  chan error
+	job        Job
+	ctx        context.Context
+	resultCh   chan error
 	submitTime time.Time
 }
 
@@ -130,8 +136,13 @@ func (p *Pool) worker(id int) {
 
 // executeJob executes a job with panic recovery
 func (p *Pool) executeJob(wrapper *jobWrapper) {
+	p.activeWorkers.Add(1)
 	defer func() {
 		if r := recover(); r != nil {
+			p.totalLatency.Add(uint64(time.Since(wrapper.submitTime).Nanoseconds()))
+			p.jobsFailed.Add(1)
+			p.activeWorkers.Add(-1)
+
 			// Job panicked - handle gracefully
 			if p.panicHandler != nil {
 				p.panicHandler(r)
@@ -142,38 +153,34 @@ func (p *Pool) executeJob(wrapper *jobWrapper) {
 			case wrapper.resultCh <- errors.New("job panicked"):
 			default:
 			}
-
-			p.jobsFailed.Add(1)
 		}
 	}()
-
-	// Track latency
-	start := time.Now()
 
 	// Execute job with context
 	err := wrapper.job.Execute(wrapper.ctx)
 
-	latency := time.Since(start)
-	p.totalLatency.Add(uint64(latency.Nanoseconds()))
-
-	// Send result
-	select {
-	case wrapper.resultCh <- err:
-	default:
-		// Result channel was closed (timeout or caller gave up)
-	}
-
+	p.totalLatency.Add(uint64(time.Since(wrapper.submitTime).Nanoseconds()))
 	if err != nil {
 		p.jobsFailed.Add(1)
 	} else {
 		p.jobsCompleted.Add(1)
+	}
+	p.activeWorkers.Add(-1)
+
+	// Send the result only after counters are visible to the caller.
+	select {
+	case wrapper.resultCh <- err:
+	default:
+		// Result channel was closed (timeout or caller gave up)
 	}
 }
 
 // Submit submits a job to the pool
 // Blocks until job is queued or context is canceled
 func (p *Pool) Submit(ctx context.Context, job Job) error {
+	p.submitMu.RLock()
 	if p.closed.Load() {
+		p.submitMu.RUnlock()
 		return ErrPoolClosed
 	}
 
@@ -199,6 +206,7 @@ func (p *Pool) Submit(ctx context.Context, job Job) error {
 	// Try to queue the job
 	select {
 	case p.queue <- wrapper:
+		p.submitMu.RUnlock()
 		// Job queued successfully
 		// Wait for result
 		select {
@@ -209,10 +217,12 @@ func (p *Pool) Submit(ctx context.Context, job Job) error {
 		}
 
 	case <-timeoutCtx.Done():
+		p.submitMu.RUnlock()
 		p.jobsTimedOut.Add(1)
 		return ErrJobTimeout
 
 	case <-p.ctx.Done():
+		p.submitMu.RUnlock()
 		return ErrPoolClosed
 	}
 }
@@ -220,7 +230,9 @@ func (p *Pool) Submit(ctx context.Context, job Job) error {
 // TrySubmit attempts to submit a job without blocking
 // Returns ErrQueueFull if queue is full
 func (p *Pool) TrySubmit(ctx context.Context, job Job) error {
+	p.submitMu.RLock()
 	if p.closed.Load() {
+		p.submitMu.RUnlock()
 		return ErrPoolClosed
 	}
 
@@ -236,6 +248,7 @@ func (p *Pool) TrySubmit(ctx context.Context, job Job) error {
 	// Non-blocking queue attempt
 	select {
 	case p.queue <- wrapper:
+		p.submitMu.RUnlock()
 		// Job queued successfully
 		// Wait for result
 		select {
@@ -246,6 +259,7 @@ func (p *Pool) TrySubmit(ctx context.Context, job Job) error {
 		}
 
 	default:
+		p.submitMu.RUnlock()
 		// Queue is full
 		p.jobsRejected.Add(1)
 		return ErrQueueFull
@@ -255,7 +269,9 @@ func (p *Pool) TrySubmit(ctx context.Context, job Job) error {
 // SubmitAsync submits a job asynchronously
 // Does not wait for job completion
 func (p *Pool) SubmitAsync(ctx context.Context, job Job) error {
+	p.submitMu.RLock()
 	if p.closed.Load() {
+		p.submitMu.RUnlock()
 		return ErrPoolClosed
 	}
 
@@ -275,11 +291,14 @@ func (p *Pool) SubmitAsync(ctx context.Context, job Job) error {
 
 		select {
 		case p.queue <- wrapper:
+			p.submitMu.RUnlock()
 			return nil
 		case <-timeoutCtx.Done():
+			p.submitMu.RUnlock()
 			p.jobsTimedOut.Add(1)
 			return ErrJobTimeout
 		case <-p.ctx.Done():
+			p.submitMu.RUnlock()
 			return ErrPoolClosed
 		}
 	}
@@ -287,8 +306,10 @@ func (p *Pool) SubmitAsync(ctx context.Context, job Job) error {
 	// No timeout - try non-blocking
 	select {
 	case p.queue <- wrapper:
+		p.submitMu.RUnlock()
 		return nil
 	default:
+		p.submitMu.RUnlock()
 		p.jobsRejected.Add(1)
 		return ErrQueueFull
 	}
@@ -297,12 +318,15 @@ func (p *Pool) SubmitAsync(ctx context.Context, job Job) error {
 // Close gracefully shuts down the pool
 // Waits for all in-flight jobs to complete
 func (p *Pool) Close() error {
+	p.submitMu.Lock()
 	if p.closed.Swap(true) {
+		p.submitMu.Unlock()
 		return ErrPoolClosed
 	}
 
 	// Stop accepting new jobs
 	close(p.queue)
+	p.submitMu.Unlock()
 
 	// Wait for workers to finish
 	p.wg.Wait()
@@ -316,11 +340,14 @@ func (p *Pool) Close() error {
 // CloseTimeout closes the pool with a timeout
 // Returns error if timeout is exceeded
 func (p *Pool) CloseTimeout(timeout time.Duration) error {
+	p.submitMu.Lock()
 	if p.closed.Swap(true) {
+		p.submitMu.Unlock()
 		return ErrPoolClosed
 	}
 
 	close(p.queue)
+	p.submitMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -340,20 +367,24 @@ func (p *Pool) CloseTimeout(timeout time.Duration) error {
 
 // Stats returns pool statistics
 type Stats struct {
-	Workers       int
-	QueueSize     int
-	QueueDepth    int
-	Submitted     uint64
-	Completed     uint64
-	Rejected      uint64
-	Failed        uint64
-	TimedOut      uint64
-	AvgLatencyNs  uint64
-	Utilization   float64 // % of workers busy
+	Workers      int
+	BusyWorkers  int
+	QueueSize    int
+	QueueDepth   int
+	Submitted    uint64
+	Completed    uint64
+	Rejected     uint64
+	Failed       uint64
+	TimedOut     uint64
+	AvgLatencyNs uint64
+	Utilization  float64 // % of workers busy
 }
 
 // GetStats returns current pool statistics
 func (p *Pool) GetStats() Stats {
+	p.submitMu.RLock()
+	workers := p.workers
+	p.submitMu.RUnlock()
 	submitted := p.jobsSubmitted.Load()
 	completed := p.jobsCompleted.Load()
 	failed := p.jobsFailed.Load()
@@ -362,22 +393,20 @@ func (p *Pool) GetStats() Stats {
 	totalLatency := p.totalLatency.Load()
 
 	var avgLatency uint64
-	if completed > 0 {
-		avgLatency = totalLatency / completed
+	executed := completed + failed
+	if executed > 0 {
+		avgLatency = totalLatency / executed
 	}
 
-	// Calculate utilization (approximate)
-	inProgress := submitted - completed - failed - rejected - timedOut
+	active := p.activeWorkers.Load()
 	var utilization float64
-	if p.workers > 0 {
-		utilization = float64(inProgress) / float64(p.workers) * 100
-		if utilization > 100 {
-			utilization = 100
-		}
+	if workers > 0 {
+		utilization = float64(active) / float64(workers) * 100
 	}
 
 	return Stats{
-		Workers:      p.workers,
+		Workers:      workers,
+		BusyWorkers:  int(active),
 		QueueSize:    p.queueSize,
 		QueueDepth:   len(p.queue),
 		Submitted:    submitted,
@@ -393,6 +422,8 @@ func (p *Pool) GetStats() Stats {
 // Resize adjusts the number of workers (hot-resize)
 // Experimental: may cause brief performance fluctuations
 func (p *Pool) Resize(newSize int) error {
+	p.submitMu.Lock()
+	defer p.submitMu.Unlock()
 	if p.closed.Load() {
 		return ErrPoolClosed
 	}
@@ -414,10 +445,7 @@ func (p *Pool) Resize(newSize int) error {
 			go p.worker(currentSize + i)
 		}
 	} else {
-		// Reduce workers - gracefully drain
-		// Workers will exit when they finish current job and find queue closed
-		// This is a simplified approach; production might use a more sophisticated method
-		// For now, document this as "eventual consistency" resizing
+		return ErrResizeDownUnsupported
 	}
 
 	p.workers = newSize

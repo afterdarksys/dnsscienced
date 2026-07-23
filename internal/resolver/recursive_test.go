@@ -81,6 +81,20 @@ func TestNewRecursive_WithDefaults(t *testing.T) {
 	if r.cfg.Workers != 100 {
 		t.Errorf("Workers = %d, want 100", r.cfg.Workers)
 	}
+	if r.cfg.WorkerQueueSize != 1000 {
+		t.Errorf("WorkerQueueSize = %d, want 1000", r.cfg.WorkerQueueSize)
+	}
+}
+
+func TestNewRecursiveRejectsInvalidWorkerLimits(t *testing.T) {
+	for _, cfg := range []Config{
+		{Workers: -1},
+		{Workers: 1, WorkerQueueSize: -1},
+	} {
+		if _, err := NewRecursive(cfg); err == nil {
+			t.Fatalf("NewRecursive(%+v) succeeded, want validation error", cfg)
+		}
+	}
 }
 
 func TestNewRecursive_WithCookies(t *testing.T) {

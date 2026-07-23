@@ -572,6 +572,15 @@ func printStats(srv *server.Server) {
 				stats.Recursive.Cache.HitRate*100)
 			fmt.Printf("  Cache Misses: %10d\n", stats.Recursive.Cache.Misses)
 			fmt.Printf("  Cache Size:   %10d entries\n", stats.Recursive.Cache.Size)
+			fmt.Printf("  Workers:      %10d  (%d busy, %.1f%% utilization)\n",
+				stats.Recursive.Pool.Workers,
+				stats.Recursive.Pool.BusyWorkers,
+				stats.Recursive.Pool.Utilization)
+			fmt.Printf("  Worker Queue: %10d / %d  (%d rejected, %d timed out)\n",
+				stats.Recursive.Pool.QueueDepth,
+				stats.Recursive.Pool.QueueSize,
+				stats.Recursive.Pool.Rejected,
+				stats.Recursive.Pool.TimedOut)
 		}
 
 		if stats.RRL != nil {

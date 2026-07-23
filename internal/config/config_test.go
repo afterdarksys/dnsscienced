@@ -407,9 +407,14 @@ func TestDistributedExampleConfigsParse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg, err := Load(filepath.Join("..", "..", name))
 			require.NoError(t, err)
+			assert.Equal(t, 100, cfg.Server.RecursiveConfig.Workers)
+			assert.Equal(t, 1000, cfg.Server.RecursiveConfig.WorkerQueueSize)
+			assert.Equal(t, 2*time.Second, cfg.Server.RecursiveConfig.QueryTimeout)
 			if name == "config.example.yaml" {
 				assert.Equal(t, 10000, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
 				assert.Equal(t, "json", cfg.Logging.Format)
+			} else {
+				assert.Equal(t, 100000, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
 			}
 		})
 	}

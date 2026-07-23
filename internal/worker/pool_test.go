@@ -379,6 +379,58 @@ func TestResize(t *testing.T) {
 	}
 }
 
+func TestResizeDownReturnsUnsupported(t *testing.T) {
+	pool := NewPool(Config{Workers: 2, QueueSize: 10})
+	defer pool.Close()
+
+	if err := pool.Resize(1); !errors.Is(err, ErrResizeDownUnsupported) {
+		t.Fatalf("Resize(1) error = %v, want ErrResizeDownUnsupported", err)
+	}
+	if stats := pool.GetStats(); stats.Workers != 2 {
+		t.Fatalf("workers = %d after rejected shrink, want 2", stats.Workers)
+	}
+}
+
+func TestStatsReportActiveWorkers(t *testing.T) {
+	pool := NewPool(Config{Workers: 1, QueueSize: 1})
+	defer pool.Close()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := pool.SubmitAsync(context.Background(), JobFunc(func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	})); err != nil {
+		t.Fatalf("SubmitAsync: %v", err)
+	}
+	<-started
+
+	stats := pool.GetStats()
+	if stats.BusyWorkers != 1 || stats.Utilization != 100 {
+		t.Fatalf("busy=%d utilization=%.1f, want 1 and 100", stats.BusyWorkers, stats.Utilization)
+	}
+	close(release)
+}
+
+func TestConcurrentSubmitAndCloseDoesNotPanic(t *testing.T) {
+	for range 20 {
+		pool := NewPool(Config{Workers: 2, QueueSize: 10})
+		var wg sync.WaitGroup
+		for range 20 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = pool.SubmitAsync(context.Background(), JobFunc(func(context.Context) error {
+					return nil
+				}))
+			}()
+		}
+		_ = pool.Close()
+		wg.Wait()
+	}
+}
+
 func TestIsHealthy(t *testing.T) {
 	pool := NewPool(Config{Workers: 2, QueueSize: 10})
 	defer pool.Close()

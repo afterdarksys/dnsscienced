@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/packet"
+	"github.com/dnsscience/dnsscienced/internal/worker"
 	"github.com/miekg/dns"
 )
 
@@ -179,6 +181,84 @@ func TestResolveCoalescesConcurrentCacheMisses(t *testing.T) {
 	}
 	if got := queries.Load(); got != 1 {
 		t.Fatalf("upstream queries = %d, want 1", got)
+	}
+	if stats := r.GetStats().Pool; stats.Submitted != 1 || stats.Completed != 1 {
+		t.Fatalf("worker stats = %+v, want one submitted and completed lookup", stats)
+	}
+}
+
+func TestResolveRejectsWhenWorkerQueueIsFull(t *testing.T) {
+	lookupStarted := make(chan struct{})
+	releaseLookups := make(chan struct{})
+	addr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		select {
+		case <-lookupStarted:
+		default:
+			close(lookupStarted)
+		}
+		<-releaseLookups
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.23"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+
+	r, err := NewRecursive(Config{
+		Workers:         1,
+		WorkerQueueSize: 1,
+		QueryTimeout:    time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+	r.roots = []string{addr}
+
+	resolveAsync := func(name string) <-chan error {
+		done := make(chan error, 1)
+		go func() {
+			query := new(dns.Msg)
+			query.SetQuestion(name, dns.TypeA)
+			_, resolveErr := r.Resolve(context.Background(), query, nil)
+			done <- resolveErr
+		}()
+		return done
+	}
+
+	first := resolveAsync("first.example.")
+	select {
+	case <-lookupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first worker did not start")
+	}
+	second := resolveAsync("second.example.")
+	deadline := time.Now().Add(time.Second)
+	for r.GetStats().Pool.QueueDepth != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("second lookup did not enter worker queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	thirdQuery := new(dns.Msg)
+	thirdQuery.SetQuestion("third.example.", dns.TypeA)
+	if _, err := r.Resolve(context.Background(), thirdQuery, nil); !errors.Is(err, worker.ErrQueueFull) {
+		t.Fatalf("third Resolve error = %v, want ErrQueueFull", err)
+	}
+	stats := r.GetStats().Pool
+	if stats.BusyWorkers != 1 || stats.QueueDepth != 1 || stats.Rejected != 1 {
+		t.Fatalf("saturated worker stats = %+v", stats)
+	}
+
+	close(releaseLookups)
+	if err := <-first; err != nil {
+		t.Fatalf("first Resolve: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second Resolve: %v", err)
 	}
 }
 

@@ -72,7 +72,7 @@ Legend:
   refreshes, and expose prefetch through the live admin API.
 - [x] Coalesce concurrent cache misses for the same question while preserving
   independent client transaction IDs and cancellation.
-- [ ] Route recursive cache misses through an operational bounded worker pool and
+- [x] Route recursive cache misses through an operational bounded worker pool and
   expose truthful queue, saturation, and rejection metrics.
 - [ ] Add safe parallel or hedged nameserver queries with cancellation and bounded
   fan-out.
