@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,6 +133,83 @@ func TestRuntimeObservesConfiguredCatalogTransferFailure(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(catalogTransfersTotal.WithLabelValues("catalog.example.", "failure")); got != before+1 {
 		t.Fatalf("transfer failure counter = %v, want %v", got, before+1)
+	}
+}
+
+func TestRuntimeDryRunRetainsFleet(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.DryRun = true
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	err = runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	))
+	if err == nil || !strings.Contains(err.Error(), "dry-run plan") {
+		t.Fatalf("dry-run error = %v", err)
+	}
+	if runtime.GetZone("alpha.example.") != nil || runtime.catalogs["catalog.example."] != nil {
+		t.Fatal("dry-run mutated catalog fleet")
+	}
+}
+
+func TestRuntimeRequiresSerialBoundApprovalForMassDestruction(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.ApprovalRequiredAbove = 1
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	initial := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`a2.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	if err := runtime.AddZone(initial); err != nil {
+		t.Fatalf("initial AddZone: %v", err)
+	}
+	replacement := catalogZone(t, "catalog.example.", `a3.zones.catalog.example. 0 IN PTR gamma.example.`)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil || !strings.Contains(err.Error(), "requires explicit approval") {
+		t.Fatalf("unapproved error = %v", err)
+	}
+	if runtime.GetZone("alpha.example.") == nil || runtime.GetZone("beta.example.") == nil {
+		t.Fatal("unapproved plan withdrew the last-valid fleet")
+	}
+
+	approved := uint32(43)
+	updated := runtime.sources["catalog.example."]
+	updated.ApprovedSerial = &approved
+	runtime.sources["catalog.example."] = updated
+	if err := runtime.AddZone(replacement); err != nil {
+		t.Fatalf("approved AddZone: %v", err)
+	}
+	if runtime.GetZone("alpha.example.") != nil ||
+		runtime.GetZone("beta.example.") != nil ||
+		runtime.GetZone("gamma.example.") == nil {
+		t.Fatalf("approved fleet not applied; removed=%v", controller.removed)
 	}
 }
 

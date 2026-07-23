@@ -199,6 +199,7 @@ func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T)
 }
 
 func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
+	approvedSerial := uint32(43)
 	cfg := &config.Config{
 		TsigKeys: []config.TsigKeyConfig{{
 			Name:      "catalog-xfer.example.",
@@ -213,6 +214,9 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 			MaxReconcileActions:       100000,
 			ReconcileActionsPerMinute: 12000,
 			ReconcileActionBurst:      24000,
+			DryRun:                    true,
+			ApprovalRequiredAbove:     25,
+			ApprovedSerial:            &approvedSerial,
 			CatalogTransferConfig: config.CatalogTransferConfig{
 				Masters:            []string{"192.0.2.1"},
 				TransferTSIGKey:    "catalog-xfer.example.",
@@ -252,6 +256,10 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 		sources[0].MaxReconcileActions != 100000 ||
 		sources[0].ReconcileActionsPerMinute != 12000 ||
 		sources[0].ReconcileActionBurst != 24000 ||
+		!sources[0].DryRun ||
+		sources[0].ApprovalRequiredAbove != 25 ||
+		sources[0].ApprovedSerial == nil ||
+		*sources[0].ApprovedSerial != 43 ||
 		transfers["catalog.example."].MaxTransferRecords != 200000 ||
 		transfers["catalog.example."].MaxTransferBytes != 67108864 ||
 		transfers["catalog.example."].TransferKey == nil {

@@ -211,7 +211,7 @@ fleet-scale policy, operations, interoperability, and producer support.
   lazy refill and failure refunds.
 - [x] Reject configured catalogs as member zones, self-referential `coo`, and
   deterministic cross-catalog ownership cycles before persistence or side effects.
-- [ ] Provide dry-run and approval modes for mass deletion or replacement.
+- [x] Provide dry-run and serial-bound approval modes for mass deletion or replacement.
 - [ ] Add structured audit events for catalog receipt, validation, reconciliation,
   conflicts, migrations, and state resets.
 - [x] Add Prometheus metrics and admin status APIs for catalog freshness, serial,

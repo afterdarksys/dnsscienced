@@ -231,6 +231,10 @@ zones:
 #     max_reconcile_actions: 200000
 #     reconcile_actions_per_minute: 200000
 #     reconcile_action_burst: 200000
+#     dry_run: false
+#     approval_required_above: 1000
+#     # One-shot approval bound to the exact incoming RFC 1982 serial:
+#     # approved_serial: 2026072301
 #     max_transfer_records: 1000000
 #     max_transfer_bytes: 268435456
 #     member_defaults:

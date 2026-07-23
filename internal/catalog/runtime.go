@@ -57,6 +57,9 @@ type SourceConfig struct {
 	MaxReconcileActions       int
 	ReconcileActionsPerMinute int
 	ReconcileActionBurst      int
+	DryRun                    bool
+	ApprovalRequiredAbove     int
+	ApprovedSerial            *uint32
 }
 
 // Runtime retains last-valid catalog state, plans RFC 9432 changes, and
@@ -194,6 +197,14 @@ func NewRuntime(
 		if source.ReconcileActionBurst < 1 || source.ReconcileActionBurst > absoluteMaxReconcileActions {
 			return nil, fmt.Errorf(
 				"catalog %s reconcile_action_burst must be between 1 and %d",
+				source.Name,
+				absoluteMaxReconcileActions,
+			)
+		}
+		if source.ApprovalRequiredAbove < 0 ||
+			source.ApprovalRequiredAbove > absoluteMaxReconcileActions {
+			return nil, fmt.Errorf(
+				"catalog %s approval_required_above must be between 0 and %d",
 				source.Name,
 				absoluteMaxReconcileActions,
 			)
@@ -443,6 +454,28 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) ([]A
 			r.sources[name].MaxReconcileActions,
 		)
 	}
+	destructiveActions := countDestructiveActions(actions)
+	source := r.sources[name]
+	if source.DryRun {
+		return nil, fmt.Errorf(
+			"catalog %s dry-run plan: serial %d has %d actions (%d destructive); retaining last valid state",
+			name,
+			accepted.Serial,
+			len(actions),
+			destructiveActions,
+		)
+	}
+	if source.ApprovalRequiredAbove > 0 &&
+		destructiveActions > source.ApprovalRequiredAbove &&
+		(source.ApprovedSerial == nil || *source.ApprovedSerial != accepted.Serial) {
+		return nil, fmt.Errorf(
+			"catalog %s serial %d requires explicit approval: %d destructive actions exceeds approval_required_above %d",
+			name,
+			accepted.Serial,
+			destructiveActions,
+			source.ApprovalRequiredAbove,
+		)
+	}
 	actionCount := 0
 	for _, action := range actions {
 		if action.Kind != ActionConflict {
@@ -520,6 +553,21 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) ([]A
 	}
 	committed = true
 	return actions, nil
+}
+
+func countDestructiveActions(actions []Action) int {
+	count := 0
+	for _, action := range actions {
+		switch action.Kind {
+		case ActionRemove, ActionRecreate:
+			count++
+		case ActionTransferOwnership:
+			if action.ResetState {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func (r *Runtime) recordAttempt(name string) time.Time {

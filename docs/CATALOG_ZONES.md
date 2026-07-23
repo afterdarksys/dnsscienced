@@ -54,6 +54,9 @@ catalog_zones:
     max_reconcile_actions: 200000
     reconcile_actions_per_minute: 200000
     reconcile_action_burst: 200000
+    dry_run: false
+    approval_required_above: 1000
+    # approved_serial: 2026072301
     max_transfer_records: 1000000
     max_transfer_bytes: 268435456
 
@@ -83,6 +86,14 @@ snapshots; rejected or failed atomic reconciliations refund their reservation.
 AXFR/IXFR ingestion enforces record and estimated wire-byte limits before
 copying records into the zone model; the same transfer limits apply to ordinary
 secondaries and catalog-provisioned members.
+
+Set `dry_run: true` to validate and plan incoming snapshots without changing
+the accepted catalog or member fleet. `approval_required_above` blocks plans
+whose removal, member-label reset, or state-resetting ownership-transfer count
+exceeds the configured threshold. Approval is fail-closed and bound to the
+exact incoming SOA serial through `approved_serial`; a later serial requires a
+new approval, preventing a stale authorization from approving unrelated
+destructive changes.
 
 A configured catalog zone can never be provisioned as a member. Self-directed
 `coo` properties and deterministic multi-catalog `coo` cycles are rejected

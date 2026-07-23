@@ -228,6 +228,9 @@ type CatalogZoneConfig struct {
 	MaxReconcileActions       int                              `yaml:"max_reconcile_actions,omitempty"`
 	ReconcileActionsPerMinute int                              `yaml:"reconcile_actions_per_minute,omitempty"`
 	ReconcileActionBurst      int                              `yaml:"reconcile_action_burst,omitempty"`
+	DryRun                    bool                             `yaml:"dry_run,omitempty"`
+	ApprovalRequiredAbove     int                              `yaml:"approval_required_above,omitempty"`
+	ApprovedSerial            *uint32                          `yaml:"approved_serial,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone

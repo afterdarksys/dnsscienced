@@ -757,6 +757,9 @@ func buildCatalogConfigs(cfg *config.Config) (
 			MaxReconcileActions:       configured.MaxReconcileActions,
 			ReconcileActionsPerMinute: configured.ReconcileActionsPerMinute,
 			ReconcileActionBurst:      configured.ReconcileActionBurst,
+			DryRun:                    configured.DryRun,
+			ApprovalRequiredAbove:     configured.ApprovalRequiredAbove,
+			ApprovedSerial:            configured.ApprovedSerial,
 		})
 		transfers[name] = transfer
 	}
