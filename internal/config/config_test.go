@@ -202,6 +202,10 @@ catalog_zones:
     transfer_tsig_key: catalog-key.example.
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
+    max_members: 50000
+    max_reconcile_actions: 100000
+    max_transfer_records: 200000
+    max_transfer_bytes: 67108864
     member_defaults:
       masters: [192.0.2.2]
       transfer_tsig_key: member-key.example.
@@ -224,7 +228,11 @@ catalog_zones:
 		cfg.CatalogZones[0].MemberDefaults.Masters[0] != "192.0.2.2" ||
 		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" ||
 		cfg.CatalogZones[0].MemberAllowSuffixes[0] != "customer.example." ||
-		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." {
+		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." ||
+		cfg.CatalogZones[0].MaxMembers != 50000 ||
+		cfg.CatalogZones[0].MaxReconcileActions != 100000 ||
+		cfg.CatalogZones[0].MaxTransferRecords != 200000 ||
+		cfg.CatalogZones[0].MaxTransferBytes != 67108864 {
 		t.Fatalf("catalog config = %+v", cfg.CatalogZones)
 	}
 }

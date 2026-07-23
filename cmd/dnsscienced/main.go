@@ -688,6 +688,8 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			MaxRefreshTime:        zc.MaxRefreshTime,
 			MinRetryTime:          zc.MinRetryTime,
 			MaxRetryTime:          zc.MaxRetryTime,
+			MaxTransferRecords:    zc.MaxTransferRecords,
+			MaxTransferBytes:      zc.MaxTransferBytes,
 			AllowAXFRFallback:     true,
 		}
 		if zc.AllowAXFRFallback != nil {
@@ -751,6 +753,8 @@ func buildCatalogConfigs(cfg *config.Config) (
 			Groups:              groups,
 			MemberAllowSuffixes: append([]string(nil), configured.MemberAllowSuffixes...),
 			MemberDenySuffixes:  append([]string(nil), configured.MemberDenySuffixes...),
+			MaxMembers:          configured.MaxMembers,
+			MaxReconcileActions: configured.MaxReconcileActions,
 		})
 		transfers[name] = transfer
 	}
@@ -771,6 +775,8 @@ func catalogTransferConfig(
 		MaxRefreshTime:        configured.MaxRefreshTime,
 		MinRetryTime:          configured.MinRetryTime,
 		MaxRetryTime:          configured.MaxRetryTime,
+		MaxTransferRecords:    configured.MaxTransferRecords,
+		MaxTransferBytes:      configured.MaxTransferBytes,
 		AllowAXFRFallback:     true,
 	}
 	if configured.AllowAXFRFallback != nil {

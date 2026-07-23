@@ -311,6 +311,78 @@ func TestRuntimeRejectsPersistedMemberOutsideNarrowedScope(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnforcesMemberAndReconcileLimits(t *testing.T) {
+	records := []string{
+		`a1.zones.catalog.example. 0 IN PTR one.example.`,
+		`a2.zones.catalog.example. 0 IN PTR two.example.`,
+	}
+	for name, configure := range map[string]func(*SourceConfig){
+		"members": func(source *SourceConfig) { source.MaxMembers = 1 },
+		"actions": func(source *SourceConfig) { source.MaxReconcileActions = 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := runtimeSource("catalog.example.")
+			configure(&source)
+			runtime, err := NewRuntime(
+				newRuntimeStore(),
+				[]SourceConfig{source},
+				filepath.Join(t.TempDir(), "catalog-state.json"),
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller := &runtimeController{runtime: runtime}
+			if err := runtime.AttachController(controller); err != nil {
+				t.Fatal(err)
+			}
+			if err := runtime.AddZone(catalogZone(t, "catalog.example.", records...)); err == nil {
+				t.Fatalf("%s limit was not enforced", name)
+			}
+			controller.mu.Lock()
+			defer controller.mu.Unlock()
+			if len(controller.upserts) != 0 {
+				t.Fatalf("%s limit allowed partial provisioning: %v", name, controller.upserts)
+			}
+		})
+	}
+}
+
+func TestRuntimeRejectsInvalidResourceLimits(t *testing.T) {
+	for name, configure := range map[string]func(*SourceConfig){
+		"members": func(source *SourceConfig) { source.MaxMembers = -1 },
+		"actions": func(source *SourceConfig) { source.MaxReconcileActions = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := runtimeSource("catalog.example.")
+			configure(&source)
+			if _, err := NewRuntime(
+				newRuntimeStore(),
+				[]SourceConfig{source},
+				filepath.Join(t.TempDir(), "catalog-state.json"),
+				nil,
+			); err == nil {
+				t.Fatalf("invalid %s limit was accepted", name)
+			}
+		})
+	}
+}
+
+func TestRuntimeBoundsCatalogSourceCount(t *testing.T) {
+	sources := make([]SourceConfig, maxCatalogSources+1)
+	for i := range sources {
+		sources[i] = runtimeSource("catalog-" + serialStringForRuntime(uint32(i+1)) + ".example.")
+	}
+	if _, err := NewRuntime(
+		newRuntimeStore(),
+		sources,
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	); err == nil {
+		t.Fatal("catalog source limit was not enforced")
+	}
+}
+
 func TestRuntimeRemovalWithdrawsOnlyOwnedMember(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))

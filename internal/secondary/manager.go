@@ -43,6 +43,10 @@ type Config struct {
 	MinRetryTime      time.Duration
 	MaxRetryTime      time.Duration
 	AllowAXFRFallback bool
+	// MaxTransferRecords and MaxTransferBytes bound AXFR/IXFR material before
+	// it is copied into memory. Zero selects the secure operational defaults.
+	MaxTransferRecords int
+	MaxTransferBytes   int64
 }
 
 // ZoneStore atomically publishes a fully validated zone.
@@ -373,6 +377,9 @@ func prepareManagedZone(cfg Config) (*managedZone, error) {
 			"secondary %s: transfer key is required; set allow_unsigned_transfer only for an explicitly accepted legacy trust boundary",
 			cfg.Name,
 		)
+	}
+	if _, err := newTransferAccumulator(cfg); err != nil {
+		return nil, fmt.Errorf("secondary %s: %w", cfg.Name, err)
 	}
 	return &managedZone{
 		cfg:              cfg,

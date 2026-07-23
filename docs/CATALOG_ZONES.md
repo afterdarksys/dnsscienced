@@ -50,6 +50,10 @@ catalog_zones:
     transfer_tsig_key: catalog-xfer.example.
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
+    max_members: 100000
+    max_reconcile_actions: 200000
+    max_transfer_records: 1000000
+    max_transfer_bytes: 268435456
 
     member_defaults:
       masters: [192.0.2.20]
@@ -69,6 +73,11 @@ When `member_allow_suffixes` is non-empty, every member must be at or below one
 of those DNS suffixes. `member_deny_suffixes` is evaluated first and overrides
 the allow list. A scope violation rejects the complete catalog snapshot and
 retains the last-valid fleet state.
+
+Catalog sources are capped at 128. Each catalog also has bounded member and
+reconciliation action counts. AXFR/IXFR ingestion enforces record and estimated
+wire-byte limits before copying records into the zone model; the same transfer
+limits apply to ordinary secondaries and catalog-provisioned members.
 
 State is written atomically with mode `0600` and includes last-valid catalog
 records, member-zone records, and catalog ownership. Startup restores those

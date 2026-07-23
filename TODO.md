@@ -197,8 +197,10 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.
-- [ ] Add limits for catalogs, members per catalog, reconciliation rate, transfer
-  size, and simultaneous member provisioning.
+- [x] Bound configured catalogs, members per catalog, reconciliation action
+  counts, AXFR/IXFR records, transfer bytes, and member provisioning concurrency
+  (currently serialized).
+- [ ] Add an operator-configurable catalog reconciliation rate budget.
 - [ ] Reject recursive/self-referential ownership and provisioning cycles.
 - [ ] Provide dry-run and approval modes for mass deletion or replacement.
 - [ ] Add structured audit events for catalog receipt, validation, reconciliation,

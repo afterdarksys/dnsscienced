@@ -18,6 +18,14 @@ import (
 
 const stateVersion = 1
 
+const (
+	maxCatalogSources           = 128
+	defaultMaxCatalogMembers    = 100_000
+	absoluteMaxCatalogMembers   = 10_000_000
+	defaultMaxReconcileActions  = 200_000
+	absoluteMaxReconcileActions = 10_000_000
+)
+
 // AuthoritativeStore is the publication surface used for catalog-managed
 // member zones. Catalog zones themselves are deliberately kept private.
 type AuthoritativeStore interface {
@@ -42,6 +50,8 @@ type SourceConfig struct {
 	Groups              map[string]secondary.Config
 	MemberAllowSuffixes []string
 	MemberDenySuffixes  []string
+	MaxMembers          int
+	MaxReconcileActions int
 }
 
 // Runtime retains last-valid catalog state, plans RFC 9432 changes, and
@@ -88,6 +98,9 @@ func NewRuntime(
 	if strings.TrimSpace(statePath) == "" {
 		return nil, fmt.Errorf("catalog: state path is required")
 	}
+	if len(sources) > maxCatalogSources {
+		return nil, fmt.Errorf("catalog: at most %d sources are allowed", maxCatalogSources)
+	}
 	r := &Runtime{
 		store:       store,
 		statePath:   statePath,
@@ -119,6 +132,22 @@ func NewRuntime(
 		if err != nil {
 			return nil, fmt.Errorf("catalog %s member deny suffixes: %w", source.Name, err)
 		}
+		if source.MaxMembers == 0 {
+			source.MaxMembers = defaultMaxCatalogMembers
+		}
+		if source.MaxMembers < 1 || source.MaxMembers > absoluteMaxCatalogMembers {
+			return nil, fmt.Errorf("catalog %s max_members must be between 1 and %d", source.Name, absoluteMaxCatalogMembers)
+		}
+		if source.MaxReconcileActions == 0 {
+			source.MaxReconcileActions = defaultMaxReconcileActions
+		}
+		if source.MaxReconcileActions < 1 || source.MaxReconcileActions > absoluteMaxReconcileActions {
+			return nil, fmt.Errorf(
+				"catalog %s max_reconcile_actions must be between 1 and %d",
+				source.Name,
+				absoluteMaxReconcileActions,
+			)
+		}
 		r.sources[source.Name] = source
 		r.order = append(r.order, source.Name)
 	}
@@ -126,6 +155,11 @@ func NewRuntime(
 	r.reserved = normalizeNames(append(r.reserved, r.order...))
 	if err := r.load(); err != nil {
 		return nil, err
+	}
+	for catalogName, accepted := range r.catalogs {
+		if err := r.validateMemberScope(catalogName, accepted); err != nil {
+			return nil, fmt.Errorf("catalog: persisted snapshot violates current limits: %w", err)
+		}
 	}
 	for zoneName, owner := range r.ownership {
 		source, ok := r.sources[owner.Catalog]
@@ -284,6 +318,14 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	if err != nil {
 		return fmt.Errorf("catalog %s plan: %w", name, err)
 	}
+	if len(actions) > r.sources[name].MaxReconcileActions {
+		return fmt.Errorf(
+			"catalog %s reconciliation has %d actions; max_reconcile_actions is %d",
+			name,
+			len(actions),
+			r.sources[name].MaxReconcileActions,
+		)
+	}
 	// Persist the accepted snapshot before side effects. If reconciliation is
 	// interrupted, the next refresh deterministically resumes missing actions
 	// from persisted ownership rather than forgetting the desired state.
@@ -366,6 +408,14 @@ func (r *Runtime) validateMemberScope(catalogName string, accepted *Catalog) err
 	source, ok := r.sources[normalizeName(catalogName)]
 	if !ok {
 		return fmt.Errorf("catalog: no source configuration for %s", catalogName)
+	}
+	if len(accepted.Members) > source.MaxMembers {
+		return fmt.Errorf(
+			"catalog %s has %d members; max_members is %d",
+			catalogName,
+			len(accepted.Members),
+			source.MaxMembers,
+		)
 	}
 	for memberName := range accepted.Members {
 		if err := validateMemberName(catalogName, memberName, source); err != nil {

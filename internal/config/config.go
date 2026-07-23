@@ -169,6 +169,8 @@ type ZoneConfig struct {
 	// NOTIFY with TSIG. The secure default is false.
 	AllowUnsignedTransfer bool          `yaml:"allow_unsigned_transfer,omitempty"`
 	RefreshInterval       time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
+	MaxTransferRecords    int           `yaml:"max_transfer_records,omitempty"`
+	MaxTransferBytes      int64         `yaml:"max_transfer_bytes,omitempty"`
 
 	// AllowAXFRFallback controls whether IXFR failures fall back to a full AXFR.
 	// Set to false to force operators to fix IXFR issues rather than silently
@@ -209,6 +211,8 @@ type CatalogTransferConfig struct {
 	MinRefreshTime        time.Duration `yaml:"min_refresh_time,omitempty"`
 	MaxRetryTime          time.Duration `yaml:"max_retry_time,omitempty"`
 	MinRetryTime          time.Duration `yaml:"min_retry_time,omitempty"`
+	MaxTransferRecords    int           `yaml:"max_transfer_records,omitempty"`
+	MaxTransferBytes      int64         `yaml:"max_transfer_bytes,omitempty"`
 }
 
 // CatalogZoneConfig defines one private RFC 9432 catalog secondary and the
@@ -220,6 +224,8 @@ type CatalogZoneConfig struct {
 	Groups                map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
 	MemberAllowSuffixes   []string                         `yaml:"member_allow_suffixes,omitempty"`
 	MemberDenySuffixes    []string                         `yaml:"member_deny_suffixes,omitempty"`
+	MaxMembers            int                              `yaml:"max_members,omitempty"`
+	MaxReconcileActions   int                              `yaml:"max_reconcile_actions,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
