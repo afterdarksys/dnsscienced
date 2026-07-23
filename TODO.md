@@ -76,9 +76,12 @@ Legend:
   expose truthful queue, saturation, and rejection metrics.
 - [ ] Add safe parallel or hedged nameserver queries with cancellation and bounded
   fan-out.
-- [ ] Wire the existing byte-buffer pools or an equivalent allocation strategy
+- [x] Wire the existing byte-buffer pools or an equivalent allocation strategy
   into measured production network paths; retain only changes that benchmarks
   show reduce allocations.
+- [ ] Bring the experimental assembly-parser UDP server to feature and security
+  parity before considering it for production; the primary UDP path remains the
+  audited `miekg/dns` server.
 - [ ] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.

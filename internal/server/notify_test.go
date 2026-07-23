@@ -33,11 +33,20 @@ func (t *testResponseWriter) WriteMsg(m *dns.Msg) error {
 	t.written = true
 	return nil
 }
-func (t *testResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
-func (t *testResponseWriter) Close() error                { return nil }
-func (t *testResponseWriter) TsigStatus() error           { return nil }
-func (t *testResponseWriter) TsigTimersOnly(b bool)       {}
-func (t *testResponseWriter) Hijack()                     {}
+func (t *testResponseWriter) Write(b []byte) (int, error) {
+	msg := new(dns.Msg)
+	if err := msg.Unpack(b); err != nil {
+		return 0, err
+	}
+	if err := t.WriteMsg(msg); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+func (t *testResponseWriter) Close() error          { return nil }
+func (t *testResponseWriter) TsigStatus() error     { return nil }
+func (t *testResponseWriter) TsigTimersOnly(b bool) {}
+func (t *testResponseWriter) Hijack()               {}
 
 // makeNotifyRequest creates a NOTIFY dns.Msg for the given qtype.
 func makeNotifyRequest(qtype uint16) *dns.Msg {

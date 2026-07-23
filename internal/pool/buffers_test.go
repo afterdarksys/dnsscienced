@@ -79,8 +79,8 @@ func TestLargeBufferPool(t *testing.T) {
 
 func TestGetBuffer(t *testing.T) {
 	tests := []struct {
-		size         int
-		expectedCap  int
+		size        int
+		expectedCap int
 	}{
 		{100, SmallBufferSize},
 		{512, SmallBufferSize},
@@ -113,6 +113,37 @@ func TestPutBuffer(t *testing.T) {
 	// Weird size - should be ignored
 	weird := make([]byte, 1234)
 	PutBuffer(weird) // Should not panic
+}
+
+func TestBufferPoolHotPathDoesNotAllocate(t *testing.T) {
+	for _, size := range []int{SmallBufferSize, MediumBufferSize, LargeBufferSize} {
+		buf := GetBuffer(size)
+		PutBuffer(buf)
+		if allocs := testing.AllocsPerRun(1000, func() {
+			hot := GetBuffer(size)
+			PutBuffer(hot)
+		}); allocs != 0 {
+			t.Fatalf("GetBuffer/PutBuffer size %d allocations = %.1f, want 0", size, allocs)
+		}
+	}
+}
+
+func TestGetPackBufferReservesFramingAndCompressionSpace(t *testing.T) {
+	msg := new(dns.Msg)
+	msg.SetQuestion("example.", dns.TypeA)
+
+	buf := GetPackBuffer(msg)
+	if len(buf)-2 < msg.Len()+1 {
+		t.Fatalf("pack buffer after framing = %d, want at least %d", len(buf)-2, msg.Len()+1)
+	}
+	PutBuffer(buf)
+
+	msg.Compress = true
+	buf = GetPackBuffer(msg)
+	if cap(buf) < MediumBufferSize {
+		t.Fatalf("compressed pack buffer capacity = %d, want at least %d", cap(buf), MediumBufferSize)
+	}
+	PutBuffer(buf)
 }
 
 func TestPutMessage_Nil(t *testing.T) {
