@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"hash/fnv"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -245,6 +246,40 @@ type Config struct {
 	// (non-matching) replies are counted, indicating an active cache poisoning
 	// attempt. 0 disables. (Unbound unwanted-reply-threshold)
 	UnwantedReplyThreshold uint64 `yaml:"unwanted_reply_threshold"`
+}
+
+// Validate checks operator-controlled cache sizing before allocation. A zero
+// value selects the documented default for that field.
+func (cfg Config) Validate() error {
+	if cfg.ShardCount < 0 || cfg.ShardCount > 65536 {
+		return fmt.Errorf("shard_count must be between 0 and 65536")
+	}
+	if cfg.MaxEntries < 0 {
+		return fmt.Errorf("max_entries cannot be negative")
+	}
+	if cfg.MaxMemoryMB < 0 || int64(cfg.MaxMemoryMB) > math.MaxInt64/(1024*1024) {
+		return fmt.Errorf("max_memory_mb is out of range")
+	}
+	if cfg.PrefetchMinTTLPct < 0 || cfg.PrefetchMinTTLPct > 1 {
+		return fmt.Errorf("prefetch_min_ttl_pct must be between 0 and 1")
+	}
+
+	shards := cfg.ShardCount
+	if shards == 0 {
+		shards = defaultShardCount
+	}
+	effectiveShards := 1
+	for effectiveShards < shards {
+		effectiveShards <<= 1
+	}
+	entries := cfg.MaxEntries
+	if entries == 0 {
+		entries = defaultShardSize * effectiveShards
+	}
+	if entries < effectiveShards {
+		return fmt.Errorf("max_entries (%d) must be at least effective shard_count (%d)", entries, effectiveShards)
+	}
+	return nil
 }
 
 // NewShardedCache creates a new sharded cache

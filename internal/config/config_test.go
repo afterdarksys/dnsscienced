@@ -32,6 +32,11 @@ resolver:
   forwarders:
     - "8.8.8.8:53"
 
+runtime:
+  max_procs: 6
+  gc_percent: 80
+  memory_limit_mb: 768
+
 dhcp:
   enabled: true
   interfaces: ["eth0", "eth1"]
@@ -119,6 +124,12 @@ dhcp:
 	// Verify Resolver/Cache Config
 	assert.Equal(t, 500, cfg.Resolver.CacheConfig.MaxEntries)
 	assert.Equal(t, "test-key-123", cfg.Resolver.CacheConfig.DarkAPIKey)
+
+	// Verify Go runtime tuning is decoded but not applied by Load.
+	require.NotNil(t, cfg.Runtime.GCPercent)
+	assert.Equal(t, 6, cfg.Runtime.MaxProcs)
+	assert.Equal(t, 80, *cfg.Runtime.GCPercent)
+	assert.Equal(t, int64(768), cfg.Runtime.MemoryLimitMB)
 
 	// Verify DHCP Config
 	assert.True(t, cfg.DHCP.Enabled)

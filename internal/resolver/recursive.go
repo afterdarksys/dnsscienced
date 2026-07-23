@@ -166,6 +166,9 @@ func DefaultConfig() Config {
 
 // NewRecursive creates a new recursive resolver
 func NewRecursive(cfg Config) (*Recursive, error) {
+	if err := cfg.CacheConfig.Validate(); err != nil {
+		return nil, fmt.Errorf("cache: %w", err)
+	}
 	if cfg.QueryTimeout == 0 {
 		cfg.QueryTimeout = 5 * time.Second
 	}

@@ -98,6 +98,8 @@ func TestNewRecursiveRejectsInvalidWorkerLimits(t *testing.T) {
 		{Workers: 1, WorkerQueueSize: -1},
 		{NameserverParallelism: -1},
 		{NameserverHedgeDelay: -time.Millisecond},
+		{CacheConfig: cache.Config{ShardCount: -1}},
+		{CacheConfig: cache.Config{ShardCount: 256, MaxEntries: 128}},
 	} {
 		if _, err := NewRecursive(cfg); err == nil {
 			t.Fatalf("NewRecursive(%+v) succeeded, want validation error", cfg)

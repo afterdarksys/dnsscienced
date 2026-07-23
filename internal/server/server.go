@@ -220,6 +220,13 @@ type Server struct {
 
 // New creates a new DNS server
 func New(cfg Config) (*Server, error) {
+	if cfg.UDPListeners == 0 {
+		cfg.UDPListeners = runtime.NumCPU()
+	}
+	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
+		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{

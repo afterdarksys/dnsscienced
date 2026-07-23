@@ -85,9 +85,9 @@ Legend:
 - [ ] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
-- [ ] Add validated runtime controls and documentation for listener count, resolver
+- [x] Add validated runtime controls and documentation for listener count, resolver
   concurrency, queue size, cache size/shards, and Go memory/GC limits.
-- [ ] Decide and document CPU-affinity support. Prefer service-manager/container
+- [x] Decide and document CPU-affinity support. Prefer service-manager/container
   affinity unless measurements justify per-worker OS-thread pinning.
 - [ ] Add explicit forwarding/upstream modes so operators can choose direct
   iterative resolution, public recursive resolvers, or conditional forwarders

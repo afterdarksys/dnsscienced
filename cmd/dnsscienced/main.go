@@ -129,6 +129,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
 			os.Exit(1)
 		}
+		config.ApplyRuntime(loadedCfg.Runtime)
+		fmt.Printf("Runtime concurrency: GOMAXPROCS=%d\n", runtime.GOMAXPROCS(0))
 		// Merge loaded config into default config
 		// For now, we just replace the server config section entirely
 		// A proper merge should look at which fields were set, but since we are unmarshaling

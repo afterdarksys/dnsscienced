@@ -1,4 +1,9 @@
 # DNSScienced Production Configuration with ThreatScript
+runtime:
+  max_procs: 0          # Auto/container-aware; set only after measuring
+  gc_percent: 100
+  memory_limit_mb: 768  # Keep above cache.max_memory_mb plus process overhead
+
 server:
   # Listen addresses
   udp_addr: "0.0.0.0:53"

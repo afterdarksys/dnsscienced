@@ -1,6 +1,13 @@
 # DNSScienced Configuration Example
 # Comprehensive configuration showing all defensive DNS features
 
+# Go runtime tuning. Omit or leave at zero to preserve Go's environment- and
+# container-aware defaults (GOMAXPROCS, GOGC, and GOMEMLIMIT).
+runtime:
+  max_procs: 0                  # Concurrent Go execution; not an OS thread count
+  # gc_percent: 100             # Optional GOGC override; -1 disables GC
+  memory_limit_mb: 0            # Soft Go memory limit; size caches separately below
+
 server:
   # Listen addresses
   udp_addr: "0.0.0.0:53"
