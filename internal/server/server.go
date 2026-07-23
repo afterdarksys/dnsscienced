@@ -124,10 +124,8 @@ type DSYNCConfig struct {
 // DefaultConfig returns default server configuration
 func DefaultConfig() Config {
 	rcfg := resolver.DefaultConfig()
-	rcfg.CacheConfig = cache.Config{
-		ShardCount: 256,
-		MaxEntries: 100000,
-	}
+	rcfg.CacheConfig.ShardCount = 256
+	rcfg.CacheConfig.MaxEntries = 100000
 	rcfg.Workers = 1000
 	rcfg.QueryTimeout = 5 * time.Second
 	rcfg.MaxIterations = 20

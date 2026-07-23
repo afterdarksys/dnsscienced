@@ -12,6 +12,9 @@ func TestDefaultConfigDoesNotExposeRecursion(t *testing.T) {
 	if cfg.EnableRecursive {
 		t.Fatal("DefaultConfig enables an open recursive resolver")
 	}
+	if cfg.RecursiveConfig.CacheConfig.MaxTTL == 0 {
+		t.Fatal("DefaultConfig discarded the resolver maximum cache TTL")
+	}
 }
 
 func TestNewRejectsInvalidRecursionCIDR(t *testing.T) {
