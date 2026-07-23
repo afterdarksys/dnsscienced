@@ -120,6 +120,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Implement and qualify guarded XSK-map redirection and the AF_XDP user-space
   engine; keep direct in-kernel cache responses out of scope until separately
   threat-modeled and proven faster.
+- [x] Quarantine and harden the legacy Netfilter RPZ module: root-only
+  capability-checked control, bounded ingress-only parsing, opt-in rate-limited
+  logging, fragment pass-through, and RCU-safe unload.
 - [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
