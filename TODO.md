@@ -92,7 +92,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   passthrough, NXDOMAIN, NODATA, drop, and rewrite actions.
 - [x] Wire RPZ loading and enforcement into the primary production server and its
   documented configuration path.
-- [ ] Implement response-IP and other RFC-defined RPZ triggers.
+- [x] Implement response-IP (`rpz-ip`) policy triggers for answer-section A/AAAA
+  data with IPv4/IPv6 prefix validation, RPZ-zone and trigger precedence, and
+  production authoritative/recursive response enforcement.
+- [ ] Implement client-IP, NS-name, and NS-IP RPZ triggers.
 - [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 

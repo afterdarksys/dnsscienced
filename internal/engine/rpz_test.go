@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -156,4 +158,78 @@ func TestRPZAggregate(t *testing.T) {
 	rule, action = agg.Check("google.com.")
 	assert.Nil(t, rule)
 	assert.Equal(t, RPZActionNone, action)
+}
+
+func TestRPZAggregateResponseIPPrecedence(t *testing.T) {
+	agg := NewRPZAggregate()
+	first := NewRPZ("first")
+	if err := first.AddResponseIPRule(
+		netip.MustParsePrefix("192.0.2.0/24"),
+		RPZActionNXDomain,
+		"",
+		"malware host",
+		"test",
+	); err != nil {
+		t.Fatal(err)
+	}
+	agg.AddZone(first)
+	second := NewRPZ("second")
+	second.AddRule("answer.example.", RPZActionNoData, "later qname")
+	agg.AddZone(second)
+
+	if rule, action, decisive := agg.CheckQueryShortcut("answer.example."); decisive ||
+		rule != nil || action != RPZActionNone {
+		t.Fatalf("query shortcut = (%+v, %v, %v), want deferred", rule, action, decisive)
+	}
+	request := new(dns.Msg)
+	request.SetQuestion("answer.example.", dns.TypeA)
+	response := new(dns.Msg)
+	response.SetReply(request)
+	response.Answer = []dns.RR{&dns.A{
+		Hdr: dns.RR_Header{Name: "answer.example.", Rrtype: dns.TypeA, Class: dns.ClassINET},
+		A:   net.ParseIP("192.0.2.53"),
+	}}
+	rule, action := agg.CheckResponse("answer.example.", response)
+	if rule == nil || rule.Zone != "first" || action != RPZActionNXDomain {
+		t.Fatalf("response match = (%+v, %v), want first-zone RPZ-IP", rule, action)
+	}
+}
+
+func TestRPZQNAMEOutranksResponseIPWithinZone(t *testing.T) {
+	policy := NewRPZ("policy")
+	policy.AddRule("answer.example.", RPZActionPassthru, "allow")
+	if err := policy.AddResponseIPRule(
+		netip.MustParsePrefix("192.0.2.0/24"),
+		RPZActionNXDomain,
+		"",
+		"block",
+		"test",
+	); err != nil {
+		t.Fatal(err)
+	}
+	request := new(dns.Msg)
+	request.SetQuestion("answer.example.", dns.TypeA)
+	response := new(dns.Msg)
+	response.SetReply(request)
+	response.Answer = []dns.RR{&dns.A{
+		Hdr: dns.RR_Header{Name: "answer.example.", Rrtype: dns.TypeA, Class: dns.ClassINET},
+		A:   net.ParseIP("192.0.2.53"),
+	}}
+	rule, action := policy.CheckResponse("answer.example.", response)
+	if rule == nil || action != RPZActionPassthru {
+		t.Fatalf("response match = (%+v, %v), want QNAME passthru", rule, action)
+	}
+}
+
+func TestRPZRejectsInvalidResponseIPPrefix(t *testing.T) {
+	policy := NewRPZ("policy")
+	if err := policy.AddResponseIPRule(
+		netip.Prefix{},
+		RPZActionNXDomain,
+		"",
+		"invalid",
+		"test",
+	); err == nil {
+		t.Fatal("accepted invalid response-IP prefix")
+	}
 }

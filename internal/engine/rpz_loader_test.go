@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/miekg/dns"
 )
 
 func TestLoadRPZFile(t *testing.T) {
@@ -87,17 +90,90 @@ $TTL 60
 	}
 }
 
-func TestLoadRPZFileRejectsUnsupportedTrigger(t *testing.T) {
+func TestLoadRPZFileLoadsResponseIPTriggers(t *testing.T) {
 	policyFile := writeRPZFile(t, `
 $ORIGIN rpz.example.
 $TTL 60
 @ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
 @ IN NS localhost.
 24.0.2.0.192.rpz-ip IN CNAME .
+32.2.2.0.192.rpz-ip IN CNAME rpz-passthru.
+48.zz.101.db8.2001.rpz-ip IN CNAME *.
 `)
 
+	policy, err := LoadRPZFile("security", policyFile, "")
+	if err != nil {
+		t.Fatalf("LoadRPZFile: %v", err)
+	}
+	tests := []struct {
+		address string
+		action  RPZAction
+	}{
+		{address: "192.0.2.1", action: RPZActionNXDomain},
+		{address: "192.0.2.2", action: RPZActionPassthru},
+		{address: "2001:db8:101::53", action: RPZActionNoData},
+		{address: "198.51.100.1", action: RPZActionNone},
+	}
+	for _, test := range tests {
+		t.Run(test.address, func(t *testing.T) {
+			request := new(dns.Msg)
+			request.SetQuestion("answer.example.", dns.TypeA)
+			response := new(dns.Msg)
+			response.SetReply(request)
+			if ip := net.ParseIP(test.address); ip.To4() != nil {
+				response.Answer = append(response.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "answer.example.", Rrtype: dns.TypeA, Class: dns.ClassINET},
+					A:   ip,
+				})
+			} else {
+				response.Answer = append(response.Answer, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: "answer.example.", Rrtype: dns.TypeAAAA, Class: dns.ClassINET},
+					AAAA: ip,
+				})
+			}
+			_, action := policy.CheckResponse("answer.example.", response)
+			if action != test.action {
+				t.Fatalf("action = %v, want %v", action, test.action)
+			}
+		})
+	}
+	if stats := policy.Stats(); stats.ResponseIPRules != 3 {
+		t.Fatalf("stats = %+v, want three response-IP rules", stats)
+	}
+}
+
+func TestLoadRPZFileRejectsInvalidResponseIPTriggers(t *testing.T) {
+	for _, trigger := range []string{
+		"rpz-ip",
+		"8.2.0.0.10.rpz-ip",
+		"0.0.0.0.0.rpz-ip",
+		"24.00.2.0.192.rpz-ip",
+		"48.zz.zz.db8.2001.rpz-ip",
+		"48.1.101.db8.2001.rpz-ip",
+	} {
+		t.Run(trigger, func(t *testing.T) {
+			policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+`+trigger+` IN CNAME .
+`)
+			if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
+				t.Fatalf("accepted invalid response-IP trigger %q", trigger)
+			}
+		})
+	}
+}
+
+func TestLoadRPZFileStillRejectsUnsupportedTrigger(t *testing.T) {
+	policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+24.0.2.0.192.rpz-client-ip IN CNAME .
+`)
 	if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
-		t.Fatal("expected unsupported response-IP trigger to fail closed")
+		t.Fatal("expected unsupported client-IP trigger to fail closed")
 	}
 }
 

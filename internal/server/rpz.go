@@ -130,12 +130,42 @@ func (s *Server) GetRPZStats() []engine.RPZStats {
 }
 
 func (s *Server) applyRPZ(req, resp *dns.Msg) (matched bool, drop bool, rule *engine.RPZRule) {
+	matched, drop, rule, _ = s.applyRPZQuery(req, resp)
+	return matched, drop, rule
+}
+
+func (s *Server) applyRPZQuery(
+	req, resp *dns.Msg,
+) (matched bool, drop bool, rule *engine.RPZRule, decisive bool) {
+	active := s.rpz.Load()
+	if active == nil || len(req.Question) != 1 {
+		return false, false, nil, true
+	}
+
+	rule, action, decisive := active.CheckQueryShortcut(req.Question[0].Name)
+	if !decisive {
+		return false, false, nil, false
+	}
+	matched, drop, rule = applyRPZAction(req, resp, rule, action)
+	return matched, drop, rule, true
+}
+
+func (s *Server) applyRPZResponse(
+	req, resp *dns.Msg,
+) (matched bool, drop bool, rule *engine.RPZRule) {
 	active := s.rpz.Load()
 	if active == nil || len(req.Question) != 1 {
 		return false, false, nil
 	}
+	rule, action := active.CheckResponse(req.Question[0].Name, resp)
+	return applyRPZAction(req, resp, rule, action)
+}
 
-	rule, action := active.Check(req.Question[0].Name)
+func applyRPZAction(
+	req, resp *dns.Msg,
+	rule *engine.RPZRule,
+	action engine.RPZAction,
+) (matched bool, drop bool, matchedRule *engine.RPZRule) {
 	if rule == nil || action == engine.RPZActionNone || action == engine.RPZActionPassthru {
 		return false, false, rule
 	}
@@ -145,6 +175,8 @@ func (s *Server) applyRPZ(req, resp *dns.Msg) (matched bool, drop bool, rule *en
 
 	resp.Answer = nil
 	resp.Ns = nil
+	resp.Extra = nil
+	resp.AuthenticatedData = false
 	switch action {
 	case engine.RPZActionNXDomain:
 		resp.Rcode = dns.RcodeNameError

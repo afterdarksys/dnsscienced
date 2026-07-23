@@ -1363,21 +1363,25 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	if matched, drop, rule := s.applyRPZ(r, m); matched {
-		s.observeClient(clientIP, reputation.SignalPolicy)
-		if drop {
+	rpzDecided := false
+	if matched, drop, rule, decisive := s.applyRPZQuery(r, m); decisive {
+		rpzDecided = true
+		if matched {
+			s.observeClient(clientIP, reputation.SignalPolicy)
+			if drop {
+				return
+			}
+			if s.shouldRateLimit(m, clientIP) {
+				return
+			}
+			s.answers.Add(1)
+			if m.Rcode == dns.RcodeNameError {
+				s.nxdomain.Add(1)
+			}
+			emitQuery(m.Rcode, rule.Zone)
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
-		if s.shouldRateLimit(m, clientIP) {
-			return
-		}
-		s.answers.Add(1)
-		if m.Rcode == dns.RcodeNameError {
-			s.nxdomain.Add(1)
-		}
-		emitQuery(m.Rcode, rule.Zone)
-		writeMsg(w, m) //nolint:errcheck
-		return
 	}
 
 	var responseClientCookie [8]byte
@@ -1454,6 +1458,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// Try authoritative first
 	if s.cfg.EnableAuthoritative {
 		if resp, ok := s.handleAuthoritative(r, clientIP); ok {
+			rpzZone := ""
+			if !rpzDecided {
+				if matched, drop, rule := s.applyRPZResponse(r, resp); matched {
+					s.observeClient(clientIP, reputation.SignalPolicy)
+					if drop {
+						return
+					}
+					rpzZone = rule.Zone
+				}
+			}
 			// Check RRL before sending
 			if s.shouldRateLimit(resp, clientIP) {
 				// Drop or slip
@@ -1491,7 +1505,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, m.Rcode)
 			}
 
-			emitQuery(m.Rcode, "")
+			emitQuery(m.Rcode, rpzZone)
 			writeMsg(w, m)
 			return
 		}
@@ -1523,6 +1537,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeMsg(w, m)
 			return
 		}
+		rpzZone := ""
+		if !rpzDecided {
+			if matched, drop, rule := s.applyRPZResponse(r, resp); matched {
+				s.observeClient(clientIP, reputation.SignalPolicy)
+				if drop {
+					return
+				}
+				rpzZone = rule.Zone
+			}
+		}
 
 		// Check RRL before sending
 		if s.shouldRateLimit(resp, clientIP) {
@@ -1550,7 +1574,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			s.addCookieToResponse(resp, responseClientCookie, responseServerCookie)
 		}
 
-		emitQuery(resp.Rcode, "")
+		emitQuery(resp.Rcode, rpzZone)
 		writeMsg(w, resp)
 		return
 	}

@@ -103,8 +103,9 @@ server:
       - "::1/128"
 
   # Response Policy Zones. Lower priority values are evaluated first.
-  # Files use standard RPZ QNAME CNAME policies and are atomically reloaded
-  # with SIGHUP. A failed reload retains the last valid policy.
+  # Files use standard RPZ QNAME and response-IP (.rpz-ip) CNAME policies and
+  # are atomically reloaded with SIGHUP. A failed reload retains the last
+  # valid policy.
   rpz:
     enabled: false
     zones:

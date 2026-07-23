@@ -1,12 +1,15 @@
 package server
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/dnsscience/dnsscienced/internal/ede"
+	"github.com/dnsscience/dnsscienced/internal/resolver"
+	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 
@@ -92,6 +95,87 @@ func TestRPZPriorityAndPassthru(t *testing.T) {
 	}
 	if got := queryServer(t, srv, "shared.example."); got.Rcode == dns.RcodeNameError {
 		t.Fatal("passthru in the highest-priority zone must override lower-priority block")
+	}
+}
+
+func TestServerEnforcesResponseIPOnAuthoritativeAnswer(t *testing.T) {
+	policy := writeServerRPZFile(t, "24.0.2.0.192.rpz-ip IN CNAME .")
+	srv, err := New(Config{
+		EnableAuthoritative: true,
+		Zones:               map[string]*zone.Zone{"example.com.": testZone()},
+		RPZ: RPZConfig{
+			Enabled: true,
+			Zones: []RPZZoneConfig{{
+				Name: "response-ip",
+				File: policy,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	response := queryServer(t, srv, "ns1.example.com.")
+	if response.Rcode != dns.RcodeNameError || len(response.Answer) != 0 {
+		t.Fatalf("response = %+v, want response-IP NXDOMAIN", response)
+	}
+	edes := ede.GetEDEFromMessage(response)
+	if len(edes) != 1 || edes[0].InfoCode != ede.InfoCodeFiltered {
+		t.Fatalf("EDEs = %+v, want one Filtered EDE", edes)
+	}
+}
+
+func TestServerEnforcesResponseIPOnRecursiveAnswer(t *testing.T) {
+	upstreamConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &dns.Server{
+		PacketConn: upstreamConn,
+		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, request *dns.Msg) {
+			response := new(dns.Msg)
+			response.SetReply(request)
+			response.Answer = []dns.RR{&dns.A{
+				Hdr: dns.RR_Header{
+					Name:   request.Question[0].Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    300,
+				},
+				A: net.ParseIP("203.0.113.9"),
+			}}
+			_ = w.WriteMsg(response)
+		}),
+	}
+	go func() {
+		_ = upstream.ActivateAndServe()
+	}()
+	defer upstream.Shutdown() //nolint:errcheck
+
+	policy := writeServerRPZFile(t, "24.0.113.0.203.rpz-ip IN CNAME .")
+	cfg := DefaultConfig()
+	cfg.EnableRecursive = true
+	cfg.RecursionAllowedCIDRs = []string{"192.0.2.0/24"}
+	cfg.RecursiveConfig.ForwardMode = resolver.ForwardModeOnly
+	cfg.RecursiveConfig.Forwarders = []string{upstreamConn.LocalAddr().String()}
+	cfg.RecursiveConfig.EnableDNSSEC = false
+	cfg.RPZ = RPZConfig{
+		Enabled: true,
+		Zones: []RPZZoneConfig{{
+			Name: "response-ip",
+			File: policy,
+		}},
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	response := queryServer(t, srv, "forwarded.example.")
+	if response.Rcode != dns.RcodeNameError || len(response.Answer) != 0 {
+		t.Fatalf("response = %+v, want response-IP NXDOMAIN", response)
 	}
 }
 

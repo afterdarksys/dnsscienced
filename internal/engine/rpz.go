@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
+	"net/netip"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -55,12 +58,17 @@ type RPZRule struct {
 // RPZ implements Response Policy Zones for DNS filtering.
 // It supports blocking, rewriting, and passthrough rules.
 type RPZ struct {
-	mu        sync.RWMutex
-	rules     map[string]*RPZRule // Exact match rules
-	wildcards map[string]*RPZRule // Wildcard rules (*.domain)
-	regex     []rpzRegexRule
-	name      string // Zone name for identification
-	enabled   bool
+	mu                  sync.RWMutex
+	rules               map[string]*RPZRule // Exact match rules
+	wildcards           map[string]*RPZRule // Wildcard rules (*.domain)
+	regex               []rpzRegexRule
+	responseIPv4        [33]map[netip.Addr]*RPZRule
+	responseIPv6        [129]map[netip.Addr]*RPZRule
+	responseIPv4Lengths []int
+	responseIPv6Lengths []int
+	responseIPRules     int
+	name                string // Zone name for identification
+	enabled             bool
 }
 
 type rpzRegexRule struct {
@@ -97,6 +105,54 @@ func (r *RPZ) AddRewriteRule(trigger, target, reason string) {
 // AddPassthru adds a passthru (whitelist) rule that overrides blocking rules.
 func (r *RPZ) AddPassthru(trigger, reason string) {
 	r.addRule(trigger, RPZActionPassthru, "", reason, "", false, false)
+}
+
+// AddResponseIPRule adds an RPZ-IP prefix rule. The prefix must be canonical;
+// malformed host bits are rejected by the zone-file loader.
+func (r *RPZ) AddResponseIPRule(
+	prefix netip.Prefix,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+) error {
+	if !prefix.IsValid() || prefix.Bits() < 1 ||
+		(prefix.Addr().Is4() && prefix.Bits() > 32) ||
+		(!prefix.Addr().Is4() && prefix.Bits() > 128) {
+		return fmt.Errorf("invalid RPZ-IP prefix %v", prefix)
+	}
+	prefix = prefix.Masked()
+	if rewriteTarget != "" {
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
+	}
+	rule := &RPZRule{
+		Trigger:       prefix.String(),
+		Action:        action,
+		RewriteTarget: rewriteTarget,
+		Reason:        reason,
+		Zone:          r.name,
+		Source:        source,
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lengths := &r.responseIPv6Lengths
+	table := r.responseIPv6[:]
+	if prefix.Addr().Is4() {
+		lengths = &r.responseIPv4Lengths
+		table = r.responseIPv4[:]
+	}
+	bits := prefix.Bits()
+	if table[bits] == nil {
+		table[bits] = make(map[netip.Addr]*RPZRule)
+		*lengths = append(*lengths, bits)
+		sort.Sort(sort.Reverse(sort.IntSlice(*lengths)))
+	}
+	if _, exists := table[bits][prefix.Addr()]; !exists {
+		r.responseIPRules++
+	}
+	table[bits][prefix.Addr()] = rule
+	return nil
 }
 
 // AddRegexRule adds a regular-expression QNAME policy. Expressions are
@@ -169,6 +225,10 @@ func (r *RPZ) addRule(
 // Check evaluates a query name against the RPZ rules.
 // Returns the matching rule and action, or nil/RPZActionNone if no match.
 func (r *RPZ) Check(name string) (*RPZRule, RPZAction) {
+	return r.checkName(name, true)
+}
+
+func (r *RPZ) checkName(name string, recordHit bool) (*RPZRule, RPZAction) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -180,7 +240,9 @@ func (r *RPZ) Check(name string) (*RPZRule, RPZAction) {
 
 	// 1. Check exact match first
 	if rule, ok := r.rules[name]; ok {
-		recordRPZHit(rule)
+		if recordHit {
+			recordRPZHit(rule)
+		}
 		return rule, rule.Action
 	}
 
@@ -192,19 +254,118 @@ func (r *RPZ) Check(name string) (*RPZRule, RPZAction) {
 			if rule.descendantsOnly && wildcard == name {
 				continue
 			}
-			recordRPZHit(rule)
+			if recordHit {
+				recordRPZHit(rule)
+			}
 			return rule, rule.Action
 		}
 	}
 
 	for _, candidate := range r.regex {
 		if candidate.expression.MatchString(name) {
-			recordRPZHit(candidate.rule)
+			if recordHit {
+				recordRPZHit(candidate.rule)
+			}
 			return candidate.rule, candidate.rule.Action
 		}
 	}
 
 	return nil, RPZActionNone
+}
+
+// HasResponseIPRules reports whether this zone can only be decided after a
+// truthful answer is available.
+func (r *RPZ) HasResponseIPRules() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.enabled && r.responseIPRules != 0
+}
+
+// CheckResponse evaluates QNAME first, then RPZ-IP against A/AAAA records in
+// the answer section only. Within one zone QNAME outranks RPZ-IP; among IP
+// matches the longest internal prefix wins, followed by the smaller address.
+func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
+	if rule, action := r.Check(name); action != RPZActionNone {
+		return rule, action
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.enabled || r.responseIPRules == 0 {
+		return nil, RPZActionNone
+	}
+
+	var best *RPZRule
+	bestInternalBits := -1
+	var bestAddress [16]byte
+	for _, rr := range msg.Answer {
+		var addr netip.Addr
+		switch record := rr.(type) {
+		case *dns.A:
+			ip := record.A.To4()
+			if ip == nil {
+				continue
+			}
+			var octets [4]byte
+			copy(octets[:], ip)
+			addr = netip.AddrFrom4(octets)
+		case *dns.AAAA:
+			parsed, ok := netip.AddrFromSlice(record.AAAA)
+			if !ok {
+				continue
+			}
+			addr = parsed
+		default:
+			continue
+		}
+		rule, prefix, ok := r.responseIPMatch(addr)
+		if !ok {
+			continue
+		}
+		internalBits := prefix.Bits()
+		if addr.Is4() {
+			internalBits += 96
+		}
+		address := rpzComparableAddress(prefix.Addr())
+		if best == nil ||
+			internalBits > bestInternalBits ||
+			(internalBits == bestInternalBits && bytes.Compare(address[:], bestAddress[:]) < 0) {
+			best = rule
+			bestInternalBits = internalBits
+			bestAddress = address
+		}
+	}
+	if best == nil {
+		return nil, RPZActionNone
+	}
+	recordRPZHit(best)
+	return best, best.Action
+}
+
+func (r *RPZ) responseIPMatch(addr netip.Addr) (*RPZRule, netip.Prefix, bool) {
+	lengths := r.responseIPv6Lengths
+	table := r.responseIPv6[:]
+	if addr.Is4() {
+		lengths = r.responseIPv4Lengths
+		table = r.responseIPv4[:]
+	}
+	for _, bits := range lengths {
+		prefix := netip.PrefixFrom(addr, bits).Masked()
+		if rule := table[bits][prefix.Addr()]; rule != nil {
+			return rule, prefix, true
+		}
+	}
+	return nil, netip.Prefix{}, false
+}
+
+func rpzComparableAddress(addr netip.Addr) [16]byte {
+	if !addr.Is4() {
+		return addr.As16()
+	}
+	var result [16]byte
+	v4 := addr.As4()
+	copy(result[12:], v4[:])
+	return result
 }
 
 // ApplyToResponse modifies a DNS response based on RPZ rules.
@@ -214,7 +375,7 @@ func (r *RPZ) ApplyToResponse(msg *dns.Msg) bool {
 		return false
 	}
 
-	rule, action := r.Check(msg.Question[0].Name)
+	rule, action := r.CheckResponse(msg.Question[0].Name, msg)
 	if rule == nil {
 		return false
 	}
@@ -225,11 +386,15 @@ func (r *RPZ) ApplyToResponse(msg *dns.Msg) bool {
 		msg.Answer = nil
 		msg.Ns = nil
 		msg.Extra = nil
+		msg.AuthenticatedData = false
 		return true
 
 	case RPZActionNoData:
 		msg.Rcode = dns.RcodeSuccess
 		msg.Answer = nil
+		msg.Ns = nil
+		msg.Extra = nil
+		msg.AuthenticatedData = false
 		return true
 
 	case RPZActionPassthru:
@@ -240,6 +405,9 @@ func (r *RPZ) ApplyToResponse(msg *dns.Msg) bool {
 		// Rewrite the answer to point to the target
 		if rule.RewriteTarget != "" {
 			msg.Answer = nil
+			msg.Ns = nil
+			msg.Extra = nil
+			msg.AuthenticatedData = false
 			// Add a CNAME pointing to the rewrite target
 			cname := &dns.CNAME{
 				Hdr:    dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
@@ -274,6 +442,11 @@ func (r *RPZ) Clear() {
 	r.rules = make(map[string]*RPZRule)
 	r.wildcards = make(map[string]*RPZRule)
 	r.regex = nil
+	r.responseIPv4 = [33]map[netip.Addr]*RPZRule{}
+	r.responseIPv6 = [129]map[netip.Addr]*RPZRule{}
+	r.responseIPv4Lengths = nil
+	r.responseIPv6Lengths = nil
+	r.responseIPRules = 0
 }
 
 // Stats returns statistics about the RPZ.
@@ -281,21 +454,23 @@ func (r *RPZ) Stats() RPZStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return RPZStats{
-		Name:          r.name,
-		Enabled:       r.enabled,
-		ExactRules:    len(r.rules),
-		WildcardRules: len(r.wildcards),
-		RegexRules:    len(r.regex),
+		Name:            r.name,
+		Enabled:         r.enabled,
+		ExactRules:      len(r.rules),
+		WildcardRules:   len(r.wildcards),
+		RegexRules:      len(r.regex),
+		ResponseIPRules: r.responseIPRules,
 	}
 }
 
 // RPZStats holds statistics about an RPZ.
 type RPZStats struct {
-	Name          string
-	Enabled       bool
-	ExactRules    int
-	WildcardRules int
-	RegexRules    int
+	Name            string
+	Enabled         bool
+	ExactRules      int
+	WildcardRules   int
+	RegexRules      int
+	ResponseIPRules int
 }
 
 // RPZAggregate manages multiple RPZ zones with priority ordering.
@@ -326,6 +501,44 @@ func (a *RPZAggregate) Check(name string) (*RPZRule, RPZAction) {
 
 	for _, rpz := range a.zones {
 		if rule, action := rpz.Check(name); action != RPZActionNone {
+			return rule, action
+		}
+	}
+	return nil, RPZActionNone
+}
+
+// CheckQueryShortcut returns a query-only result when it is safe to decide
+// before resolution. A QNAME match in a later zone must wait if an earlier
+// zone contains RPZ-IP rules that could take precedence.
+func (a *RPZAggregate) CheckQueryShortcut(name string) (*RPZRule, RPZAction, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	priorResponseRules := false
+	for _, rpz := range a.zones {
+		if rule, action := rpz.checkName(name, false); action != RPZActionNone {
+			if priorResponseRules {
+				return nil, RPZActionNone, false
+			}
+			recordRPZHit(rule)
+			return rule, action, true
+		}
+		if rpz.HasResponseIPRules() {
+			priorResponseRules = true
+		}
+	}
+	return nil, RPZActionNone, !priorResponseRules
+}
+
+// CheckResponse applies RPZ ordering first and trigger-type ordering second:
+// each zone gets a QNAME check followed by its RPZ-IP check before the next
+// lower-priority zone is considered.
+func (a *RPZAggregate) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	for _, rpz := range a.zones {
+		if rule, action := rpz.CheckResponse(name, msg); action != RPZActionNone {
 			return rule, action
 		}
 	}
