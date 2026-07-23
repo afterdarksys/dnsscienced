@@ -102,6 +102,79 @@ func TestValidateAuthenticatesDSDNSKEYChain(t *testing.T) {
 	}
 }
 
+func authenticatedExampleValidator(t *testing.T) (*Validator, dns.DNSKEY, crypto.Signer) {
+	t.Helper()
+	rootKey, rootPrivate := generatedDNSKEY(t, ".")
+	exampleKey, examplePrivate := generatedDNSKEY(t, "example.")
+	rootRRs := []dns.RR{&rootKey}
+	exampleDS := exampleKey.ToDS(dns.SHA256)
+	exampleDSRRs := []dns.RR{exampleDS}
+	exampleKeyRRs := []dns.RR{&exampleKey}
+	resolver := mapResolver{
+		".:DNSKEY":        {Answer: append(rootRRs, signedRRSet(t, rootRRs, ".", rootKey, rootPrivate))},
+		"example.:DS":     {Answer: append(exampleDSRRs, signedRRSet(t, exampleDSRRs, ".", rootKey, rootPrivate))},
+		"example.:DNSKEY": {Answer: append(exampleKeyRRs, signedRRSet(t, exampleKeyRRs, "example.", exampleKey, examplePrivate))},
+	}
+	v, err := NewValidator(DefaultValidatorConfig(), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.AddTrustAnchor(rootKey)
+	return v, exampleKey, examplePrivate
+}
+
+func TestValidateAuthenticatesNXDOMAINNSECProof(t *testing.T) {
+	v, key, private := authenticatedExampleValidator(t)
+	soa := &dns.SOA{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300}, Ns: "ns.example.", Mbox: "hostmaster.example.", Serial: 1, Refresh: 3600, Retry: 600, Expire: 86400, Minttl: 300}
+	nsec := &dns.NSEC{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 300}, NextDomain: "example.", TypeBitMap: []uint16{dns.TypeSOA, dns.TypeNS, dns.TypeNSEC, dns.TypeRRSIG}}
+	soaSet, nsecSet := []dns.RR{soa}, []dns.RR{nsec}
+	msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeNameError}}
+	msg.Ns = []dns.RR{soa, signedRRSet(t, soaSet, "example.", key, private), nsec, signedRRSet(t, nsecSet, "example.", key, private)}
+
+	result, err := v.Validate(context.Background(), msg, "missing.example.", dns.TypeA)
+	if err != nil || !result.Secure || result.Bogus {
+		t.Fatalf("Validate result=%+v err=%v, want Secure NXDOMAIN", result, err)
+	}
+
+	// A denial record modified after signing must fail cryptographic validation.
+	tampered := msg.Copy()
+	tampered.Ns[2].(*dns.NSEC).NextDomain = "z.example."
+	result, err = v.Validate(context.Background(), tampered, "missing.example.", dns.TypeA)
+	if err == nil || !result.Bogus || result.Secure {
+		t.Fatalf("tampered result=%+v err=%v, want Bogus", result, err)
+	}
+}
+
+func TestNSECAndNSEC3NODATAProofsRequireMissingType(t *testing.T) {
+	nsec := &dns.NSEC{Hdr: dns.RR_Header{Name: "www.example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET}, NextDomain: "z.example.", TypeBitMap: []uint16{dns.TypeA, dns.TypeRRSIG}}
+	if err := validateNSECProof(dns.RcodeSuccess, []*dns.NSEC{nsec}, "www.example.", dns.TypeAAAA); err != nil {
+		t.Fatalf("valid NSEC NODATA: %v", err)
+	}
+	if err := validateNSECProof(dns.RcodeSuccess, []*dns.NSEC{nsec}, "www.example.", dns.TypeA); err == nil {
+		t.Fatal("NSEC bitmap containing queried type accepted as NODATA")
+	}
+
+	hash := dns.HashName("www.example.", dns.SHA1, 0, "")
+	nsec3 := &dns.NSEC3{Hdr: dns.RR_Header{Name: hash + ".example.", Rrtype: dns.TypeNSEC3, Class: dns.ClassINET}, Hash: dns.SHA1, Iterations: 0, Salt: "", NextDomain: hash, TypeBitMap: []uint16{dns.TypeA, dns.TypeRRSIG}}
+	if err := validateNSEC3Proof(dns.RcodeSuccess, []*dns.NSEC3{nsec3}, "www.example.", dns.TypeAAAA); err != nil {
+		t.Fatalf("valid NSEC3 NODATA: %v", err)
+	}
+	if err := validateNSEC3Proof(dns.RcodeSuccess, []*dns.NSEC3{nsec3}, "www.example.", dns.TypeA); err == nil {
+		t.Fatal("NSEC3 bitmap containing queried type accepted as NODATA")
+	}
+}
+
+func TestNSEC3NXDOMAINRequiresClosestEncloserAndWildcardProof(t *testing.T) {
+	hash := dns.HashName("example.", dns.SHA1, 0, "")
+	nsec3 := &dns.NSEC3{Hdr: dns.RR_Header{Name: hash + ".example.", Rrtype: dns.TypeNSEC3, Class: dns.ClassINET}, Hash: dns.SHA1, NextDomain: hash, TypeBitMap: []uint16{dns.TypeSOA, dns.TypeNS}}
+	if err := validateNSEC3Proof(dns.RcodeNameError, []*dns.NSEC3{nsec3}, "missing.example.", dns.TypeA); err != nil {
+		t.Fatalf("valid NSEC3 NXDOMAIN: %v", err)
+	}
+	if err := validateNSEC3Proof(dns.RcodeNameError, []*dns.NSEC3{nsec3}, "missing.other.", dns.TypeA); err == nil {
+		t.Fatal("out-of-zone NSEC3 proof accepted")
+	}
+}
+
 func TestLoadTrustAnchorsFromFile(t *testing.T) {
 	key := dns.DNSKEY{
 		Hdr:       dns.RR_Header{Name: ".", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 3600},
