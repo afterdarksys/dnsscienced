@@ -148,8 +148,9 @@ type ZoneConfig struct {
 	PersistUpdates *bool    `yaml:"persist_updates,omitempty"` // nil/false = in-memory only; true = write-back to zone file (D-11)
 
 	// Zone transfer options (for secondary zones)
-	TransferSource  string        `yaml:"transfer_source,omitempty"`  // Source IP for AXFR
-	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
+	TransferSource  string        `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
+	TransferTSIGKey string        `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
+	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"`  // Override SOA refresh
 
 	// AllowAXFRFallback controls whether IXFR failures fall back to a full AXFR.
 	// Set to false to force operators to fix IXFR issues rather than silently

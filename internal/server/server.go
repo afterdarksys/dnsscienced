@@ -190,8 +190,10 @@ type Server struct {
 	dsyncNotifier    *dsync.DSYNCNotifier
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
-	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
-	persistMu        sync.Mutex                  // Orders zone swaps and durable snapshots across UPDATE requests.
+	soaNotifyMu      sync.RWMutex
+	soaNotifyHandler SOANotifyHandler
+	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
+	persistMu        sync.Mutex        // Orders zone swaps and durable snapshots across UPDATE requests.
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -721,9 +723,43 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeMsg(w, m) //nolint:errcheck
 			return
 		}
-		// RFC 9859 DSYNC notifications use CDS or CSYNC. Ordinary RFC 1996
-		// SOA NOTIFY belongs to secondary-zone refresh, which is not yet
-		// implemented; never route it through the DSYNC acceptance path.
+		if r.Question[0].Qtype == dns.TypeSOA {
+			if clientIP == nil || r.Question[0].Qclass != dns.ClassINET {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeRefused
+				writeMsg(w, m) //nolint:errcheck
+				return
+			}
+			if r.IsTsig() != nil && w.TsigStatus() != nil {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeNotAuth
+				writeMsg(w, m) //nolint:errcheck
+				return
+			}
+			var tsigName string
+			if requestTSIG := r.IsTsig(); requestTSIG != nil {
+				tsigName = requestTSIG.Hdr.Name
+			}
+			s.soaNotifyMu.RLock()
+			handler := s.soaNotifyHandler
+			s.soaNotifyMu.RUnlock()
+
+			m := new(dns.Msg)
+			m.SetReply(r)
+			if requestTSIG := r.IsTsig(); requestTSIG != nil {
+				m.SetTsig(requestTSIG.Hdr.Name, requestTSIG.Algorithm, requestTSIG.Fudge, time.Now().Unix())
+			}
+			if handler == nil {
+				m.Rcode = dns.RcodeNotImplemented
+			} else if err := handler.HandleNotify(s.ctx, r.Question[0].Name, clientIP, tsigName); err != nil {
+				m.Rcode = dns.RcodeRefused
+			}
+			writeMsg(w, m) //nolint:errcheck
+			return
+		}
+		// RFC 9859 DSYNC notifications use CDS or CSYNC.
 		if r.Question[0].Qtype != dns.TypeCDS && r.Question[0].Qtype != dns.TypeCSYNC {
 			m := new(dns.Msg)
 			m.SetReply(r)

@@ -104,7 +104,7 @@ safe automatic provisioning for authoritative server fleets.
 - [x] Authenticate AXFR and DNS UPDATE with TSIG.
 - [x] Serve AXFR and accept IXFR requests with documented AXFR fallback.
 - [ ] Implement true IXFR delta generation and consumption.
-- [ ] Implement ordinary SOA NOTIFY-driven secondary refresh; DSYNC NOTIFY support
+- [x] Implement ordinary SOA NOTIFY-driven secondary refresh; DSYNC NOTIFY support
   does not satisfy this prerequisite.
 
 ### Catalog data model and validation

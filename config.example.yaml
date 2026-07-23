@@ -117,15 +117,33 @@ zones:
     allow_transfer:
       - "192.0.2.0/24"         # Allow AXFR from this network
       - "2001:db8::/32"
-    # also_notify is reserved for future secondary notification support.
+    # also_notify is reserved for outbound primary NOTIFY support.
 
     # Security overrides (per-zone)
     enable_0x20: true          # Enable 0x20 for this zone
     enable_dnssec: true        # Enable DNSSEC validation
     enable_scrubbing: true     # Enable response scrubbing
 
-  # Secondary, forward, and stub zone roles are intentionally rejected at
-  # startup until their transfer/forwarding engines are implemented.
+  # Secondary zones perform an initial AXFR before listeners open, then refresh
+  # from SOA timers or authenticated/authorized RFC 1996 NOTIFY.
+  # - name: "secondary.example.com"
+  #   type: "secondary"
+  #   masters:
+  #     - "192.0.2.10:53"
+  #     - "[2001:db8::10]:53"
+  #   transfer_source: "192.0.2.20"
+  #   transfer_tsig_key: "secondary-xfer.example."
+  #   refresh_interval: 1h     # optional; otherwise use transferred SOA
+  #   min_refresh_time: 5m
+  #   max_refresh_time: 24h
+  #   min_retry_time: 30s
+  #   max_retry_time: 1h
+  #
+  # Define the referenced key at top level:
+  # tsig_keys:
+  #   - name: "secondary-xfer.example."
+  #     algorithm: "hmac-sha256"
+  #     secret: "<base64-secret>"
 
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases

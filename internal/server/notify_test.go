@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
 
@@ -134,6 +136,52 @@ func TestOrdinarySOANotifyIsNotAcceptedAsDSYNC(t *testing.T) {
 	s.handleDNS(w, makeNotifyRequest(dns.TypeSOA))
 	if !w.written || w.rcode != dns.RcodeNotImplemented {
 		t.Fatalf("written=%v rcode=%d, want NOTIMPL", w.written, w.rcode)
+	}
+}
+
+type soaNotifyHandlerFunc func(context.Context, string, net.IP, string) error
+
+func (f soaNotifyHandlerFunc) HandleNotify(ctx context.Context, zone string, source net.IP, key string) error {
+	return f(ctx, zone, source, key)
+}
+
+func TestOrdinarySOANotifyTriggersSecondaryRefresh(t *testing.T) {
+	s, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	called := false
+	s.SetSOANotifyHandler(soaNotifyHandlerFunc(func(_ context.Context, zone string, source net.IP, key string) error {
+		called = true
+		if zone != "example.com." || !source.Equal(net.ParseIP("192.0.2.1")) || key != "" {
+			t.Fatalf("notify zone=%q source=%v key=%q", zone, source, key)
+		}
+		return nil
+	}))
+
+	w := newTestResponseWriter("192.0.2.1")
+	s.handleDNS(w, makeNotifyRequest(dns.TypeSOA))
+	if !called || w.rcode != dns.RcodeSuccess {
+		t.Fatalf("called=%v rcode=%d, want accepted SOA NOTIFY", called, w.rcode)
+	}
+}
+
+func TestOrdinarySOANotifyRejectsUnauthorizedSource(t *testing.T) {
+	s, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	s.SetSOANotifyHandler(soaNotifyHandlerFunc(func(context.Context, string, net.IP, string) error {
+		return errors.New("unauthorized")
+	}))
+
+	w := newTestResponseWriter("198.51.100.1")
+	s.handleDNS(w, makeNotifyRequest(dns.TypeSOA))
+	if w.rcode != dns.RcodeRefused {
+		t.Fatalf("rcode=%d, want REFUSED", w.rcode)
 	}
 }
 

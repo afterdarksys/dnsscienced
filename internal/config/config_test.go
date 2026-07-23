@@ -264,6 +264,7 @@ zones:
       - "10.0.1.10:53"
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
+    transfer_tsig_key: "secondary-xfer.example."
     refresh_interval: 3600s
 
   - name: "forward.example.com"
@@ -325,6 +326,7 @@ zones:
 	assert.Len(t, secondaryZone.Masters, 2)
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
+	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 
 	// Verify forward zone
