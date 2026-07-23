@@ -200,6 +200,8 @@ catalog_zones:
   - name: catalog.example.
     masters: [192.0.2.1]
     transfer_tsig_key: catalog-key.example.
+    member_allow_suffixes: [customer.example.]
+    member_deny_suffixes: [suspended.customer.example.]
     member_defaults:
       masters: [192.0.2.2]
       transfer_tsig_key: member-key.example.
@@ -220,7 +222,9 @@ catalog_zones:
 	}
 	if len(cfg.CatalogZones) != 1 ||
 		cfg.CatalogZones[0].MemberDefaults.Masters[0] != "192.0.2.2" ||
-		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" {
+		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" ||
+		cfg.CatalogZones[0].MemberAllowSuffixes[0] != "customer.example." ||
+		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." {
 		t.Fatalf("catalog config = %+v", cfg.CatalogZones)
 	}
 }

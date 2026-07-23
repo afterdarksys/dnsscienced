@@ -746,9 +746,11 @@ func buildCatalogConfigs(cfg *config.Config) (
 			groups[group] = resolved
 		}
 		sources = append(sources, catalog.SourceConfig{
-			Name:     name,
-			Defaults: defaults,
-			Groups:   groups,
+			Name:                name,
+			Defaults:            defaults,
+			Groups:              groups,
+			MemberAllowSuffixes: append([]string(nil), configured.MemberAllowSuffixes...),
+			MemberDenySuffixes:  append([]string(nil), configured.MemberDenySuffixes...),
 		})
 		transfers[name] = transfer
 	}

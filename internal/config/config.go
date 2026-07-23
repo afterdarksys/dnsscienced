@@ -218,6 +218,8 @@ type CatalogZoneConfig struct {
 	CatalogTransferConfig `yaml:",inline"`
 	MemberDefaults        CatalogTransferConfig            `yaml:"member_defaults"`
 	Groups                map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
+	MemberAllowSuffixes   []string                         `yaml:"member_allow_suffixes,omitempty"`
+	MemberDenySuffixes    []string                         `yaml:"member_deny_suffixes,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone

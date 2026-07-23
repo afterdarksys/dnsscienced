@@ -48,6 +48,8 @@ catalog_zones:
   - name: catalog.example.
     masters: [192.0.2.10]
     transfer_tsig_key: catalog-xfer.example.
+    member_allow_suffixes: [customer.example.]
+    member_deny_suffixes: [suspended.customer.example.]
 
     member_defaults:
       masters: [192.0.2.20]
@@ -62,6 +64,11 @@ catalog_zones:
 Each `group` key matches the concatenated character-strings of one RFC 9432
 group TXT RDATA. The first configured match in the catalog's deterministic
 group order wins; otherwise `member_defaults` applies.
+
+When `member_allow_suffixes` is non-empty, every member must be at or below one
+of those DNS suffixes. `member_deny_suffixes` is evaluated first and overrides
+the allow list. A scope violation rejects the complete catalog snapshot and
+retains the last-valid fleet state.
 
 State is written atomically with mode `0600` and includes last-valid catalog
 records, member-zone records, and catalog ownership. Startup restores those

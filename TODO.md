@@ -195,7 +195,8 @@ fleet-scale policy, operations, interoperability, and producer support.
   default.
 - [ ] Support confidential catalog transfer using RFC 9103.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
-- [ ] Scope admissible member names with allow/deny suffixes or regular expressions.
+- [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
+  rules take precedence and reject the complete snapshot.
 - [ ] Add limits for catalogs, members per catalog, reconciliation rate, transfer
   size, and simultaneous member provisioning.
 - [ ] Reject recursive/self-referential ownership and provisioning cycles.

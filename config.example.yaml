@@ -181,6 +181,19 @@ zones:
   #     algorithm: "hmac-sha256"
   #     secret: "<base64-secret>"
 
+# RFC 9432 catalog consumers stay private and provision authenticated
+# secondaries. A scope violation rejects the complete new snapshot.
+# catalog_state_file: "/var/lib/dnsscienced/catalog-state.json"
+# catalog_zones:
+#   - name: "catalog.example."
+#     masters: ["192.0.2.10:53"]
+#     transfer_tsig_key: "secondary-xfer.example."
+#     member_allow_suffixes: ["customer.example."]
+#     member_deny_suffixes: ["suspended.customer.example."]
+#     member_defaults:
+#       masters: ["192.0.2.20:53"]
+#       transfer_tsig_key: "secondary-xfer.example."
+
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases
 defensive:
