@@ -49,3 +49,15 @@ func TestResolver_Resolve(t *testing.T) {
 	assert.Equal(t, "A", res.Answer[0].Type)
 	assert.Equal(t, "1.2.3.4", res.Answer[0].Data)
 }
+
+func TestResolver_Resolve_UnknownQTypeFailsLoud(t *testing.T) {
+	// An unrecognized query type string must not be silently coerced to A —
+	// it must return an error (fail-open type confusion regression guard).
+	r := NewResolver("127.0.0.1:1") // unreachable; must never be dialed
+
+	res, err := r.Resolve(context.Background(), "example.com.", "TYPE65", "IN", false, true, false)
+	require.Error(t, err)
+	require.Nil(t, res)
+	assert.Contains(t, err.Error(), "unknown query type")
+	assert.Contains(t, err.Error(), "TYPE65")
+}

@@ -681,6 +681,30 @@ firewall:
         account_type: free
         trust_bonus: 0
 
+    # Remote feed poller: periodically fetches domain/IP threat scores from
+    # an HTTP(S) endpoint. Disabled (no-op) when feed_url is empty.
+    feed_url: ""                 # HTTP(S) URL to poll. Empty = poller not started.
+    poll_interval: 5m            # How often to fetch the feed. Default: 5m.
+    timeout: 30s                 # HTTP request timeout per fetch cycle. Default: 30s.
+    tls_skip_verify: false       # DANGER: disables TLS certificate verification.
+                                  # Defaults to false; do not set true in production —
+                                  # only for troubleshooting self-signed test endpoints.
+    auth_token: ""                # Sent as "Authorization: Bearer <value>" when non-empty.
+                                   # Never logged — only presence is logged.
+    headers: {}                   # Additional HTTP request headers added to each feed fetch.
+      # X-Custom-Header: "value"
+
+    # Commercial feed (requires subscription)
+    # dnsscience.io scored threat-intel feed — returns per-domain/IP scores
+    # for direct ingestion by the feed poller above.
+    # feed_url: "https://api.dnsscience.io/v1/scored-feed"
+    # poll_interval: 5m
+    # timeout: 30s
+    # tls_skip_verify: false
+    # auth_token: "YOUR_DNSSCIENCE_IO_API_KEY"
+    # headers:
+    #   Accept: "application/json"
+
 # Example Starlark policy script (save to a .star file and reference above):
 #
 #   def on_query(q, score):

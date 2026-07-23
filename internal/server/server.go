@@ -702,6 +702,27 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	// RFC 6891 §6.1.3: this server only implements EDNS version 0. A request
+	// that advertises a higher EDNS VERSION in its OPT record MUST be answered
+	// with RCODE BADVERS and an OPT RR advertising our supported version (0),
+	// with no answer/authority/additional data beyond that OPT.
+	if reqOpt := r.IsEdns0(); reqOpt != nil && reqOpt.Version() > 0 {
+		m.Rcode = dns.RcodeBadVers
+		respOpt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+				Class:  4096,
+			},
+		}
+		respOpt.SetVersion(0)
+		m.Extra = append(m.Extra, respOpt)
+		s.errors.Add(1)
+		emitQuery(m.Rcode, "")
+		w.WriteMsg(m)
+		return
+	}
+
 	question := r.Question[0]
 
 	// Log query if enabled
@@ -772,15 +793,19 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if s.cfg.EnableCookies && s.cookies != nil {
 		// Extract cookies from request
 		var clientCookie [8]byte
-		var serverCookie [8]byte
+		// Server cookie is the 16-byte RFC 9018 layout (version+reserved+
+		// timestamp+hash); a full client-supplied cookie is 8+16 = 24 bytes.
+		var serverCookie [16]byte
 
 		opt := r.IsEdns0()
 		if opt != nil {
 			for _, option := range opt.Option {
 				if cookie, ok := option.(*dns.EDNS0_COOKIE); ok {
-					copy(clientCookie[:], cookie.Cookie[:8])
-					if len(cookie.Cookie) >= 16 {
-						copy(serverCookie[:], cookie.Cookie[8:16])
+					if len(cookie.Cookie) >= 8 {
+						copy(clientCookie[:], cookie.Cookie[:8])
+					}
+					if len(cookie.Cookie) >= 24 {
+						copy(serverCookie[:], cookie.Cookie[8:24])
 					}
 					break
 				}
@@ -789,7 +814,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		// Validate if we have a server cookie
 		valid := false
-		hasServerCookie := serverCookie != [8]byte{}
+		hasServerCookie := serverCookie != [16]byte{}
 		if hasServerCookie {
 			valid = s.cookies.ValidateServerCookie(clientCookie, serverCookie, clientIP) == nil
 		}
@@ -955,6 +980,17 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 
 	// Get records
 	records := matchedZone.GetRecords(qname, qtype)
+
+	// RFC 1034 §3.6.2: a CNAME record must be returned for a query of ANY
+	// type at that owner name, since the name is an alias. Without this,
+	// queries for A/AAAA/etc. at a CNAME-only name incorrectly return NODATA
+	// instead of the CNAME, breaking resolution for any client that doesn't
+	// query the exact CNAME type (i.e. every real-world client).
+	if len(records) == 0 && qtype != dns.TypeCNAME {
+		if cnameRecords := matchedZone.GetRecords(qname, dns.TypeCNAME); len(cnameRecords) > 0 {
+			records = cnameRecords
+		}
+	}
 
 	if len(records) > 0 {
 		m.Answer = records
@@ -1131,7 +1167,7 @@ func (s *Server) DisableAuthoritative() {
 }
 
 // addCookieToResponse adds DNS cookie to response
-func (s *Server) addCookieToResponse(m *dns.Msg, clientCookie, serverCookie [8]byte) {
+func (s *Server) addCookieToResponse(m *dns.Msg, clientCookie [8]byte, serverCookie [16]byte) {
 	opt := m.IsEdns0()
 	if opt == nil {
 		opt = &dns.OPT{
@@ -1144,10 +1180,10 @@ func (s *Server) addCookieToResponse(m *dns.Msg, clientCookie, serverCookie [8]b
 		m.Extra = append(m.Extra, opt)
 	}
 
-	// Combine client and server cookies
-	fullCookie := make([]byte, 16)
+	// Combine client (8) and server (16) cookies → 24-byte on-wire cookie.
+	fullCookie := make([]byte, 24)
 	copy(fullCookie[0:8], clientCookie[:])
-	copy(fullCookie[8:16], serverCookie[:])
+	copy(fullCookie[8:24], serverCookie[:])
 
 	opt.Option = append(opt.Option, &dns.EDNS0_COOKIE{
 		Code:   dns.EDNS0COOKIE,

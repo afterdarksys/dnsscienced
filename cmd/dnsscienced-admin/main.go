@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"os"
@@ -16,9 +18,10 @@ import (
 	"strings"
 	"time"
 
-	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
 	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
@@ -27,7 +30,66 @@ var (
 	addr    = flag.String("addr", "localhost:9091", "gRPC admin API address (host:port)")
 	apiKey  = flag.String("key", "", "API key (Bearer token)")
 	timeout = flag.Duration("timeout", 15*time.Second, "Request timeout")
+
+	// TLS / mTLS: the server requires both a client certificate and the API key.
+	tlsCA      = flag.String("tls-ca", "", "PEM CA bundle that signed the server cert (required unless -insecure)")
+	tlsCert    = flag.String("tls-cert", "", "client certificate for mTLS")
+	tlsKey     = flag.String("tls-key", "", "client private key for mTLS")
+	tlsServer  = flag.String("tls-server-name", "", "expected server name (SNI/cert CN); defaults to -addr host")
+	insecureNo = flag.Bool("insecure", false, "DANGER: connect without TLS; sends the API key in cleartext")
 )
+
+// buildDialCreds returns the gRPC transport credentials for the admin connection.
+// TLS (with mTLS when a client cert is supplied) is the default; -insecure is an
+// explicit, loudly-warned opt-out that the operator must request.
+func buildDialCreds() (credentials.TransportCredentials, error) {
+	if *insecureNo {
+		if *apiKey != "" {
+			fmt.Fprintln(os.Stderr, "WARNING: -insecure sends your API key in CLEARTEXT over the network. Use TLS in production.")
+		}
+		return insecure.NewCredentials(), nil
+	}
+
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+	// Server name for verification: explicit flag, else the host part of -addr.
+	if *tlsServer != "" {
+		tlsCfg.ServerName = *tlsServer
+	} else if host := *addr; host != "" {
+		if i := strings.LastIndex(host, ":"); i > 0 {
+			host = host[:i]
+		}
+		tlsCfg.ServerName = host
+	}
+
+	// Pin the server CA when provided (recommended); otherwise fall back to the
+	// system trust store.
+	if *tlsCA != "" {
+		caPEM, err := os.ReadFile(*tlsCA)
+		if err != nil {
+			return nil, fmt.Errorf("read tls-ca: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("no valid CA certs in %s", *tlsCA)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	// Client certificate for mTLS (the server uses RequireAndVerifyClientCert).
+	if *tlsCert != "" || *tlsKey != "" {
+		if *tlsCert == "" || *tlsKey == "" {
+			return nil, fmt.Errorf("both -tls-cert and -tls-key are required for mTLS")
+		}
+		cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
+}
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `DNSScienced Admin CLI
@@ -35,9 +97,16 @@ func usage() {
 Usage: %s [options] <command> [args...]
 
 Options:
-  -addr string   gRPC address (default "localhost:9091")
-  -key  string   API key
-  -timeout dur   Request timeout (default 15s)
+  -addr string            gRPC address (default "localhost:9091")
+  -key  string            API key (Bearer token)
+  -timeout dur            Request timeout (default 15s)
+  -tls-ca file            CA bundle that signed the server cert (pin the server)
+  -tls-cert / -tls-key    client cert + key for mTLS (server requires both)
+  -tls-server-name name   expected server cert name (defaults to -addr host)
+  -insecure               DANGER: no TLS; sends the API key in cleartext
+
+By default the CLI connects over TLS. The server requires mTLS + API key, so a
+typical call supplies -tls-ca, -tls-cert, -tls-key, and -key.
 
 Zone management:
   zone list                              List all zones
@@ -95,8 +164,14 @@ func main() {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+*apiKey)
 	}
 
+	creds, err := buildDialCreds()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tls setup: %v\n", err)
+		os.Exit(1)
+	}
+
 	conn, err := grpc.DialContext(ctx, *addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -107,7 +182,7 @@ func main() {
 
 	mgmt := mgmtpb.NewManagementServiceClient(conn)
 	zone := pb.NewZoneServiceClient(conn)
-	srv  := pb.NewServerServiceClient(conn)
+	srv := pb.NewServerServiceClient(conn)
 	cache := pb.NewCacheServiceClient(conn)
 
 	cmd := flag.Arg(0)
@@ -148,7 +223,9 @@ func handleZone(ctx context.Context, c mgmtpb.ManagementServiceClient, sub strin
 		}
 
 	case "get":
-		if len(args) < 1 { die("zone get <zone>") }
+		if len(args) < 1 {
+			die("zone get <zone>")
+		}
 		resp, err := c.GetZone(ctx, &mgmtpb.GetZoneRequest{ZoneId: args[0]})
 		must(err)
 		z := resp.Zone
@@ -161,7 +238,9 @@ func handleZone(ctx context.Context, c mgmtpb.ManagementServiceClient, sub strin
 		fmt.Printf("  DNSSEC: %v\n", z.DnssecEnabled)
 
 	case "create":
-		if len(args) < 2 { die("zone create <zone> <ns1> [ns2...]") }
+		if len(args) < 2 {
+			die("zone create <zone> <ns1> [ns2...]")
+		}
 		resp, err := c.CreateZone(ctx, &mgmtpb.CreateZoneRequest{
 			Domain:      args[0],
 			Nameservers: args[1:],
@@ -170,7 +249,9 @@ func handleZone(ctx context.Context, c mgmtpb.ManagementServiceClient, sub strin
 		fmt.Printf("Created zone %s  (ns: %v)\n", args[0], resp.Nameservers)
 
 	case "delete":
-		if len(args) < 1 { die("zone delete <zone>") }
+		if len(args) < 1 {
+			die("zone delete <zone>")
+		}
 		resp, err := c.DeleteZone(ctx, &mgmtpb.DeleteZoneRequest{ZoneId: args[0]})
 		must(err)
 		fmt.Println(resp.Message)
@@ -197,9 +278,13 @@ func handleZone(ctx context.Context, c mgmtpb.ManagementServiceClient, sub strin
 func handleRecord(ctx context.Context, c mgmtpb.ManagementServiceClient, sub string, args []string) {
 	switch sub {
 	case "list":
-		if len(args) < 1 { die("record list <zone> [type]") }
+		if len(args) < 1 {
+			die("record list <zone> [type]")
+		}
 		req := &mgmtpb.ListRecordsRequest{ZoneId: args[0]}
-		if len(args) > 1 { req.RecordType = args[1] }
+		if len(args) > 1 {
+			req.RecordType = args[1]
+		}
 		resp, err := c.ListRecords(ctx, req)
 		must(err)
 		fmt.Printf("Records in %s (%d):\n", args[0], resp.Total)
@@ -209,7 +294,9 @@ func handleRecord(ctx context.Context, c mgmtpb.ManagementServiceClient, sub str
 
 	case "add":
 		// record add <zone> <name> <type> <content> [ttl]
-		if len(args) < 4 { die("record add <zone> <name> <type> <content> [ttl]") }
+		if len(args) < 4 {
+			die("record add <zone> <name> <type> <content> [ttl]")
+		}
 		ttl := int32(300)
 		if len(args) > 4 {
 			n, _ := strconv.Atoi(args[4])
@@ -229,7 +316,9 @@ func handleRecord(ctx context.Context, c mgmtpb.ManagementServiceClient, sub str
 
 	case "del", "delete":
 		// record del <zone> <record-id>
-		if len(args) < 2 { die("record del <zone> <record-id>") }
+		if len(args) < 2 {
+			die("record del <zone> <record-id>")
+		}
 		resp, err := c.DeleteRecord(ctx, &mgmtpb.DeleteRecordRequest{
 			ZoneId:   args[0],
 			RecordId: args[1],
@@ -239,7 +328,9 @@ func handleRecord(ctx context.Context, c mgmtpb.ManagementServiceClient, sub str
 
 	case "update":
 		// record update <zone> <record-id> <type> <content> [ttl]
-		if len(args) < 4 { die("record update <zone> <record-id> <type> <content> [ttl]") }
+		if len(args) < 4 {
+			die("record update <zone> <record-id> <type> <content> [ttl]")
+		}
 		ttl := int32(300)
 		if len(args) > 4 {
 			n, _ := strconv.Atoi(args[4])
@@ -268,13 +359,17 @@ func handleUpdate(ctx context.Context, c pb.ZoneServiceClient, sub string, args 
 	// update add    <zone> <name> <type> <data> [ttl]
 	// update delete <zone> <name> <type> [data]
 	// update replace <zone> <name> <type> <new-data> [old-data]
-	if len(args) < 3 { die("update <add|delete|replace> <zone> <name> <type> [data...]") }
+	if len(args) < 3 {
+		die("update <add|delete|replace> <zone> <name> <type> [data...]")
+	}
 
 	zone := args[0]
 	name := args[1]
 	rtype := strings.ToUpper(args[2])
 	data := ""
-	if len(args) > 3 { data = args[3] }
+	if len(args) > 3 {
+		data = args[3]
+	}
 	ttl := uint32(300)
 	if len(args) > 4 {
 		n, _ := strconv.Atoi(args[4])
@@ -314,7 +409,9 @@ func handleUpdate(ctx context.Context, c pb.ZoneServiceClient, sub string, args 
 	fmt.Printf("Applied: %d  Failed: %d  Serial: %d\n", resp.Applied, resp.Failed, resp.NewSerial)
 	for _, r := range resp.Results {
 		status := "ok"
-		if !r.Success { status = "FAIL: " + r.Error }
+		if !r.Success {
+			status = "FAIL: " + r.Error
+		}
 		fmt.Printf("  %s %s %s → %s\n", r.Update.Name, r.Update.Type, r.Update.Data, status)
 	}
 }
@@ -389,7 +486,11 @@ func fmtUptime(secs int64) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
-	if h > 0 { return fmt.Sprintf("%dh%dm%ds", h, m, s) }
-	if m > 0 { return fmt.Sprintf("%dm%ds", m, s) }
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm%ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
 	return fmt.Sprintf("%ds", s)
 }

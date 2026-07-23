@@ -1,6 +1,7 @@
 package dnssec
 
 import (
+	"strconv"
 	"sync"
 	"time"
 )
@@ -99,5 +100,5 @@ func (c *ValidationCache) cleanup() {
 
 // CacheKey generates a cache key for a query
 func CacheKey(qname string, qtype uint16) string {
-	return qname + ":" + string(qtype)
+	return qname + ":" + strconv.Itoa(int(qtype))
 }

@@ -74,6 +74,16 @@ type Config struct {
 	// QNAMEMinimization enables RFC 7816 + RFC 9156 per-delegation query name rewriting.
 	QNAMEMinimization bool `yaml:"qname_minimization"`
 
+	// Enable0x20 enables DNS 0x20 query-name case randomization (draft-vixie-dnsext-dns0x20).
+	// Outgoing iterative queries get randomized case; responses whose echoed question
+	// name does not preserve that case are rejected as off-path spoofing attempts.
+	Enable0x20 bool `yaml:"enable_0x20"`
+
+	// EnableScrubbing enables bailiwick scrubbing of referral responses (RFC 5452).
+	// Out-of-bailiwick NS delegations and glue records are dropped before they are
+	// followed or cached, hardening against cache-poisoning via injected glue.
+	EnableScrubbing bool `yaml:"enable_scrubbing"`
+
 	// AggressiveNSEC enables RFC 8198 synthesis from cached NSEC/NSEC3 records.
 	AggressiveNSEC bool `yaml:"aggressive_nsec"`
 
@@ -113,6 +123,17 @@ func DefaultConfig() Config {
 		AggressiveNSEC:    true,
 		ServeStale:        true,
 		StaleTTL:          24 * time.Hour,
+		Enable0x20:        true,
+		EnableScrubbing:   true,
+		CacheConfig: cache.Config{
+			// MinTTL 0 means "no floor" (matches applyTTLPolicy's `> 0` gate).
+			// MaxTTL caps positive-response TTLs at 1 day (Unbound cache-max-ttl
+			// default) so a malicious/misconfigured authoritative server cannot
+			// pin a poisoned record in cache indefinitely via an oversized TTL
+			// (e.g. TTL=4294967295 -> ~136 years without this ceiling).
+			MinTTL: 0,
+			MaxTTL: 86400 * time.Second,
+		},
 	}
 }
 
@@ -436,31 +457,60 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 			return resp, nil
 		}
 
-		// Follow referral (NS records in Authority section)
+		// Follow referral (NS records in Authority section).
 		if len(resp.Ns) > 0 {
-			var newNameservers []string
-
-			// Extract NS records
+			// Collect NS records. When scrubbing is enabled, drop any delegation whose
+			// owner is not in-bailiwick of the zone we just queried: a server
+			// authoritative for currentZone may only delegate names beneath it
+			// (RFC 5452). This blocks a poisoned referral that tries to redirect
+			// resolution to an unrelated zone (e.g. a rogue .org server delegating
+			// victim.com).
+			var nsRecords []*dns.NS
+			var nsNames []string
 			for _, rr := range resp.Ns {
-				if ns, ok := rr.(*dns.NS); ok {
-					// Need to resolve NS name to IP (glue records in Additional)
-					nsIP := r.findGlue(resp, ns.Ns)
-					if nsIP != "" {
-						newNameservers = append(newNameservers, nsIP+":53")
-					}
+				ns, ok := rr.(*dns.NS)
+				if !ok {
+					continue
+				}
+				if r.cfg.EnableScrubbing && !engine.IsInBailiwick(ns.Header().Name, currentZone) {
+					continue
+				}
+				nsRecords = append(nsRecords, ns)
+				nsNames = append(nsNames, ns.Ns)
+			}
+
+			// Either no NS records, or all were scrubbed as out-of-bailiwick.
+			if len(nsRecords) == 0 {
+				return nil, ErrNoNameservers
+			}
+
+			// Delegation (child) zone is the NS RR owner name (the zone),
+			// NOT ns.Ns (the nameserver hostname). Pitfall 5: must be FQDN.
+			childZone := dns.Fqdn(strings.ToLower(nsRecords[0].Header().Name))
+
+			// Harden glue: keep only A/AAAA whose owner is one of the delegated
+			// nameservers AND in-bailiwick of the child zone. Out-of-bailiwick glue
+			// — the classic cache-poisoning injection point — is discarded before
+			// it is ever followed.
+			glue := resp.Extra
+			if r.cfg.EnableScrubbing {
+				glue = engine.HardenGlue(resp.Extra, childZone, nsNames)
+			}
+
+			var newNameservers []string
+			for _, ns := range nsRecords {
+				nsIP := r.findGlue(glue, ns.Ns)
+				if nsIP != "" {
+					newNameservers = append(newNameservers, nsIP+":53")
 				}
 			}
 
-			// No glue found: resolve each NS target name to obtain addresses.
+			// No usable glue: resolve each NS target name to obtain addresses.
 			// This handles out-of-zone nameservers (the common real-world case).
 			// Each glue resolution uses a fresh sub-chain capped by the remaining
 			// iteration budget to prevent unbounded recursion.
 			if len(newNameservers) == 0 {
-				for _, rr := range resp.Ns {
-					ns, ok := rr.(*dns.NS)
-					if !ok {
-						continue
-					}
+				for _, ns := range nsRecords {
 					if iterations >= r.cfg.MaxIterations {
 						break
 					}
@@ -481,9 +531,7 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 			}
 
 			nameservers = newNameservers
-			// Update zone to delegation zone: use NS RR owner name (the zone),
-			// NOT ns.Ns (the nameserver hostname). Pitfall 5: must be FQDN.
-			currentZone = dns.Fqdn(strings.ToLower(resp.Ns[0].Header().Name))
+			currentZone = childZone
 			continue
 		}
 
@@ -501,8 +549,17 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 
 	msg.Id = random.TransactionID()
 	msg.RecursionDesired = false // Iterative queries don't set RD
+
+	// 0x20 case randomization (draft-vixie-dnsext-dns0x20): send a mixed-case copy
+	// of the name on the wire. A compliant authoritative server echoes the case
+	// verbatim, giving an extra ~1 bit of entropy per letter against off-path
+	// spoofing on top of the 16-bit txid and OS source port.
+	wireName := qname
+	if r.cfg.Enable0x20 {
+		wireName = engine.Apply0x20Encoding(qname)
+	}
 	msg.Question = []dns.Question{{
-		Name:   qname,
+		Name:   wireName,
 		Qtype:  qtype,
 		Qclass: qclass,
 	}}
@@ -519,15 +576,27 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 		return nil, err
 	}
 
+	// Validate the 0x20 echo: a response that does not preserve the exact case we
+	// sent is treated as a spoofed/off-path forgery and discarded.
+	if r.cfg.Enable0x20 && len(resp.Question) > 0 {
+		if !engine.Validate0x20Response(wireName, resp.Question[0].Name) {
+			return nil, fmt.Errorf("0x20 case mismatch from %s: possible spoofed response", ns)
+		}
+		// Restore the canonical (caller-supplied) case so nothing downstream — cache
+		// keys, answer matching, callers comparing against qname — sees the mixed case.
+		resp.Question[0].Name = qname
+	}
+
 	return resp, nil
 }
 
-// findGlue looks for glue records (A/AAAA) in Additional section.
+// findGlue looks for glue records (A/AAAA) for nsName in the supplied Additional
+// records (already bailiwick-hardened by the caller when scrubbing is enabled).
 // It prefers IPv4 (A) over IPv6 (AAAA) to avoid bare-IPv6 address formatting
 // issues. The returned string is ready to pass to net.Dial (bracketed for IPv6).
-func (r *Recursive) findGlue(msg *dns.Msg, nsName string) string {
+func (r *Recursive) findGlue(extra []dns.RR, nsName string) string {
 	var ipv6addr string
-	for _, rr := range msg.Extra {
+	for _, rr := range extra {
 		switch record := rr.(type) {
 		case *dns.A:
 			if record.Hdr.Name == nsName {

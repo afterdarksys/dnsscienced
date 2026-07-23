@@ -3,11 +3,13 @@ package resolver
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
+	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/miekg/dns"
 )
@@ -39,6 +41,25 @@ func TestNewRecursive(t *testing.T) {
 	}
 	if r.client == nil {
 		t.Error("DNS client not initialized")
+	}
+}
+
+// TestDefaultConfig_CacheMaxTTL guards against cache-poisoning via unbounded
+// TTL: DefaultConfig() must populate CacheConfig.MaxTTL so applyTTLPolicy
+// actually clamps oversized TTLs from malicious/misconfigured authoritative
+// servers. Regression test for the case where CacheConfig was left zero-value
+// and no ceiling was ever applied.
+func TestDefaultConfig_CacheMaxTTL(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.CacheConfig.MaxTTL <= 0 {
+		t.Fatalf("DefaultConfig().CacheConfig.MaxTTL = %v, want a positive ceiling", cfg.CacheConfig.MaxTTL)
+	}
+	if cfg.CacheConfig.MaxTTL != 24*time.Hour {
+		t.Errorf("DefaultConfig().CacheConfig.MaxTTL = %v, want 24h (Unbound cache-max-ttl default)", cfg.CacheConfig.MaxTTL)
+	}
+	if cfg.CacheConfig.MinTTL != 0 {
+		t.Errorf("DefaultConfig().CacheConfig.MinTTL = %v, want 0 (no floor)", cfg.CacheConfig.MinTTL)
 	}
 }
 
@@ -229,19 +250,19 @@ func TestFindGlue(t *testing.T) {
 	}
 
 	// Test A record glue
-	ip := r.findGlue(msg, "ns1.example.com.")
+	ip := r.findGlue(msg.Extra, "ns1.example.com.")
 	if ip != "192.0.2.1" {
 		t.Errorf("findGlue() = %s, want 192.0.2.1", ip)
 	}
 
 	// Test AAAA record glue (IPv6 is bracketed for net.Dial compatibility)
-	ip = r.findGlue(msg, "ns2.example.com.")
+	ip = r.findGlue(msg.Extra, "ns2.example.com.")
 	if ip != "[2001:db8::1]" {
 		t.Errorf("findGlue() = %s, want [2001:db8::1]", ip)
 	}
 
 	// Test missing glue
-	ip = r.findGlue(msg, "ns3.example.com.")
+	ip = r.findGlue(msg.Extra, "ns3.example.com.")
 	if ip != "" {
 		t.Errorf("findGlue() = %s, want empty string", ip)
 	}
@@ -502,7 +523,7 @@ func BenchmarkFindGlue(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		r.findGlue(msg, "ns1.example.com.")
+		r.findGlue(msg.Extra, "ns1.example.com.")
 	}
 }
 
@@ -518,5 +539,112 @@ func BenchmarkGetTTL(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		getTTL(msg)
+	}
+}
+
+// --- Security hardening tests (0x20 + bailiwick scrubbing) ---
+
+// startMockNS starts an in-process UDP nameserver that invokes handler for each
+// query and returns its listen address. The server is cleaned up via t.Cleanup.
+func startMockNS(t *testing.T, handler dns.HandlerFunc) string {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &dns.Server{PacketConn: pc, Handler: handler}
+	go func() { _ = srv.ActivateAndServe() }()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+	return pc.LocalAddr().String()
+}
+
+// TestQueryNameserver_0x20Echo verifies a compliant server (echoes case) is
+// accepted and the response question is restored to canonical (lower) case.
+func TestQueryNameserver_0x20Echo(t *testing.T) {
+	addr := startMockNS(t, func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r) // SetReply echoes the question verbatim, preserving 0x20 case
+		m.Answer = append(m.Answer, &dns.A{
+			Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+			A:   net.ParseIP("192.0.2.1"),
+		})
+		_ = w.WriteMsg(m)
+	})
+
+	r, err := NewRecursive(Config{Enable0x20: true, QueryTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	resp, err := r.queryNameserver(context.Background(), addr, "example.com.", dns.TypeA, dns.ClassINET)
+	if err != nil {
+		t.Fatalf("queryNameserver returned error for compliant 0x20 echo: %v", err)
+	}
+	if len(resp.Question) == 0 || resp.Question[0].Name != "example.com." {
+		t.Errorf("question name = %q, want canonical %q", resp.Question[0].Name, "example.com.")
+	}
+}
+
+// TestQueryNameserver_0x20Mismatch verifies a server that does NOT preserve the
+// sent case (simulating an off-path spoof) is rejected.
+func TestQueryNameserver_0x20Mismatch(t *testing.T) {
+	addr := startMockNS(t, func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		// Forge: force the echoed question to all-lowercase, dropping 0x20 case.
+		if len(m.Question) > 0 {
+			m.Question[0].Name = strings.ToLower(m.Question[0].Name)
+		}
+		_ = w.WriteMsg(m)
+	})
+
+	r, err := NewRecursive(Config{Enable0x20: true, QueryTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	// Use a name with letters so 0x20 randomization can differ from lowercase.
+	// Retry a few times because randomization could (rarely) pick all-lowercase.
+	rejected := false
+	for i := 0; i < 8; i++ {
+		_, err := r.queryNameserver(context.Background(), addr, "EXAMPLE-longname.com.", dns.TypeA, dns.ClassINET)
+		if err != nil {
+			rejected = true
+			break
+		}
+	}
+	if !rejected {
+		t.Error("expected 0x20 case-mismatch rejection, got none across retries")
+	}
+}
+
+// TestFindGlue_HardenedDropsOutOfBailiwick verifies that engine.HardenGlue (used
+// by the referral path) strips injected out-of-bailiwick glue before findGlue
+// can follow it — the cache-poisoning vector from finding F1.
+func TestFindGlue_HardenedDropsOutOfBailiwick(t *testing.T) {
+	r, err := NewRecursive(Config{EnableScrubbing: true})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+
+	childZone := "child.example.com."
+	nsNames := []string{"ns1.child.example.com."}
+	extra := []dns.RR{
+		// Legitimate in-bailiwick glue.
+		&dns.A{Hdr: dns.RR_Header{Name: "ns1.child.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}, A: net.ParseIP("192.0.2.10")},
+		// Injected out-of-bailiwick glue for an unrelated victim domain.
+		&dns.A{Hdr: dns.RR_Header{Name: "www.victim.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}, A: net.ParseIP("6.6.6.6")},
+	}
+
+	hardened := engine.HardenGlue(extra, childZone, nsNames)
+
+	if ip := r.findGlue(hardened, "ns1.child.example.com."); ip != "192.0.2.10" {
+		t.Errorf("legitimate glue dropped: got %q want 192.0.2.10", ip)
+	}
+	if ip := r.findGlue(hardened, "www.victim.com."); ip != "" {
+		t.Errorf("out-of-bailiwick glue survived hardening: got %q, want empty (poisoning vector)", ip)
 	}
 }

@@ -100,7 +100,7 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype string, class
 	m.Id = dns.Id()
 	t, ok := dns.StringToType[qtype]
 	if !ok {
-		t = dns.TypeA
+		return nil, fmt.Errorf("unknown query type %q", qtype)
 	}
 	c, ok := dns.StringToClass[class]
 	if !ok {

@@ -2,9 +2,17 @@ package cookie
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net"
 	"testing"
+	"time"
 )
+
+// fixedClock returns a now-func pinned to t, for injecting into a Manager's
+// clock seam so timestamp generation and freshness checks are deterministic.
+func fixedClock(t time.Time) func() time.Time {
+	return func() time.Time { return t }
+}
 
 func TestGenerateClientCookie(t *testing.T) {
 	clientIP := net.ParseIP("192.0.2.1").To4()
@@ -45,13 +53,18 @@ func TestGenerateServerCookie(t *testing.T) {
 		t.Errorf("server cookie size = %d, want %d", len(serverCookie), serverCookieSize)
 	}
 
-	// Same input should produce same output (deterministic)
-	serverCookie2, _ := m.GenerateServerCookie(clientCookie, clientIP)
+	// Version byte and embedded timestamp per RFC 9018 §5.
+	if serverCookie[0] != cookieVersion {
+		t.Errorf("server cookie version = %d, want %d", serverCookie[0], cookieVersion)
+	}
 
-	// Note: This will fail if more than 1 second passes between calls
-	// because timestamp is included. In production, we'd mock time.Now()
-	if !bytes.Equal(serverCookie[:], serverCookie2[:]) {
-		t.Error("same input should produce same server cookie (within same second)")
+	// Pin the clock so generation is deterministic, then confirm the same
+	// input produces the same cookie regardless of wall-clock drift.
+	m.now = fixedClock(time.Unix(1_700_000_000, 0))
+	c1, _ := m.GenerateServerCookie(clientCookie, clientIP)
+	c2, _ := m.GenerateServerCookie(clientCookie, clientIP)
+	if !bytes.Equal(c1[:], c2[:]) {
+		t.Error("same input + same clock should produce identical server cookie")
 	}
 }
 
@@ -79,8 +92,8 @@ func TestValidateServerCookie(t *testing.T) {
 	}
 
 	// Invalid cookie should fail
-	var invalidCookie [8]byte
-	copy(invalidCookie[:], []byte("invalid!"))
+	var invalidCookie [serverCookieSize]byte
+	copy(invalidCookie[:], []byte("invalid!invalid!"))
 
 	err = m.ValidateServerCookie(clientCookie, invalidCookie, clientIP)
 	if err == nil {
@@ -252,12 +265,13 @@ func TestValidateQueryCookie(t *testing.T) {
 		t.Error("query with valid cookie should be accepted")
 	}
 
-	// Query with invalid cookie (RequireValid=true should reject)
-	var invalidServer [8]byte
-	copy(invalidServer[:], []byte("badsecrt"))
-	badCookie, err = m.ValidateQueryCookie(clientCookie, invalidServer[:], clientIP)
+	// Query with a tampered cookie (RequireValid=true should reject). Take a
+	// valid 16-byte cookie and flip a hash byte.
+	tampered := serverCookie
+	tampered[serverCookieSize-1] ^= 0xFF
+	badCookie, err = m.ValidateQueryCookie(clientCookie, tampered[:], clientIP)
 	if !badCookie {
-		t.Error("query with invalid cookie should trigger BADCOOKIE when RequireValid=true")
+		t.Error("query with tampered cookie should trigger BADCOOKIE when RequireValid=true")
 	}
 }
 
@@ -275,10 +289,11 @@ func TestValidateQueryCookie_NotRequired(t *testing.T) {
 	var clientCookie [8]byte
 	copy(clientCookie[:], []byte("testcook"))
 
-	// Invalid cookie but RequireValid=false
-	var invalidServer [8]byte
-	copy(invalidServer[:], []byte("badsecrt"))
-	badCookie, err := m.ValidateQueryCookie(clientCookie, invalidServer[:], clientIP)
+	// Tampered 16-byte cookie but RequireValid=false: accept anyway.
+	valid, _ := m.GenerateServerCookie(clientCookie, clientIP)
+	tampered := valid
+	tampered[serverCookieSize-1] ^= 0xFF
+	badCookie, err := m.ValidateQueryCookie(clientCookie, tampered[:], clientIP)
 	if badCookie {
 		t.Error("invalid cookie should be accepted when RequireValid=false")
 	}
@@ -305,6 +320,12 @@ func TestClusterSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager(m2) error: %v", err)
 	}
+
+	// Pin both clocks so the embedded timestamps match regardless of when each
+	// GenerateServerCookie call lands.
+	pinned := fixedClock(time.Unix(1_700_000_000, 0))
+	m1.now = pinned
+	m2.now = pinned
 
 	// Both servers should generate same server cookie
 	clientIP := net.ParseIP("192.0.2.1").To4()
@@ -355,6 +376,165 @@ func TestCookiesDisabled(t *testing.T) {
 	badCookie, err := m.ValidateQueryCookie(clientCookie, serverCookie[:], clientIP)
 	if badCookie || err != nil {
 		t.Error("disabled cookies should always accept")
+	}
+}
+
+// TestValidateServerCookie_ValidLongAfterMinting proves the RFC 9018 fix: a
+// cookie minted at time T still validates minutes later, because validation
+// reads the embedded timestamp rather than re-hashing with the current second.
+// The pre-fix implementation failed ~1 second after minting.
+func TestValidateServerCookie_ValidLongAfterMinting(t *testing.T) {
+	cfg := Config{Enabled: true}
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	m.now = fixedClock(base)
+
+	clientIP := net.ParseIP("192.0.2.1").To4()
+	var clientCookie [8]byte
+	copy(clientCookie[:], []byte("testcook"))
+
+	serverCookie, err := m.GenerateServerCookie(clientCookie, clientIP)
+	if err != nil {
+		t.Fatalf("GenerateServerCookie() error: %v", err)
+	}
+
+	// Advance the clock well beyond one second (5 minutes) but within the
+	// 1-hour validity window.
+	m.now = fixedClock(base.Add(5 * time.Minute))
+
+	if err := m.ValidateServerCookie(clientCookie, serverCookie, clientIP); err != nil {
+		t.Errorf("cookie minted 5 minutes ago should still validate, got: %v", err)
+	}
+}
+
+// TestValidateServerCookie_Expired proves a cookie older than
+// serverCookieValidFor is rejected with ErrExpiredCookie.
+func TestValidateServerCookie_Expired(t *testing.T) {
+	cfg := Config{Enabled: true}
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	m.now = fixedClock(base)
+
+	clientIP := net.ParseIP("192.0.2.1").To4()
+	var clientCookie [8]byte
+	copy(clientCookie[:], []byte("testcook"))
+
+	serverCookie, err := m.GenerateServerCookie(clientCookie, clientIP)
+	if err != nil {
+		t.Fatalf("GenerateServerCookie() error: %v", err)
+	}
+
+	// Jump past the validity window (1h + 1m).
+	m.now = fixedClock(base.Add(serverCookieValidFor + time.Minute))
+
+	err = m.ValidateServerCookie(clientCookie, serverCookie, clientIP)
+	if err != ErrExpiredCookie {
+		t.Errorf("expired cookie should return ErrExpiredCookie, got: %v", err)
+	}
+}
+
+// TestValidateServerCookie_FutureBeyondSkew proves a cookie whose embedded
+// timestamp is further in the future than the allowed skew is rejected.
+func TestValidateServerCookie_FutureBeyondSkew(t *testing.T) {
+	cfg := Config{Enabled: true}
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	m.now = fixedClock(base)
+
+	clientIP := net.ParseIP("192.0.2.1").To4()
+	var clientCookie [8]byte
+	copy(clientCookie[:], []byte("testcook"))
+
+	// Mint a cookie stamped in the future, then validate "now".
+	future := base.Add(serverCookieMaxSkew + time.Minute)
+	m.now = fixedClock(future)
+	serverCookie, err := m.GenerateServerCookie(clientCookie, clientIP)
+	if err != nil {
+		t.Fatalf("GenerateServerCookie() error: %v", err)
+	}
+
+	m.now = fixedClock(base)
+	err = m.ValidateServerCookie(clientCookie, serverCookie, clientIP)
+	if err != ErrExpiredCookie {
+		t.Errorf("future cookie beyond skew should return ErrExpiredCookie, got: %v", err)
+	}
+}
+
+// TestValidateServerCookie_TamperedHash proves a cookie with a modified hash is
+// rejected even though its embedded timestamp is fresh.
+func TestValidateServerCookie_TamperedHash(t *testing.T) {
+	cfg := Config{Enabled: true}
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	m.now = fixedClock(base)
+
+	clientIP := net.ParseIP("192.0.2.1").To4()
+	var clientCookie [8]byte
+	copy(clientCookie[:], []byte("testcook"))
+
+	serverCookie, err := m.GenerateServerCookie(clientCookie, clientIP)
+	if err != nil {
+		t.Fatalf("GenerateServerCookie() error: %v", err)
+	}
+
+	// Flip a byte in the hash region (bytes 8-15); timestamp stays fresh.
+	tampered := serverCookie
+	tampered[serverCookieMetaSize] ^= 0x01
+
+	err = m.ValidateServerCookie(clientCookie, tampered, clientIP)
+	if err != ErrInvalidServerCookie {
+		t.Errorf("tampered hash should return ErrInvalidServerCookie, got: %v", err)
+	}
+}
+
+// TestServerCookieLayout verifies the on-the-wire byte layout matches RFC 9018.
+func TestServerCookieLayout(t *testing.T) {
+	cfg := Config{Enabled: true}
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	ts := time.Unix(1_700_000_000, 0)
+	m.now = fixedClock(ts)
+
+	clientIP := net.ParseIP("192.0.2.1").To4()
+	var clientCookie [8]byte
+	copy(clientCookie[:], []byte("testcook"))
+
+	sc, err := m.GenerateServerCookie(clientCookie, clientIP)
+	if err != nil {
+		t.Fatalf("GenerateServerCookie() error: %v", err)
+	}
+
+	if len(sc) != 16 {
+		t.Fatalf("server cookie length = %d, want 16", len(sc))
+	}
+	if sc[0] != cookieVersion {
+		t.Errorf("byte 0 (version) = %d, want %d", sc[0], cookieVersion)
+	}
+	if sc[1] != 0 || sc[2] != 0 || sc[3] != 0 {
+		t.Errorf("bytes 1-3 (reserved) = %v, want zero", sc[1:4])
+	}
+	gotTS := binary.BigEndian.Uint32(sc[4:8])
+	if gotTS != uint32(ts.Unix()) {
+		t.Errorf("embedded timestamp = %d, want %d", gotTS, uint32(ts.Unix()))
 	}
 }
 

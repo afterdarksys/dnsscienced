@@ -12,9 +12,9 @@ import (
 // ValidationResult represents the result of DNSSEC validation
 type ValidationResult struct {
 	// Validation status
-	Secure    bool   // Cryptographically validated
-	Bogus     bool   // Validation failed (bad signature, etc.)
-	Insecure  bool   // Not signed (no DNSSEC)
+	Secure        bool // Cryptographically validated
+	Bogus         bool // Validation failed (bad signature, etc.)
+	Insecure      bool // Not signed (no DNSSEC)
 	Indeterminate bool // Unable to determine (network error, etc.)
 
 	// Details
@@ -35,11 +35,11 @@ type ValidationResult struct {
 
 // TrustAnchor represents a DNSSEC trust anchor in the chain
 type TrustAnchor struct {
-	Name      string      // Zone name
-	DNSKEY    dns.DNSKEY  // Key
-	DS        *dns.DS     // DS record from parent (nil for root)
-	Validated bool        // Whether this anchor was validated
-	Error     error       // Validation error if any
+	Name      string     // Zone name
+	DNSKEY    dns.DNSKEY // Key
+	DS        *dns.DS    // DS record from parent (nil for root)
+	Validated bool       // Whether this anchor was validated
+	Error     error      // Validation error if any
 }
 
 // Validator performs DNSSEC validation
@@ -63,17 +63,17 @@ type Validator struct {
 // ValidatorConfig holds DNSSEC validator configuration
 type ValidatorConfig struct {
 	// Chain validation settings
-	MaxChainDepth   int           // Maximum chain depth (default: 20)
-	DSLookup        bool          // Query parent zones for DS records
-	AcceptBogus     bool          // Accept bogus responses (don't fail)
-	FailOnBogus     bool          // Return error on bogus
-	FailOnMissing   bool          // Fail when DNSSEC expected but missing
+	MaxChainDepth int  // Maximum chain depth (default: 20)
+	DSLookup      bool // Query parent zones for DS records
+	AcceptBogus   bool // Accept bogus responses (don't fail)
+	FailOnBogus   bool // Return error on bogus
+	FailOnMissing bool // Fail when DNSSEC expected but missing
 
 	// Caching
-	CachePositive   bool          // Cache validated responses
-	CacheNegative   bool          // Cache NSEC/NSEC3 proofs
-	CacheBogus      bool          // Cache bogus responses
-	CacheTTL        time.Duration // Cache TTL
+	CachePositive bool          // Cache validated responses
+	CacheNegative bool          // Cache NSEC/NSEC3 proofs
+	CacheBogus    bool          // Cache bogus responses
+	CacheTTL      time.Duration // Cache TTL
 
 	// NSEC/NSEC3 settings
 	NSEC3MaxIterations uint16 // Maximum NSEC3 iterations to accept
@@ -106,9 +106,16 @@ func DefaultValidatorConfig() ValidatorConfig {
 		CacheTTL:           time.Hour,
 		NSEC3MaxIterations: 150, // RFC 5155 recommendation
 		ValidateNSEC:       true,
-		DisabledAlgorithms: make(map[uint8]bool),
-		LogValidation:      false,
-		LogFailures:        true,
+		// RFC 8624 MUST-NOT-validate algorithms. RSASHA1 (5) and
+		// RSASHA1-NSEC3-SHA1 (7) are intentionally left enabled — still
+		// widely deployed. Do not add them here.
+		DisabledAlgorithms: map[uint8]bool{
+			dns.RSAMD5:       true, // 1
+			dns.DSA:          true, // 3
+			dns.DSANSEC3SHA1: true, // 6
+		},
+		LogValidation: false,
+		LogFailures:   true,
 	}
 }
 
@@ -160,6 +167,33 @@ func (v *Validator) Validate(ctx context.Context, msg *dns.Msg, qname string, qt
 		return &ValidationResult{
 			Insecure:     true,
 			ErrorMessage: "Domain in negative trust anchors (validation skipped)",
+		}, nil
+	}
+
+	// NSEC3 iteration cap (RFC 9276). Reject responses whose NSEC3 records
+	// use an iteration count above the configured maximum BEFORE performing
+	// any hashing, to avoid a CPU-exhaustion DoS. This check is independent
+	// of trust anchors.
+	if v.config.NSEC3MaxIterations > 0 {
+		if iters, over := nsec3IterationsOverCap(msg, v.config.NSEC3MaxIterations); over {
+			return &ValidationResult{
+				Bogus: true,
+				ErrorMessage: fmt.Sprintf(
+					"NSEC3 iterations %d exceed maximum %d (RFC 9276)",
+					iters, v.config.NSEC3MaxIterations),
+			}, nil
+		}
+	}
+
+	// Fail closed: without a configured trust anchor we cannot anchor any
+	// chain of trust to a known root. AD must never be asserted on data we
+	// cannot cryptographically anchor, so return Indeterminate instead of
+	// letting validateResponse mark the result Secure against attacker-
+	// supplied wire keys.
+	if len(v.trustAnchors) == 0 {
+		return &ValidationResult{
+			Indeterminate: true,
+			ErrorMessage:  "no trust anchors configured; unable to validate (AD not asserted)",
 		}, nil
 	}
 
@@ -287,6 +321,13 @@ func (v *Validator) verifySignatures(msg *dns.Msg, qname string, qtype uint16, r
 
 	// Verify each signature
 	for _, rrsig := range result.Signatures {
+		// Reject signatures made with disabled algorithms (RFC 8624
+		// MUST-NOT-validate set, e.g. RSAMD5/DSA). Consulted here so a
+		// bogus algorithm is rejected regardless of the DNSKEY path.
+		if v.config.DisabledAlgorithms[rrsig.Algorithm] {
+			return fmt.Errorf("RRSIG uses disabled algorithm %d (keytag=%d)", rrsig.Algorithm, rrsig.KeyTag)
+		}
+
 		// Check signature validity period.
 		// dns.RRSIG.Inception and Expiration are uint32 Unix timestamps.
 		inception := time.Unix(int64(rrsig.Inception), 0)
@@ -387,6 +428,24 @@ func hasDNSSECRecords(msg *dns.Msg) bool {
 		}
 	}
 	return false
+}
+
+// nsec3IterationsOverCap reports whether any NSEC3 record in the message uses
+// an iteration count greater than the supplied maximum. It scans both the
+// answer and authority sections. Returns the offending iteration count and
+// true when the cap is exceeded.
+func nsec3IterationsOverCap(msg *dns.Msg, maxIterations uint16) (uint16, bool) {
+	sections := [][]dns.RR{msg.Answer, msg.Ns}
+	for _, section := range sections {
+		for _, rr := range section {
+			if nsec3, ok := rr.(*dns.NSEC3); ok {
+				if nsec3.Iterations > maxIterations {
+					return nsec3.Iterations, true
+				}
+			}
+		}
+	}
+	return 0, false
 }
 
 func extractRRSIGs(msg *dns.Msg, qname string, qtype uint16) []dns.RRSIG {

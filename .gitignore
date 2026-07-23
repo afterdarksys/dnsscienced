@@ -48,6 +48,14 @@ zones/
 *-local.yaml
 *.key
 *.pem
+*.crt
+
+# mTLS provisioning material (keys + certs) — never commit
+grpc-certs/
+
+# Local tool state and security reports (keep local)
+.gstack/
+.omc/
 
 # IDE and editor files
 .vscode/

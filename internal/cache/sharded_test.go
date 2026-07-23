@@ -80,3 +80,40 @@ func TestValidationModes(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyTTLPolicy_ClampsUnboundedTTL guards against cache-poisoning via a
+// malicious/misconfigured authoritative server returning an oversized TTL
+// (e.g. TTL=4294967295, ~136 years). Without a MaxTTL ceiling, that value
+// would sit in cache effectively forever. See resolver.DefaultConfig, which
+// now wires CacheConfig.MaxTTL so this ceiling is actually enforced by default.
+func TestApplyTTLPolicy_ClampsUnboundedTTL(t *testing.T) {
+	const maxTTL = 1 * time.Hour
+
+	c := NewShardedCache(Config{
+		MaxTTL: maxTTL,
+	})
+	defer c.Close()
+
+	// Simulate a response with an absurdly long TTL (~136 years).
+	entry := &Entry{
+		QName:           "attacker-controlled.example",
+		DNSSECValidated: true,
+		ExpiresAt:       time.Now().Add(time.Duration(4294967295) * time.Second),
+	}
+	hash := uint64(789)
+	c.Set(hash, entry)
+
+	got, ok := c.Get(hash)
+	if !ok {
+		t.Fatal("expected entry to be cached")
+	}
+
+	remaining := time.Until(got.ExpiresAt)
+	if remaining > maxTTL {
+		t.Errorf("TTL not clamped: remaining=%s exceeds configured maxTTL=%s", remaining, maxTTL)
+	}
+	// Sanity: should still be a positive TTL close to the ceiling, not zero/expired.
+	if remaining <= 0 {
+		t.Errorf("clamped TTL should still be positive, got %s", remaining)
+	}
+}
