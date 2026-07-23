@@ -11,13 +11,12 @@ import (
 	"github.com/miekg/dns"
 )
 
-// AXFRFetcher retrieves a complete zone over TCP. IXFR consumption is handled
-// separately because a delta must be applied to an exact prior serial.
+// AXFRFetcher retrieves a complete zone over TCP.
 type AXFRFetcher struct {
 	Timeout time.Duration
 }
 
-func (f AXFRFetcher) Fetch(ctx context.Context, cfg Config, _ uint32) (*zone.Zone, error) {
+func (f AXFRFetcher) Fetch(ctx context.Context, cfg Config, _ *zone.Zone) (*zone.Zone, error) {
 	timeout := f.Timeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -35,6 +34,16 @@ func (f AXFRFetcher) Fetch(ctx context.Context, cfg Config, _ uint32) (*zone.Zon
 }
 
 func (f AXFRFetcher) fetchMaster(ctx context.Context, cfg Config, master string, timeout time.Duration) (*zone.Zone, error) {
+	request := new(dns.Msg)
+	request.SetAxfr(cfg.Name)
+	records, err := transferRecords(ctx, cfg, master, timeout, request)
+	if err != nil {
+		return nil, err
+	}
+	return zoneFromAXFR(cfg.Name, records)
+}
+
+func transferRecords(ctx context.Context, cfg Config, master string, timeout time.Duration, request *dns.Msg) ([]dns.RR, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	if cfg.TransferSource != "" {
 		ip := net.ParseIP(cfg.TransferSource)
@@ -53,8 +62,6 @@ func (f AXFRFetcher) fetchMaster(ctx context.Context, cfg Config, master string,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
-	request := new(dns.Msg)
-	request.SetAxfr(cfg.Name)
 	if cfg.TransferKey != nil {
 		request.SetTsig(cfg.TransferKey.Name, cfg.TransferKey.Algorithm, 300, time.Now().Unix())
 		transfer.TsigSecret = map[string]string{cfg.TransferKey.Name: cfg.TransferKey.Secret}
@@ -66,25 +73,37 @@ func (f AXFRFetcher) fetchMaster(ctx context.Context, cfg Config, master string,
 		return nil, err
 	}
 
-	result := zone.New(cfg.Name)
-	soaSeen := false
+	var records []dns.RR
 	for envelope := range envelopes {
 		if envelope.Error != nil {
 			return nil, envelope.Error
 		}
 		for _, rr := range envelope.RR {
-			if rr.Header().Class != dns.ClassINET {
-				return nil, fmt.Errorf("record %s has non-IN class", rr.Header().Name)
-			}
-			if rr.Header().Rrtype == dns.TypeSOA {
-				if soaSeen {
-					continue
-				}
-				soaSeen = true
-			}
-			if err := result.AddRecord(dns.Copy(rr)); err != nil {
-				return nil, err
-			}
+			records = append(records, dns.Copy(rr))
+		}
+	}
+	return records, nil
+}
+
+func zoneFromAXFR(name string, records []dns.RR) (*zone.Zone, error) {
+	if len(records) < 2 {
+		return nil, fmt.Errorf("AXFR returned fewer than two records")
+	}
+	opening, firstOK := records[0].(*dns.SOA)
+	closing, lastOK := records[len(records)-1].(*dns.SOA)
+	if !firstOK || !lastOK || opening.Serial != closing.Serial {
+		return nil, fmt.Errorf("AXFR is not bounded by matching SOA records")
+	}
+	result := zone.New(name)
+	for i, rr := range records {
+		if rr.Header().Class != dns.ClassINET {
+			return nil, fmt.Errorf("record %s has non-IN class", rr.Header().Name)
+		}
+		if i == len(records)-1 {
+			continue
+		}
+		if err := result.AddRecord(dns.Copy(rr)); err != nil {
+			return nil, err
 		}
 	}
 	if err := result.Validate(); err != nil {

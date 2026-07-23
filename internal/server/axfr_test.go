@@ -302,11 +302,88 @@ func TestHandleIXFR_HonorsDisabledAXFRFallback(t *testing.T) {
 	defer s.Stop() //nolint:errcheck
 	s.cfg.ZoneAllowAXFRFallback = map[string]bool{"example.com.": false}
 	w := newAXFRTestWriter("192.0.2.100")
-	r := makeAXFRRequest("example.com.")
-	r.Question[0].Qtype = dns.TypeIXFR
+	r := new(dns.Msg)
+	r.SetIxfr("example.com.", 0, "ns1.example.com.", "hostmaster.example.com.")
 	r.SetTsig("test.", dns.HmacSHA256, 300, time.Now().Unix())
 	s.handleAXFR(w, r, net.ParseIP("192.0.2.100"))
 	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeNotImplemented {
 		t.Fatalf("response=%v, want NOTIMP when AXFR fallback is disabled", w.msgs)
+	}
+}
+
+func TestHandleIXFRStreamsJournalDelta(t *testing.T) {
+	s, err := testServerWithAXFR([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	s.cfg.ZoneAllowAXFRFallback = map[string]bool{"example.com.": false}
+
+	previous := s.GetZone("example.com.")
+	next := previous.Clone()
+	next.SOA.Serial++
+	txt, _ := dns.NewRR("new.example.com. 300 IN TXT \"added\"")
+	if err := next.AddRecord(txt); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddZone(next); err != nil {
+		t.Fatal(err)
+	}
+
+	request := new(dns.Msg)
+	request.SetIxfr("example.com.", previous.SOA.Serial, previous.SOA.Ns, previous.SOA.Mbox)
+	request.SetTsig("test.", dns.HmacSHA256, 300, time.Now().Unix())
+	writer := newAXFRTestWriter("192.0.2.100")
+	s.handleAXFR(writer, request, net.ParseIP("192.0.2.100"))
+
+	if len(writer.msgs) == 0 {
+		t.Fatal("no IXFR response")
+	}
+	var records []dns.RR
+	for _, msg := range writer.msgs {
+		records = append(records, msg.Answer...)
+	}
+	if len(records) < 5 {
+		t.Fatalf("IXFR records=%v", records)
+	}
+	first := records[0].(*dns.SOA)
+	old := records[1].(*dns.SOA)
+	last := records[len(records)-1].(*dns.SOA)
+	if first.Serial != next.SOA.Serial || old.Serial != previous.SOA.Serial || last.Serial != next.SOA.Serial {
+		t.Fatalf("IXFR SOA sequence first=%d old=%d last=%d", first.Serial, old.Serial, last.Serial)
+	}
+	foundTXT := false
+	for _, rr := range records {
+		if rr.Header().Rrtype == dns.TypeTXT {
+			foundTXT = true
+		}
+	}
+	if !foundTXT {
+		t.Fatal("IXFR omitted added TXT record")
+	}
+}
+
+func TestHandleIXFRSameSerialReturnsSingleSOA(t *testing.T) {
+	s, err := testServerWithAXFR([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	current := s.GetZone("example.com.")
+	request := new(dns.Msg)
+	request.SetIxfr("example.com.", current.SOA.Serial, current.SOA.Ns, current.SOA.Mbox)
+	request.SetTsig("test.", dns.HmacSHA256, 300, time.Now().Unix())
+	writer := newAXFRTestWriter("192.0.2.100")
+	s.handleAXFR(writer, request, net.ParseIP("192.0.2.100"))
+
+	var records []dns.RR
+	for _, msg := range writer.msgs {
+		records = append(records, msg.Answer...)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records=%v, want one SOA", records)
+	}
+	if soa, ok := records[0].(*dns.SOA); !ok || soa.Serial != current.SOA.Serial {
+		t.Fatalf("response=%v", records)
 	}
 }

@@ -192,6 +192,7 @@ type Server struct {
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
 	soaNotifyMu      sync.RWMutex
 	soaNotifyHandler SOANotifyHandler
+	ixfrJournal      *zone.Journal
 	persistPaths     map[string]string // Per-zone file paths for persist_updates write-back (D-11).
 	persistMu        sync.Mutex        // Orders zone swaps and durable snapshots across UPDATE requests.
 
@@ -232,9 +233,10 @@ func New(cfg Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		cfg:    cfg,
-		ctx:    ctx,
-		cancel: cancel,
+		cfg:         cfg,
+		ctx:         ctx,
+		cancel:      cancel,
+		ixfrJournal: zone.NewJournal(100),
 	}
 
 	// Initialize recursive resolver if enabled
@@ -1371,10 +1373,9 @@ func (s *Server) LoadZone(filename, format string) error {
 		return fmt.Errorf("parse zone %s: %w", filename, err)
 	}
 
-	// Add to server (write lock protects concurrent map access, CR-01)
-	s.zonesMu.Lock()
-	s.cfg.Zones[z.Origin] = z
-	s.zonesMu.Unlock()
+	if err := s.AddZone(z); err != nil {
+		return err
+	}
 
 	fmt.Printf("Loaded zone: %s (%d records)\n", z.Name, z.GetStats().Records)
 
@@ -1391,17 +1392,31 @@ func (s *Server) AddZone(z *zone.Zone) error {
 		return fmt.Errorf("zone validation failed: %w", err)
 	}
 
+	s.persistMu.Lock()
+	s.zonesMu.RLock()
+	previous := s.cfg.Zones[z.Origin]
+	s.zonesMu.RUnlock()
+	if previous == nil {
+		s.ixfrJournal.Reset(z.Origin)
+	} else {
+		s.ixfrJournal.Record(previous, z)
+	}
 	s.zonesMu.Lock()
 	s.cfg.Zones[z.Origin] = z
 	s.zonesMu.Unlock()
+	s.persistMu.Unlock()
 	return nil
 }
 
 // RemoveZone removes a zone from the server
 func (s *Server) RemoveZone(origin string) {
+	origin = strings.ToLower(dns.Fqdn(origin))
+	s.persistMu.Lock()
 	s.zonesMu.Lock()
 	delete(s.cfg.Zones, origin)
 	s.zonesMu.Unlock()
+	s.ixfrJournal.Reset(origin)
+	s.persistMu.Unlock()
 }
 
 // GetZone returns a zone by origin

@@ -43,13 +43,17 @@ type fakeFetcher struct {
 	currents []uint32
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, cfg Config, current uint32) (*zone.Zone, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, cfg Config, current *zone.Zone) (*zone.Zone, error) {
 	f.mu.Lock()
 	f.calls++
-	f.currents = append(f.currents, current)
-	serial := f.serial
+	var serial uint32
+	if current != nil && current.SOA != nil {
+		serial = current.SOA.Serial
+	}
+	f.currents = append(f.currents, serial)
+	fetchedSerial := f.serial
 	f.mu.Unlock()
-	return validZone(cfg.Name, serial), nil
+	return validZone(cfg.Name, fetchedSerial), nil
 }
 
 func (f *fakeFetcher) setSerial(serial uint32) {
@@ -153,10 +157,10 @@ func TestManagerRejectsUnauthorizedNotify(t *testing.T) {
 }
 
 func TestSerialGreaterWraparound(t *testing.T) {
-	if !serialGreater(0, ^uint32(0)) {
+	if !zone.SerialGreater(0, ^uint32(0)) {
 		t.Fatal("serial wraparound should be newer")
 	}
-	if serialGreater(10, 10) || serialGreater(9, 10) {
+	if zone.SerialGreater(10, 10) || zone.SerialGreater(9, 10) {
 		t.Fatal("equal or previous serial reported as newer")
 	}
 }

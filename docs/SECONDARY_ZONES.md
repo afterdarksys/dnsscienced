@@ -19,6 +19,7 @@ zones:
       - "[2001:db8::10]:53"
     transfer_source: "192.0.2.20"
     transfer_tsig_key: "secondary-xfer.example."
+    allow_axfr_fallback: true
     min_refresh_time: 5m
     max_refresh_time: 24h
     min_retry_time: 30s
@@ -49,5 +50,18 @@ SOA/NS records, and transfer failures leave the last valid zone active.
 manager uses SOA refresh and retry values, constrained by the optional min/max
 bounds.
 
-Current limitation: refresh uses a complete AXFR. True IXFR delta generation and
-consumption remains tracked separately.
+After the initial AXFR, refresh requests use IXFR with the currently published
+serial. A complete, ordered delta chain is applied to a clone and validated
+before one atomic publish. If a primary has purged the required history, a full
+AXFR is accepted when `allow_axfr_fallback` is true. Set it to false to fail the
+refresh and retain the last valid zone instead.
+
+DNSScienced also serves IXFR from a bounded in-memory journal of the 100 most
+recent zone replacements. Dynamic updates, admin replacements, and secondary
+refreshes generate deleted/added RR deltas. A client with the current or a newer
+RFC 1982 serial receives one SOA; a client with an available history receives
+oldest-to-newest RFC 1995 difference sequences; otherwise normal AXFR fallback
+policy applies.
+
+The journal is intentionally not persisted yet. After restart, existing
+secondaries fall back to AXFR until new deltas accumulate.

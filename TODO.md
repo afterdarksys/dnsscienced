@@ -103,7 +103,7 @@ safe automatic provisioning for authoritative server fleets.
 - [x] Serve authoritative zones and support atomic zone add/remove operations.
 - [x] Authenticate AXFR and DNS UPDATE with TSIG.
 - [x] Serve AXFR and accept IXFR requests with documented AXFR fallback.
-- [ ] Implement true IXFR delta generation and consumption.
+- [x] Implement true IXFR delta generation and consumption.
 - [x] Implement ordinary SOA NOTIFY-driven secondary refresh; DSYNC NOTIFY support
   does not satisfy this prerequisite.
 

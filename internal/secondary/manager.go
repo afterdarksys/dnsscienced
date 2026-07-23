@@ -48,7 +48,7 @@ type ZoneStore interface {
 
 // Fetcher obtains a complete, validated replacement zone.
 type Fetcher interface {
-	Fetch(context.Context, Config, uint32) (*zone.Zone, error)
+	Fetch(context.Context, Config, *zone.Zone) (*zone.Zone, error)
 }
 
 type managedZone struct {
@@ -76,7 +76,7 @@ func NewManager(store ZoneStore, fetcher Fetcher, configs []Config) (*Manager, e
 		return nil, fmt.Errorf("secondary: zone store is required")
 	}
 	if fetcher == nil {
-		fetcher = AXFRFetcher{Timeout: 10 * time.Second}
+		fetcher = TransferFetcher{Timeout: 10 * time.Second}
 	}
 
 	m := &Manager{
@@ -215,11 +215,8 @@ func (m *Manager) runZone(managed *managedZone) {
 }
 
 func (m *Manager) refresh(ctx context.Context, managed *managedZone) error {
-	var serial uint32
-	if current := m.store.GetZone(managed.cfg.Name); current != nil && current.SOA != nil {
-		serial = current.SOA.Serial
-	}
-	replacement, err := m.fetcher.Fetch(ctx, managed.cfg, serial)
+	current := m.store.GetZone(managed.cfg.Name)
+	replacement, err := m.fetcher.Fetch(ctx, managed.cfg, current)
 	if err != nil {
 		return fmt.Errorf("secondary %s: transfer failed: %w", managed.cfg.Name, err)
 	}
@@ -229,7 +226,7 @@ func (m *Manager) refresh(ctx context.Context, managed *managedZone) error {
 	if replacement.Origin != managed.cfg.Name {
 		return fmt.Errorf("secondary %s: transfer returned origin %s", managed.cfg.Name, replacement.Origin)
 	}
-	if serial != 0 && !serialGreater(replacement.SOA.Serial, serial) {
+	if current != nil && current.SOA != nil && !zone.SerialGreater(replacement.SOA.Serial, current.SOA.Serial) {
 		return nil
 	}
 	if err := m.store.AddZone(replacement); err != nil {
@@ -267,10 +264,6 @@ func refreshDelay(cfg Config, current *zone.Zone, retry bool) time.Duration {
 		delay = maximum
 	}
 	return delay
-}
-
-func serialGreater(next, current uint32) bool {
-	return next != current && uint32(next-current) < 1<<31
 }
 
 func masterAllows(masters []net.IP, source net.IP) bool {
