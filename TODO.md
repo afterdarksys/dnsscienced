@@ -206,7 +206,7 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [ ] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.
 - [x] Add unit, race, restart, malformed-catalog, and failure-injection tests.
-- [ ] Add catalog parser and reconciliation fuzz tests.
+- [x] Add catalog parser and reconciliation fuzz tests.
 - [ ] Add interoperability tests with at least BIND, Knot DNS, and PowerDNS catalog
   producers/consumers.
 - [ ] Document configuration, migration, rollback, disaster recovery, and a complete
