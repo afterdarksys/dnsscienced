@@ -98,6 +98,28 @@ func TestRPZPriorityAndPassthru(t *testing.T) {
 	}
 }
 
+func TestServerEnforcesClientIPBeforeResolution(t *testing.T) {
+	policy := writeServerRPZFile(t, "24.0.2.0.192.rpz-client-ip IN CNAME .")
+	srv, err := New(Config{
+		RPZ: RPZConfig{
+			Enabled: true,
+			Zones: []RPZZoneConfig{{
+				Name: "quarantine",
+				File: policy,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	response := queryServer(t, srv, "otherwise-unhandled.example.")
+	if response.Rcode != dns.RcodeNameError {
+		t.Fatalf("rcode = %s, want client-IP NXDOMAIN", dns.RcodeToString[response.Rcode])
+	}
+}
+
 func TestServerEnforcesResponseIPOnAuthoritativeAnswer(t *testing.T) {
 	policy := writeServerRPZFile(t, "24.0.2.0.192.rpz-ip IN CNAME .")
 	srv, err := New(Config{

@@ -11,8 +11,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-// LoadRPZFile parses QNAME and RPZ-IP CNAME policies into an in-memory RPZ.
-// The supported targets follow RPZ conventions: ".", "*.",
+// LoadRPZFile parses QNAME, RPZ-CLIENT-IP, and RPZ-IP CNAME policies into an
+// in-memory RPZ. The supported targets follow RPZ conventions: ".", "*.",
 // "rpz-passthru.", "rpz-drop.", or a rewrite target.
 func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 	parsed, err := zone.ParseZoneFile(filename, zone.DefaultConfig())
@@ -50,6 +50,11 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 			responseIP = true
 			responseIPOwner = ""
 		}
+		clientIPOwner, clientIP := strings.CutSuffix(relative, ".rpz-client-ip")
+		if relative == "rpz-client-ip" {
+			clientIP = true
+			clientIPOwner = ""
+		}
 		if isUnsupportedRPZTrigger(relative) {
 			return nil, fmt.Errorf("unsupported RPZ trigger %q", owner)
 		}
@@ -68,6 +73,14 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 			if err := rpz.AddResponseIPRule(prefix, action, rewriteTarget, reason, filename); err != nil {
 				return nil, fmt.Errorf("invalid RPZ-IP trigger %q: %w", owner, err)
 			}
+		} else if clientIP {
+			prefix, err := parseRPZIPTrigger(clientIPOwner)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RPZ-CLIENT-IP trigger %q: %w", owner, err)
+			}
+			if err := rpz.AddClientIPRule(prefix, action, rewriteTarget, reason, filename); err != nil {
+				return nil, fmt.Errorf("invalid RPZ-CLIENT-IP trigger %q: %w", owner, err)
+			}
 		} else {
 			wildcard := strings.HasPrefix(relative, "*.")
 			trigger := strings.TrimPrefix(relative, "*.")
@@ -84,7 +97,6 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 
 func isUnsupportedRPZTrigger(relative string) bool {
 	for _, suffix := range []string{
-		"rpz-client-ip",
 		"rpz-nsip",
 		"rpz-nsdname",
 	} {

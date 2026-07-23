@@ -2,6 +2,7 @@ package engine
 
 import (
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,15 +166,52 @@ $ORIGIN rpz.example.
 	}
 }
 
-func TestLoadRPZFileStillRejectsUnsupportedTrigger(t *testing.T) {
+func TestLoadRPZFileLoadsClientIPTriggers(t *testing.T) {
 	policyFile := writeRPZFile(t, `
 $ORIGIN rpz.example.
 @ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
 @ IN NS localhost.
 24.0.2.0.192.rpz-client-ip IN CNAME .
+32.10.2.0.192.rpz-client-ip IN CNAME rpz-passthru.
+`)
+	policy, err := LoadRPZFile("clients", policyFile, "quarantine")
+	if err != nil {
+		t.Fatalf("LoadRPZFile: %v", err)
+	}
+	aggregate := NewRPZAggregate()
+	aggregate.AddZone(policy)
+	tests := []struct {
+		client   string
+		action   RPZAction
+		decisive bool
+	}{
+		{client: "192.0.2.9", action: RPZActionNXDomain, decisive: true},
+		{client: "192.0.2.10", action: RPZActionPassthru, decisive: true},
+		{client: "198.51.100.1", action: RPZActionNone, decisive: true},
+	}
+	for _, test := range tests {
+		t.Run(test.client, func(t *testing.T) {
+			addr, _ := netip.ParseAddr(test.client)
+			_, action, decisive := aggregate.CheckRequestShortcut("answer.example.", addr)
+			if action != test.action || decisive != test.decisive {
+				t.Fatalf("result = (%v, %v), want (%v, %v)", action, decisive, test.action, test.decisive)
+			}
+		})
+	}
+	if stats := policy.Stats(); stats.ClientIPRules != 2 {
+		t.Fatalf("stats = %+v, want two client-IP rules", stats)
+	}
+}
+
+func TestLoadRPZFileStillRejectsUnsupportedTrigger(t *testing.T) {
+	policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+24.0.2.0.192.rpz-nsip IN CNAME .
 `)
 	if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
-		t.Fatal("expected unsupported client-IP trigger to fail closed")
+		t.Fatal("expected unsupported NS-IP trigger to fail closed")
 	}
 }
 

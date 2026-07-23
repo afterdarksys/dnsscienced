@@ -95,7 +95,9 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Implement response-IP (`rpz-ip`) policy triggers for answer-section A/AAAA
   data with IPv4/IPv6 prefix validation, RPZ-zone and trigger precedence, and
   production authoritative/recursive response enforcement.
-- [ ] Implement client-IP, NS-name, and NS-IP RPZ triggers.
+- [x] Implement client-IP (`rpz-client-ip`) triggers with longest-prefix matching,
+  IPv4/IPv6 validation, and precedence over QNAME/response-IP within a policy zone.
+- [ ] Implement NS-name and NS-IP RPZ triggers.
 - [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 

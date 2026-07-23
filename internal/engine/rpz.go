@@ -67,6 +67,11 @@ type RPZ struct {
 	responseIPv4Lengths []int
 	responseIPv6Lengths []int
 	responseIPRules     int
+	clientIPv4          [33]map[netip.Addr]*RPZRule
+	clientIPv6          [129]map[netip.Addr]*RPZRule
+	clientIPv4Lengths   []int
+	clientIPv6Lengths   []int
+	clientIPRules       int
 	name                string // Zone name for identification
 	enabled             bool
 }
@@ -150,6 +155,53 @@ func (r *RPZ) AddResponseIPRule(
 	}
 	if _, exists := table[bits][prefix.Addr()]; !exists {
 		r.responseIPRules++
+	}
+	table[bits][prefix.Addr()] = rule
+	return nil
+}
+
+// AddClientIPRule adds an RPZ-CLIENT-IP prefix rule.
+func (r *RPZ) AddClientIPRule(
+	prefix netip.Prefix,
+	action RPZAction,
+	rewriteTarget string,
+	reason string,
+	source string,
+) error {
+	if !prefix.IsValid() || prefix.Bits() < 1 ||
+		(prefix.Addr().Is4() && prefix.Bits() > 32) ||
+		(!prefix.Addr().Is4() && prefix.Bits() > 128) {
+		return fmt.Errorf("invalid RPZ-CLIENT-IP prefix %v", prefix)
+	}
+	prefix = prefix.Masked()
+	if rewriteTarget != "" {
+		rewriteTarget = dns.Fqdn(strings.ToLower(rewriteTarget))
+	}
+	rule := &RPZRule{
+		Trigger:       prefix.String(),
+		Action:        action,
+		RewriteTarget: rewriteTarget,
+		Reason:        reason,
+		Zone:          r.name,
+		Source:        source,
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lengths := &r.clientIPv6Lengths
+	table := r.clientIPv6[:]
+	if prefix.Addr().Is4() {
+		lengths = &r.clientIPv4Lengths
+		table = r.clientIPv4[:]
+	}
+	bits := prefix.Bits()
+	if table[bits] == nil {
+		table[bits] = make(map[netip.Addr]*RPZRule)
+		*lengths = append(*lengths, bits)
+		sort.Sort(sort.Reverse(sort.IntSlice(*lengths)))
+	}
+	if _, exists := table[bits][prefix.Addr()]; !exists {
+		r.clientIPRules++
 	}
 	table[bits][prefix.Addr()] = rule
 	return nil
@@ -281,6 +333,32 @@ func (r *RPZ) HasResponseIPRules() bool {
 	return r.enabled && r.responseIPRules != 0
 }
 
+func (r *RPZ) checkClientIP(client netip.Addr, recordHit bool) (*RPZRule, RPZAction) {
+	if !client.IsValid() {
+		return nil, RPZActionNone
+	}
+	client = client.Unmap()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.enabled || r.clientIPRules == 0 {
+		return nil, RPZActionNone
+	}
+	rule, _, ok := rpzIPMatch(
+		client,
+		r.clientIPv4[:],
+		r.clientIPv6[:],
+		r.clientIPv4Lengths,
+		r.clientIPv6Lengths,
+	)
+	if !ok {
+		return nil, RPZActionNone
+	}
+	if recordHit {
+		recordRPZHit(rule)
+	}
+	return rule, rule.Action
+}
+
 // CheckResponse evaluates QNAME first, then RPZ-IP against A/AAAA records in
 // the answer section only. Within one zone QNAME outranks RPZ-IP; among IP
 // matches the longest internal prefix wins, followed by the smaller address.
@@ -318,7 +396,13 @@ func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
 		default:
 			continue
 		}
-		rule, prefix, ok := r.responseIPMatch(addr)
+		rule, prefix, ok := rpzIPMatch(
+			addr,
+			r.responseIPv4[:],
+			r.responseIPv6[:],
+			r.responseIPv4Lengths,
+			r.responseIPv6Lengths,
+		)
 		if !ok {
 			continue
 		}
@@ -342,12 +426,18 @@ func (r *RPZ) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
 	return best, best.Action
 }
 
-func (r *RPZ) responseIPMatch(addr netip.Addr) (*RPZRule, netip.Prefix, bool) {
-	lengths := r.responseIPv6Lengths
-	table := r.responseIPv6[:]
+func rpzIPMatch(
+	addr netip.Addr,
+	ipv4 []map[netip.Addr]*RPZRule,
+	ipv6 []map[netip.Addr]*RPZRule,
+	ipv4Lengths []int,
+	ipv6Lengths []int,
+) (*RPZRule, netip.Prefix, bool) {
+	lengths := ipv6Lengths
+	table := ipv6
 	if addr.Is4() {
-		lengths = r.responseIPv4Lengths
-		table = r.responseIPv4[:]
+		lengths = ipv4Lengths
+		table = ipv4
 	}
 	for _, bits := range lengths {
 		prefix := netip.PrefixFrom(addr, bits).Masked()
@@ -447,6 +537,11 @@ func (r *RPZ) Clear() {
 	r.responseIPv4Lengths = nil
 	r.responseIPv6Lengths = nil
 	r.responseIPRules = 0
+	r.clientIPv4 = [33]map[netip.Addr]*RPZRule{}
+	r.clientIPv6 = [129]map[netip.Addr]*RPZRule{}
+	r.clientIPv4Lengths = nil
+	r.clientIPv6Lengths = nil
+	r.clientIPRules = 0
 }
 
 // Stats returns statistics about the RPZ.
@@ -460,6 +555,7 @@ func (r *RPZ) Stats() RPZStats {
 		WildcardRules:   len(r.wildcards),
 		RegexRules:      len(r.regex),
 		ResponseIPRules: r.responseIPRules,
+		ClientIPRules:   r.clientIPRules,
 	}
 }
 
@@ -471,6 +567,7 @@ type RPZStats struct {
 	WildcardRules   int
 	RegexRules      int
 	ResponseIPRules int
+	ClientIPRules   int
 }
 
 // RPZAggregate manages multiple RPZ zones with priority ordering.
@@ -511,11 +608,27 @@ func (a *RPZAggregate) Check(name string) (*RPZRule, RPZAction) {
 // before resolution. A QNAME match in a later zone must wait if an earlier
 // zone contains RPZ-IP rules that could take precedence.
 func (a *RPZAggregate) CheckQueryShortcut(name string) (*RPZRule, RPZAction, bool) {
+	return a.CheckRequestShortcut(name, netip.Addr{})
+}
+
+// CheckRequestShortcut evaluates client-IP and QNAME triggers that can be
+// decided without a truthful response.
+func (a *RPZAggregate) CheckRequestShortcut(
+	name string,
+	client netip.Addr,
+) (*RPZRule, RPZAction, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	priorResponseRules := false
 	for _, rpz := range a.zones {
+		if rule, action := rpz.checkClientIP(client, false); action != RPZActionNone {
+			if priorResponseRules {
+				return nil, RPZActionNone, false
+			}
+			recordRPZHit(rule)
+			return rule, action, true
+		}
 		if rule, action := rpz.checkName(name, false); action != RPZActionNone {
 			if priorResponseRules {
 				return nil, RPZActionNone, false
@@ -534,10 +647,23 @@ func (a *RPZAggregate) CheckQueryShortcut(name string) (*RPZRule, RPZAction, boo
 // each zone gets a QNAME check followed by its RPZ-IP check before the next
 // lower-priority zone is considered.
 func (a *RPZAggregate) CheckResponse(name string, msg *dns.Msg) (*RPZRule, RPZAction) {
+	return a.CheckRequestResponse(name, netip.Addr{}, msg)
+}
+
+// CheckRequestResponse applies RPZ-zone ordering first and, within each zone,
+// client-IP, QNAME, then response-IP trigger precedence.
+func (a *RPZAggregate) CheckRequestResponse(
+	name string,
+	client netip.Addr,
+	msg *dns.Msg,
+) (*RPZRule, RPZAction) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	for _, rpz := range a.zones {
+		if rule, action := rpz.checkClientIP(client, true); action != RPZActionNone {
+			return rule, action
+		}
 		if rule, action := rpz.CheckResponse(name, msg); action != RPZActionNone {
 			return rule, action
 		}

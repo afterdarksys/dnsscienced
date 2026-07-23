@@ -1364,7 +1364,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	rpzDecided := false
-	if matched, drop, rule, decisive := s.applyRPZQuery(r, m); decisive {
+	if matched, drop, rule, decisive := s.applyRPZQuery(r, m, clientIP); decisive {
 		rpzDecided = true
 		if matched {
 			s.observeClient(clientIP, reputation.SignalPolicy)
@@ -1460,7 +1460,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if resp, ok := s.handleAuthoritative(r, clientIP); ok {
 			rpzZone := ""
 			if !rpzDecided {
-				if matched, drop, rule := s.applyRPZResponse(r, resp); matched {
+				if matched, drop, rule := s.applyRPZResponse(r, resp, clientIP); matched {
 					s.observeClient(clientIP, reputation.SignalPolicy)
 					if drop {
 						return
@@ -1539,7 +1539,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		rpzZone := ""
 		if !rpzDecided {
-			if matched, drop, rule := s.applyRPZResponse(r, resp); matched {
+			if matched, drop, rule := s.applyRPZResponse(r, resp, clientIP); matched {
 				s.observeClient(clientIP, reputation.SignalPolicy)
 				if drop {
 					return

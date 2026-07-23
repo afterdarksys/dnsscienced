@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"sort"
 	"strings"
 
@@ -130,19 +132,23 @@ func (s *Server) GetRPZStats() []engine.RPZStats {
 }
 
 func (s *Server) applyRPZ(req, resp *dns.Msg) (matched bool, drop bool, rule *engine.RPZRule) {
-	matched, drop, rule, _ = s.applyRPZQuery(req, resp)
+	matched, drop, rule, _ = s.applyRPZQuery(req, resp, nil)
 	return matched, drop, rule
 }
 
 func (s *Server) applyRPZQuery(
 	req, resp *dns.Msg,
+	clientIP net.IP,
 ) (matched bool, drop bool, rule *engine.RPZRule, decisive bool) {
 	active := s.rpz.Load()
 	if active == nil || len(req.Question) != 1 {
 		return false, false, nil, true
 	}
 
-	rule, action, decisive := active.CheckQueryShortcut(req.Question[0].Name)
+	rule, action, decisive := active.CheckRequestShortcut(
+		req.Question[0].Name,
+		rpzClientAddress(clientIP),
+	)
 	if !decisive {
 		return false, false, nil, false
 	}
@@ -152,13 +158,26 @@ func (s *Server) applyRPZQuery(
 
 func (s *Server) applyRPZResponse(
 	req, resp *dns.Msg,
+	clientIP net.IP,
 ) (matched bool, drop bool, rule *engine.RPZRule) {
 	active := s.rpz.Load()
 	if active == nil || len(req.Question) != 1 {
 		return false, false, nil
 	}
-	rule, action := active.CheckResponse(req.Question[0].Name, resp)
+	rule, action := active.CheckRequestResponse(
+		req.Question[0].Name,
+		rpzClientAddress(clientIP),
+		resp,
+	)
 	return applyRPZAction(req, resp, rule, action)
+}
+
+func rpzClientAddress(clientIP net.IP) netip.Addr {
+	addr, ok := netip.AddrFromSlice(clientIP)
+	if !ok {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
 }
 
 func applyRPZAction(
