@@ -23,8 +23,12 @@ root-authoritative deployments.
 - [x] Add validated role profiles that reject unsafe combinations and default
   authoritative/root listeners to recursion disabled.
 - [ ] Build differential protocol suites against current BIND and NSD releases.
-- [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate
-  local-root suite for RFC 8806.
+- [x] Build a root-authoritative conformance suite for RFC 7720 and a separate
+  local-root suite for RFC 8806: signed authoritative answers and denial,
+  EDNS(0), IPv4/IPv6 UDP/TCP, unique-root startup validation, loopback role
+  isolation, complete root-secondary loading, SOA refresh/retry timing, and
+  mandatory withdrawal at SOA Expire are covered. Public-root operational
+  qualification remains a separate release gate.
 - [ ] Define and continuously test carrier-grade overload SLOs for sustained QPS,
   p99/p99.9 latency, packet loss, TCP fallback, bounded memory, and recovery.
 

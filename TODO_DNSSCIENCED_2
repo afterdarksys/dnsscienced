@@ -77,8 +77,8 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   7. Network Protocol Security
 
-  Status: **Partial** — DoT/DoH are available; operational DoQ, ODoH, and
-  authenticated confidential RFC 9103 transfer remain pending.
+  Status: **Partial** — DoT/DoH and authenticated confidential RFC 9103
+  transfer are operational; DoQ and ODoH remain pending.
 
   - DNS over QUIC (DoQ) - RFC 9250 (more efficient than DoT)
   - Oblivious DoH (ODoH) - RFC 9230 (zero-knowledge privacy)

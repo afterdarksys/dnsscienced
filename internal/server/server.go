@@ -1017,6 +1017,21 @@ func writeMsg(w dns.ResponseWriter, msg *dns.Msg) error {
 	return err
 }
 
+func addEDNS0Response(response, request *dns.Msg) {
+	requestOPT := request.IsEdns0()
+	if requestOPT == nil || requestOPT.Version() != 0 || response.IsEdns0() != nil {
+		return
+	}
+	udpSize := requestOPT.UDPSize()
+	if udpSize < dns.MinMsgSize {
+		udpSize = dns.MinMsgSize
+	}
+	if udpSize > dns.DefaultMsgSize {
+		udpSize = dns.DefaultMsgSize
+	}
+	response.SetEdns0(udpSize, requestOPT.Do())
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
@@ -1224,6 +1239,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	defer pool.PutMessage(m)
 
 	m.SetReply(r)
+	addEDNS0Response(m, r)
 	recursionAllowed := s.cfg.EnableRecursive && s.recursionACL != nil && clientIP != nil && s.recursionACL.IsAllowed(clientIP)
 	m.RecursionAvailable = recursionAllowed
 
@@ -1267,6 +1283,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if reqOpt := r.IsEdns0(); reqOpt != nil && reqOpt.Version() > 0 {
 		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeBadVers
+		m.Extra = nil
 		respOpt := &dns.OPT{
 			Hdr: dns.RR_Header{
 				Name:   ".",
@@ -1483,6 +1500,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Answer = resp.Answer
 			m.Ns = resp.Ns
 			m.Extra = resp.Extra
+			addEDNS0Response(m, r)
 			if haveResponseCookie {
 				s.addCookieToResponse(m, responseClientCookie, responseServerCookie)
 			}
@@ -1573,6 +1591,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if haveResponseCookie {
 			s.addCookieToResponse(resp, responseClientCookie, responseServerCookie)
 		}
+		addEDNS0Response(resp, r)
 
 		emitQuery(resp.Rcode, rpzZone)
 		writeMsg(w, resp)
@@ -1595,6 +1614,7 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	question := r.Question[0]
 	qname := question.Name
 	qtype := question.Qtype
+	wantsDNSSEC := requestWantsDNSSEC(r)
 
 	// Find matching zone (RLock protects concurrent map read, CR-01)
 	var matchedZone *zone.Zone
@@ -1636,6 +1656,14 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 		!(strings.EqualFold(qname, cut) && qtype == dns.TypeDS) {
 		m.Authoritative = false
 		m.Ns = append(m.Ns, nsRecords...)
+		if wantsDNSSEC {
+			dsRecords := matchedZone.ExactRecords(cut, dns.TypeDS)
+			if len(dsRecords) > 0 {
+				m.Ns = append(m.Ns, appendCoveringSignatures(dsRecords, matchedZone)...)
+			} else {
+				m.Ns = appendAuthoritativeDenial(m.Ns, matchedZone, cut, true)
+			}
+		}
 		for _, rr := range nsRecords {
 			ns, ok := rr.(*dns.NS)
 			if !ok || !dns.IsSubDomain(matchedZone.Origin, ns.Ns) {
@@ -1662,7 +1690,10 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	}
 
 	if len(records) > 0 {
-		m.Answer = records
+		m.Answer = append([]dns.RR(nil), records...)
+		if wantsDNSSEC {
+			m.Answer = appendCoveringSignatures(m.Answer, matchedZone)
+		}
 	} else {
 		// NODATA: name exists but no records of this type → NOERROR + empty answer
 		// NXDOMAIN: name does not exist in the zone → RcodeNameError
@@ -1674,6 +1705,15 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 		// Add SOA in authority for both NXDOMAIN and NODATA (RFC 2308)
 		if matchedZone.SOA != nil {
 			m.Ns = []dns.RR{matchedZone.SOA}
+		}
+		if wantsDNSSEC {
+			m.Ns = appendCoveringSignatures(m.Ns, matchedZone)
+			m.Ns = appendAuthoritativeDenial(
+				m.Ns,
+				matchedZone,
+				qname,
+				matchedZone.HasName(qname),
+			)
 		}
 	}
 

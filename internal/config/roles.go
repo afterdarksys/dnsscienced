@@ -115,6 +115,11 @@ func (c *Config) applyRootRole(role string, requireLoopback bool) error {
 				return roleError(role, err.Error())
 			}
 		}
+		if c.Server.XoT.Enabled {
+			if err := requireLoopbackAddress("server.xot.address", c.Server.XoT.Address); err != nil {
+				return roleError(role, err.Error())
+			}
+		}
 	}
 	c.Server.EnableAuthoritative = true
 	c.Server.EnableRecursive = false

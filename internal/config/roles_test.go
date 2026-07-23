@@ -94,6 +94,13 @@ func TestLocalRootRequiresExplicitRootAndLoopbackListeners(t *testing.T) {
 	if err := cfg.ApplyRoleProfile(); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("non-loopback local root error = %v", err)
 	}
+
+	cfg = base()
+	cfg.Server.XoT.Enabled = true
+	cfg.Server.XoT.Address = "0.0.0.0:853"
+	if err := cfg.ApplyRoleProfile(); err == nil || !strings.Contains(err.Error(), "server.xot.address") {
+		t.Fatalf("non-loopback local-root XoT error = %v", err)
+	}
 }
 
 func TestPublicRootRejectsTenantPolicyAndExtraZones(t *testing.T) {
