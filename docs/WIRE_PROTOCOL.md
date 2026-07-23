@@ -545,9 +545,11 @@ Requirements:
 
 NOTIFY Retries:
 - Send via UDP first
-- Retry 2-5 times with exponential backoff
-- Fall back to TCP if needed
+- Retry a bounded, configurable number of times with exponential backoff
+- Fall back to TCP once after UDP attempts are exhausted
 - Stop retries on response or timeout
+- Coalesce repeated changes to the newest SOA per zone
+- Require TSIG by default and require a signed success response
 ```
 
 ---

@@ -140,8 +140,13 @@ type ZoneConfig struct {
 	DNSSECSigning *ZoneDNSSECConfig `yaml:"dnssec_signing,omitempty"`
 
 	// AXFR/IXFR configuration
-	AllowTransfer []string `yaml:"allow_transfer,omitempty"` // CIDRs allowed to AXFR
-	AlsoNotify    []string `yaml:"also_notify,omitempty"`    // Additional NOTIFY targets
+	AllowTransfer       []string      `yaml:"allow_transfer,omitempty"`        // CIDRs allowed to AXFR
+	AlsoNotify          []string      `yaml:"also_notify,omitempty"`           // Additional NOTIFY targets
+	NotifyTSIGKey       string        `yaml:"notify_tsig_key,omitempty"`       // Named key used to sign outbound RFC 1996 NOTIFY
+	AllowUnsignedNotify bool          `yaml:"allow_unsigned_notify,omitempty"` // Explicit legacy compatibility escape hatch
+	NotifyTimeout       time.Duration `yaml:"notify_timeout,omitempty"`
+	NotifyRetryBackoff  time.Duration `yaml:"notify_retry_backoff,omitempty"`
+	NotifyAttempts      int           `yaml:"notify_attempts,omitempty"`
 
 	// Dynamic DNS Update configuration (RFC 2136)
 	AllowUpdate    []string `yaml:"allow_update,omitempty"`     // CIDRs allowed to send UPDATE; empty = REFUSED (D-15)

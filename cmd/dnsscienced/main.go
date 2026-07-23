@@ -24,6 +24,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/dnsscience/dnsscienced/internal/primarynotify"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/server"
@@ -210,6 +211,12 @@ func main() {
 				}
 			}
 		}
+		notifyZones, err := buildPrimaryNotifyConfigs(loadedCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring primary NOTIFY: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.PrimaryNotifyZones = notifyZones
 
 		// Check if DHCP config was loaded
 		if loadedCfg.DHCP.Enabled {
@@ -489,9 +496,6 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		if zc.DNSSECSigning != nil && zc.DNSSECSigning.Enabled {
 			return loaded, fmt.Errorf("zone %s: authoritative DNSSEC signing is not implemented", zc.Name)
 		}
-		if len(zc.AlsoNotify) > 0 {
-			return loaded, fmt.Errorf("zone %s: also_notify is not implemented", zc.Name)
-		}
 		z, err := zone.ParseZoneFile(zc.File, zone.DefaultConfig())
 		if err != nil {
 			return loaded, fmt.Errorf("zone %s: parse %s: %w", zc.Name, zc.File, err)
@@ -511,6 +515,47 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		loaded++
 	}
 	return loaded, nil
+}
+
+func buildPrimaryNotifyConfigs(cfg *config.Config) (map[string]primarynotify.ZoneConfig, error) {
+	keys := make(map[string]config.TsigKeyConfig, len(cfg.TsigKeys))
+	for _, key := range cfg.TsigKeys {
+		keys[strings.ToLower(dns.Fqdn(key.Name))] = key
+	}
+
+	result := make(map[string]primarynotify.ZoneConfig)
+	for _, zc := range cfg.Zones {
+		kind := strings.ToLower(strings.TrimSpace(zc.Type))
+		if kind == "" {
+			kind = "primary"
+		}
+		if kind != "primary" || len(zc.AlsoNotify) == 0 {
+			continue
+		}
+		notifyCfg := primarynotify.ZoneConfig{
+			Targets:       append([]string(nil), zc.AlsoNotify...),
+			AllowUnsigned: zc.AllowUnsignedNotify,
+			Timeout:       zc.NotifyTimeout,
+			RetryBackoff:  zc.NotifyRetryBackoff,
+			Attempts:      zc.NotifyAttempts,
+		}
+		if zc.NotifyTSIGKey != "" {
+			keyName := strings.ToLower(dns.Fqdn(zc.NotifyTSIGKey))
+			key, ok := keys[keyName]
+			if !ok {
+				return nil, fmt.Errorf("zone %s: notify_tsig_key %q is not defined", zc.Name, zc.NotifyTSIGKey)
+			}
+			notifyCfg.TSIGKey = key.Name
+			notifyCfg.TSIGAlgorithm = key.Algorithm
+		} else if !zc.AllowUnsignedNotify {
+			return nil, fmt.Errorf(
+				"zone %s: notify_tsig_key is required when also_notify is configured; set allow_unsigned_notify only for legacy secondaries",
+				zc.Name,
+			)
+		}
+		result[strings.ToLower(dns.Fqdn(zc.Name))] = notifyCfg
+	}
+	return result, nil
 }
 
 func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {

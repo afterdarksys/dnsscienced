@@ -1,6 +1,7 @@
 .git
 .gitignore
 .gstack
+.code-review-graph
 .omc
 .vscode
 .idea

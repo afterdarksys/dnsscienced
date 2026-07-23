@@ -16,6 +16,7 @@ func TestLoad(t *testing.T) {
 server:
   udp_addr: ":1053"
   udp_listeners: 2
+  primary_notify_workers: 6
   enable_recursive: true
   read_timeout: 2s
   rrl:
@@ -111,6 +112,7 @@ dhcp:
 	// Verify Server Config
 	assert.Equal(t, ":1053", cfg.Server.UDPAddr)
 	assert.Equal(t, 2, cfg.Server.UDPListeners)
+	assert.Equal(t, 6, cfg.Server.PrimaryNotifyWorkers)
 	assert.Equal(t, true, cfg.Server.EnableRecursive)
 	assert.Equal(t, 2*time.Second, cfg.Server.ReadTimeout)
 
@@ -251,6 +253,10 @@ zones:
       - "update-key.example."
     also_notify:
       - "192.0.2.53:53"
+    notify_tsig_key: "notify-key.example."
+    notify_timeout: 2s
+    notify_retry_backoff: 250ms
+    notify_attempts: 4
     dnssec_signing:
       enabled: true
       algorithm: "ECDSAP256SHA256"
@@ -313,6 +319,10 @@ zones:
 	assert.Equal(t, []string{"198.51.100.0/24"}, primaryZone.AllowUpdate)
 	assert.Equal(t, []string{"update-key.example."}, primaryZone.UpdateTSIGKeys)
 	assert.Len(t, primaryZone.AlsoNotify, 1)
+	assert.Equal(t, "notify-key.example.", primaryZone.NotifyTSIGKey)
+	assert.Equal(t, 2*time.Second, primaryZone.NotifyTimeout)
+	assert.Equal(t, 250*time.Millisecond, primaryZone.NotifyRetryBackoff)
+	assert.Equal(t, 4, primaryZone.NotifyAttempts)
 
 	// Verify DNSSEC signing config
 	require.NotNil(t, primaryZone.DNSSECSigning)

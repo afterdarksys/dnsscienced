@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/config"
 	"github.com/dnsscience/dnsscienced/internal/server"
@@ -139,5 +140,64 @@ func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T)
 	}
 	if len(got) != 1 || !got[0].AllowUnsignedTransfer || got[0].TransferKey != nil {
 		t.Fatalf("secondary configs = %+v", got)
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsResolvesKeyAndTuning(t *testing.T) {
+	cfg := &config.Config{
+		TsigKeys: []config.TsigKeyConfig{{
+			Name:      "notify.example.",
+			Algorithm: "hmac-sha512",
+			Secret:    "c2VjcmV0",
+		}},
+		Zones: []config.ZoneConfig{{
+			Name:               "primary.test",
+			Type:               "primary",
+			AlsoNotify:         []string{"192.0.2.2"},
+			NotifyTSIGKey:      "notify.example",
+			NotifyTimeout:      3 * time.Second,
+			NotifyRetryBackoff: 50 * time.Millisecond,
+			NotifyAttempts:     4,
+		}},
+	}
+
+	got, err := buildPrimaryNotifyConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifyCfg, ok := got["primary.test."]
+	if !ok || notifyCfg.TSIGKey != "notify.example." ||
+		notifyCfg.TSIGAlgorithm != "hmac-sha512" ||
+		notifyCfg.Timeout != 3*time.Second ||
+		notifyCfg.RetryBackoff != 50*time.Millisecond ||
+		notifyCfg.Attempts != 4 {
+		t.Fatalf("primary notify config = %+v", got)
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsRequiresAuthenticationByDefault(t *testing.T) {
+	cfg := &config.Config{Zones: []config.ZoneConfig{{
+		Name:       "primary.test",
+		Type:       "primary",
+		AlsoNotify: []string{"192.0.2.2"},
+	}}}
+	if _, err := buildPrimaryNotifyConfigs(cfg); err == nil {
+		t.Fatal("buildPrimaryNotifyConfigs accepted unsigned NOTIFY without explicit opt-in")
+	}
+}
+
+func TestBuildPrimaryNotifyConfigsAllowsExplicitLegacyUnsigned(t *testing.T) {
+	cfg := &config.Config{Zones: []config.ZoneConfig{{
+		Name:                "primary.test",
+		Type:                "primary",
+		AlsoNotify:          []string{"192.0.2.2"},
+		AllowUnsignedNotify: true,
+	}}}
+	got, err := buildPrimaryNotifyConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["primary.test."].AllowUnsigned {
+		t.Fatalf("primary notify config = %+v", got)
 	}
 }

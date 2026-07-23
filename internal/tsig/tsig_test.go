@@ -2,6 +2,7 @@ package tsig
 
 import (
 	"encoding/base64"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,24 @@ func TestTSIG_ProviderConcurrentKeyRotation(t *testing.T) {
 		}
 	}
 	wg.Wait()
+}
+
+func TestTSIG_ProviderRejectsAlgorithmDowngrade(t *testing.T) {
+	kr, err := NewKeyRing([]KeyConfig{{
+		Name:      "strict.example.",
+		Algorithm: "hmac-sha512",
+		Secret:    base64.StdEncoding.EncodeToString([]byte("strict-secret")),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsigRR := &dns.TSIG{
+		Hdr:       dns.RR_Header{Name: "strict.example."},
+		Algorithm: dns.HmacSHA256,
+	}
+	if _, err := kr.Generate([]byte("message"), tsigRR); !errors.Is(err, dns.ErrKeyAlg) {
+		t.Fatalf("Generate error = %v, want ErrKeyAlg", err)
+	}
 }
 
 func TestTSIG_NewKeyRing_Valid(t *testing.T) {

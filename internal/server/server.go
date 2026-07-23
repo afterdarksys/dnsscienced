@@ -21,6 +21,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/pool"
+	"github.com/dnsscience/dnsscienced/internal/primarynotify"
 	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
@@ -93,6 +94,11 @@ type Config struct {
 	// Populated by main.go from config.ZoneConfig.PersistUpdates + File.
 	// Zones absent from this map use in-memory-only updates (D-12).
 	PersistPaths map[string]string `yaml:"-"`
+
+	// PrimaryNotifyZones is populated from primary zone stanzas. Workers are
+	// fixed and zones are deterministically routed to preserve ordering.
+	PrimaryNotifyWorkers int                                 `yaml:"primary_notify_workers"`
+	PrimaryNotifyZones   map[string]primarynotify.ZoneConfig `yaml:"-"`
 
 	// DSYNC configures inbound RFC 9859 NOTIFY(CDS/CSYNC) handling.
 	DSYNC DSYNCConfig `yaml:"dsync"`
@@ -195,6 +201,7 @@ type Server struct {
 	zoneTransferACLs map[string]*dsync.SourceACL    // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL    // Per-zone update ACLs.  nil entry = deny all (D-15).
 	zoneUpdateKeys   map[string]map[string]struct{} // Per-zone TSIG identities. nil entry = deny all.
+	primaryNotifier  *primarynotify.Notifier
 	soaNotifyMu      sync.RWMutex
 	soaNotifyHandler SOANotifyHandler
 	ixfrJournal      *zone.Journal
@@ -446,6 +453,48 @@ func New(cfg Config) (*Server, error) {
 		s.zoneUpdateKeys[strings.ToLower(dns.Fqdn(zoneName))] = allowed
 	}
 
+	for zoneName, notifyCfg := range cfg.PrimaryNotifyZones {
+		if notifyCfg.TSIGKey == "" {
+			continue
+		}
+		keyName := strings.ToLower(dns.Fqdn(notifyCfg.TSIGKey))
+		configuredAlgorithm, ok := configuredKeys[keyName]
+		if !ok {
+			cancel()
+			return nil, fmt.Errorf("zone %s notify_tsig_key references undefined key %q", zoneName, notifyCfg.TSIGKey)
+		}
+		if notifyCfg.TSIGAlgorithm == "" {
+			notifyCfg.TSIGAlgorithm = configuredAlgorithm
+			cfg.PrimaryNotifyZones[zoneName] = notifyCfg
+		} else if dns.CanonicalName(notifyCfg.TSIGAlgorithm) != configuredAlgorithm {
+			cancel()
+			return nil, fmt.Errorf(
+				"zone %s notify_tsig_key %q algorithm %q does not match configured algorithm %q",
+				zoneName,
+				notifyCfg.TSIGKey,
+				notifyCfg.TSIGAlgorithm,
+				configuredAlgorithm,
+			)
+		}
+	}
+	if len(cfg.PrimaryNotifyZones) > 0 {
+		var err error
+		s.primaryNotifier, err = primarynotify.New(primarynotify.Config{
+			Workers: cfg.PrimaryNotifyWorkers,
+			Zones:   cfg.PrimaryNotifyZones,
+		}, s.tsigKeyRing, func(zoneName, target string, err error) {
+			zerolog.Ctx(context.Background()).Warn().
+				Str("zone", zoneName).
+				Str("target", target).
+				Err(err).
+				Msg("RFC 1996 NOTIFY delivery failed")
+		})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init primary notify: %w", err)
+		}
+	}
+
 	// Wire per-zone persist paths from config (D-11, D-12).
 	// Main.go populates cfg.PersistPaths with zones that have persist_updates=true.
 	// Zones absent from the map use in-memory-only updates.
@@ -513,6 +562,17 @@ func (s *Server) Start() error {
 				_ = s.dohServer.Stop()
 			}
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
+		}
+	}
+	if s.primaryNotifier != nil {
+		if err := s.primaryNotifier.Start(s.ctx); err != nil {
+			if s.dohServer != nil {
+				_ = s.dohServer.Stop()
+			}
+			if s.dotServer != nil {
+				_ = s.dotServer.Stop()
+			}
+			return fmt.Errorf("start primary notify: %w", err)
 		}
 	}
 	// Start UDP listeners (SO_REUSEPORT)
@@ -599,6 +659,9 @@ func (s *Server) Stop() error {
 	// Stop the DSYNC notifier worker goroutine.
 	if s.dsyncNotifier != nil {
 		s.dsyncNotifier.Close()
+	}
+	if s.primaryNotifier != nil {
+		s.primaryNotifier.Close()
 	}
 
 	fmt.Println("DNS server stopped")
@@ -1353,8 +1416,9 @@ type Stats struct {
 	UDPQueries uint64
 	TCPQueries uint64
 
-	Recursive *resolver.Stats
-	RRL       *rrl.Stats
+	Recursive     *resolver.Stats
+	RRL           *rrl.Stats
+	PrimaryNotify *primarynotify.Stats
 }
 
 // GetStats returns current statistics
@@ -1376,6 +1440,10 @@ func (s *Server) GetStats() Stats {
 	if s.rrl != nil {
 		rrlStats := s.rrl.GetStats()
 		stats.RRL = &rrlStats
+	}
+	if s.primaryNotifier != nil {
+		notifyStats := s.primaryNotifier.Stats()
+		stats.PrimaryNotify = &notifyStats
 	}
 
 	return stats
@@ -1435,6 +1503,9 @@ func (s *Server) AddZone(z *zone.Zone) error {
 	s.cfg.Zones[z.Origin] = z
 	s.zonesMu.Unlock()
 	s.persistMu.Unlock()
+	if s.primaryNotifier != nil {
+		_ = s.primaryNotifier.Notify(z.Origin, z.SOA)
+	}
 	return nil
 }
 

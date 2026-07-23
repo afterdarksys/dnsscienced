@@ -68,3 +68,39 @@ policy applies.
 
 The journal is intentionally not persisted yet. After restart, existing
 secondaries fall back to AXFR until new deltas accumulate.
+
+## Primary NOTIFY
+
+Primary zones can notify explicitly configured secondaries after startup,
+RFC 2136 UPDATE, or an atomic zone replacement through the admin APIs:
+
+```yaml
+tsig_keys:
+  - name: "notify-key.example."
+    algorithm: "hmac-sha256"
+    secret: "<base64-secret>"
+
+server:
+  primary_notify_workers: 4
+
+zones:
+  - name: "example."
+    type: "primary"
+    file: "/etc/dnsscienced/zones/example.zone"
+    also_notify:
+      - "192.0.2.20:53"
+      - "[2001:db8::20]:53"
+    notify_tsig_key: "notify-key.example."
+    notify_timeout: 2s
+    notify_retry_backoff: 250ms
+    notify_attempts: 3
+```
+
+The fixed worker pool routes each zone to one worker, preserving per-zone order
+without creating one goroutine per zone. Repeated changes coalesce to the newest
+SOA. Each target is tried over UDP with bounded exponential backoff and then
+once over TCP. Signed requests require a valid, signed success response.
+
+`notify_tsig_key` is required whenever `also_notify` is configured. A legacy
+secondary can be reached without TSIG only when
+`allow_unsigned_notify: true` is set explicitly.

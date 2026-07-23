@@ -410,6 +410,10 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 	w.WriteMsg(m) //nolint:errcheck
 
+	if s.primaryNotifier != nil {
+		_ = s.primaryNotifier.Notify(zoneName, clone.SOA)
+	}
+
 	// 17. Persist to disk if configured (D-11, D-14).
 	// WR-04: run in a goroutine so blocking disk I/O does not hold z.Lock() (released
 	// by defer above when handleUpdate returns) and does not stall subsequent UPDATE
