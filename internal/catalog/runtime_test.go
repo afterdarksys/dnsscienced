@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -487,8 +488,10 @@ func TestRuntimeEnforcesMemberAndReconcileLimits(t *testing.T) {
 
 func TestRuntimeRejectsInvalidResourceLimits(t *testing.T) {
 	for name, configure := range map[string]func(*SourceConfig){
-		"members": func(source *SourceConfig) { source.MaxMembers = -1 },
-		"actions": func(source *SourceConfig) { source.MaxReconcileActions = -1 },
+		"members":      func(source *SourceConfig) { source.MaxMembers = -1 },
+		"actions":      func(source *SourceConfig) { source.MaxReconcileActions = -1 },
+		"action_rate":  func(source *SourceConfig) { source.ReconcileActionsPerMinute = -1 },
+		"action_burst": func(source *SourceConfig) { source.ReconcileActionBurst = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := runtimeSource("catalog.example.")
@@ -517,6 +520,90 @@ func TestRuntimeBoundsCatalogSourceCount(t *testing.T) {
 		nil,
 	); err == nil {
 		t.Fatal("catalog source limit was not enforced")
+	}
+}
+
+func TestRuntimeReconcileRateBudgetRefillsOverTime(t *testing.T) {
+	store := newRuntimeStore()
+	source := runtimeSource("catalog.example.")
+	source.MaxReconcileActions = 10
+	source.ReconcileActionsPerMinute = 2
+	source.ReconcileActionBurst = 2
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	runtime.now = func() time.Time { return now }
+	runtime.budgets["catalog.example."].lastRefill = now
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	replacement := catalogZone(
+		t,
+		"catalog.example.",
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil {
+		t.Fatal("two-action replacement exceeded the remaining burst")
+	}
+	if store.GetZone("alpha.example.") == nil || store.GetZone("beta.example.") != nil {
+		t.Fatal("rate-limited reconciliation changed the fleet")
+	}
+	now = now.Add(30 * time.Second)
+	if err := runtime.AddZone(replacement); err != nil {
+		t.Fatalf("refilled action budget rejected reconciliation: %v", err)
+	}
+	if store.GetZone("alpha.example.") != nil || store.GetZone("beta.example.") == nil {
+		t.Fatal("refilled reconciliation did not atomically replace the fleet")
+	}
+}
+
+func TestRuntimeReconcileRateBudgetRefundsFailure(t *testing.T) {
+	store := newRuntimeStore()
+	source := runtimeSource("catalog.example.")
+	source.ReconcileActionsPerMinute = 1
+	source.ReconcileActionBurst = 1
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &runtimeController{runtime: runtime, err: errors.New("transfer failed")}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(catalog); err == nil {
+		t.Fatal("failed transfer was accepted")
+	}
+	controller.mu.Lock()
+	controller.err = nil
+	controller.mu.Unlock()
+	if err := runtime.AddZone(catalog); err != nil {
+		t.Fatalf("failed reconciliation did not refund its token: %v", err)
 	}
 }
 

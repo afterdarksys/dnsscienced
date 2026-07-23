@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -47,13 +48,15 @@ type SecondaryController interface {
 // SourceConfig maps an authenticated catalog to transfer settings inherited by
 // its members. A matching RFC 9432 group overrides Defaults.
 type SourceConfig struct {
-	Name                string
-	Defaults            secondary.Config
-	Groups              map[string]secondary.Config
-	MemberAllowSuffixes []string
-	MemberDenySuffixes  []string
-	MaxMembers          int
-	MaxReconcileActions int
+	Name                      string
+	Defaults                  secondary.Config
+	Groups                    map[string]secondary.Config
+	MemberAllowSuffixes       []string
+	MemberDenySuffixes        []string
+	MaxMembers                int
+	MaxReconcileActions       int
+	ReconcileActionsPerMinute int
+	ReconcileActionBurst      int
 }
 
 // Runtime retains last-valid catalog state, plans RFC 9432 changes, and
@@ -72,6 +75,13 @@ type Runtime struct {
 	catalogZone map[string]*zone.Zone
 	ownership   map[string]Ownership
 	memberZone  map[string]*zone.Zone
+	budgets     map[string]*reconcileBudget
+	now         func() time.Time
+}
+
+type reconcileBudget struct {
+	tokens     float64
+	lastRefill time.Time
 }
 
 type diskState struct {
@@ -111,6 +121,8 @@ func NewRuntime(
 		catalogZone: make(map[string]*zone.Zone),
 		ownership:   make(map[string]Ownership),
 		memberZone:  make(map[string]*zone.Zone),
+		budgets:     make(map[string]*reconcileBudget, len(sources)),
+		now:         time.Now,
 	}
 	for _, source := range sources {
 		source.Name = normalizeName(source.Name)
@@ -150,7 +162,32 @@ func NewRuntime(
 				absoluteMaxReconcileActions,
 			)
 		}
+		if source.ReconcileActionsPerMinute == 0 {
+			source.ReconcileActionsPerMinute = source.MaxReconcileActions
+		}
+		if source.ReconcileActionsPerMinute < 1 ||
+			source.ReconcileActionsPerMinute > absoluteMaxReconcileActions {
+			return nil, fmt.Errorf(
+				"catalog %s reconcile_actions_per_minute must be between 1 and %d",
+				source.Name,
+				absoluteMaxReconcileActions,
+			)
+		}
+		if source.ReconcileActionBurst == 0 {
+			source.ReconcileActionBurst = source.MaxReconcileActions
+		}
+		if source.ReconcileActionBurst < 1 || source.ReconcileActionBurst > absoluteMaxReconcileActions {
+			return nil, fmt.Errorf(
+				"catalog %s reconcile_action_burst must be between 1 and %d",
+				source.Name,
+				absoluteMaxReconcileActions,
+			)
+		}
 		r.sources[source.Name] = source
+		r.budgets[source.Name] = &reconcileBudget{
+			tokens:     float64(source.ReconcileActionBurst),
+			lastRefill: r.now(),
+		}
 		r.order = append(r.order, source.Name)
 	}
 	r.reserved = normalizeNames(append(append([]string(nil), store.GetZoneNames()...), reservedZones...))
@@ -334,6 +371,28 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			r.sources[name].MaxReconcileActions,
 		)
 	}
+	actionCount := 0
+	for _, action := range actions {
+		if action.Kind != ActionConflict {
+			actionCount++
+		}
+	}
+	if !r.takeReconcileBudget(name, actionCount) {
+		source := r.sources[name]
+		return fmt.Errorf(
+			"catalog %s reconciliation needs %d action tokens; budget is %d/minute with burst %d",
+			name,
+			actionCount,
+			source.ReconcileActionsPerMinute,
+			source.ReconcileActionBurst,
+		)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			r.refundReconcileBudget(name, actionCount)
+		}
+	}()
 
 	changes := make([]secondary.BatchChange, 0, len(actions))
 	finalOwnership := cloneOwnership(ownership)
@@ -387,7 +446,39 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	if err != nil {
 		return fmt.Errorf("catalog %s reconciliation: %w", name, err)
 	}
+	committed = true
 	return nil
+}
+
+func (r *Runtime) takeReconcileBudget(name string, actions int) bool {
+	if actions == 0 {
+		return true
+	}
+	source := r.sources[name]
+	budget := r.budgets[name]
+	now := r.now()
+	elapsedMinutes := now.Sub(budget.lastRefill).Minutes()
+	if elapsedMinutes > 0 {
+		budget.tokens = min(
+			float64(source.ReconcileActionBurst),
+			budget.tokens+elapsedMinutes*float64(source.ReconcileActionsPerMinute),
+		)
+		budget.lastRefill = now
+	}
+	if budget.tokens < float64(actions) {
+		return false
+	}
+	budget.tokens -= float64(actions)
+	return true
+}
+
+func (r *Runtime) refundReconcileBudget(name string, actions int) {
+	if actions == 0 {
+		return
+	}
+	source := r.sources[name]
+	budget := r.budgets[name]
+	budget.tokens = min(float64(source.ReconcileActionBurst), budget.tokens+float64(actions))
 }
 
 func (r *Runtime) commitReconciliation(

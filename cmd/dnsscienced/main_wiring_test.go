@@ -206,11 +206,13 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 			Secret:    "c2VjcmV0",
 		}},
 		CatalogZones: []config.CatalogZoneConfig{{
-			Name:                "catalog.example.",
-			MemberAllowSuffixes: []string{"customer.example."},
-			MemberDenySuffixes:  []string{"blocked.customer.example."},
-			MaxMembers:          50000,
-			MaxReconcileActions: 100000,
+			Name:                      "catalog.example.",
+			MemberAllowSuffixes:       []string{"customer.example."},
+			MemberDenySuffixes:        []string{"blocked.customer.example."},
+			MaxMembers:                50000,
+			MaxReconcileActions:       100000,
+			ReconcileActionsPerMinute: 12000,
+			ReconcileActionBurst:      24000,
 			CatalogTransferConfig: config.CatalogTransferConfig{
 				Masters:            []string{"192.0.2.1"},
 				TransferTSIGKey:    "catalog-xfer.example.",
@@ -248,6 +250,8 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 		sources[0].MemberDenySuffixes[0] != "blocked.customer.example." ||
 		sources[0].MaxMembers != 50000 ||
 		sources[0].MaxReconcileActions != 100000 ||
+		sources[0].ReconcileActionsPerMinute != 12000 ||
+		sources[0].ReconcileActionBurst != 24000 ||
 		transfers["catalog.example."].MaxTransferRecords != 200000 ||
 		transfers["catalog.example."].MaxTransferBytes != 67108864 ||
 		transfers["catalog.example."].TransferKey == nil {

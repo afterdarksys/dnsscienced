@@ -204,6 +204,8 @@ catalog_zones:
     member_deny_suffixes: [suspended.customer.example.]
     max_members: 50000
     max_reconcile_actions: 100000
+    reconcile_actions_per_minute: 12000
+    reconcile_action_burst: 24000
     max_transfer_records: 200000
     max_transfer_bytes: 67108864
     member_defaults:
@@ -231,6 +233,8 @@ catalog_zones:
 		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." ||
 		cfg.CatalogZones[0].MaxMembers != 50000 ||
 		cfg.CatalogZones[0].MaxReconcileActions != 100000 ||
+		cfg.CatalogZones[0].ReconcileActionsPerMinute != 12000 ||
+		cfg.CatalogZones[0].ReconcileActionBurst != 24000 ||
 		cfg.CatalogZones[0].MaxTransferRecords != 200000 ||
 		cfg.CatalogZones[0].MaxTransferBytes != 67108864 {
 		t.Fatalf("catalog config = %+v", cfg.CatalogZones)

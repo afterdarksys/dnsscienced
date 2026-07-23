@@ -218,14 +218,16 @@ type CatalogTransferConfig struct {
 // CatalogZoneConfig defines one private RFC 9432 catalog secondary and the
 // transfer policy inherited by its members.
 type CatalogZoneConfig struct {
-	Name                  string `yaml:"name"`
-	CatalogTransferConfig `yaml:",inline"`
-	MemberDefaults        CatalogTransferConfig            `yaml:"member_defaults"`
-	Groups                map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
-	MemberAllowSuffixes   []string                         `yaml:"member_allow_suffixes,omitempty"`
-	MemberDenySuffixes    []string                         `yaml:"member_deny_suffixes,omitempty"`
-	MaxMembers            int                              `yaml:"max_members,omitempty"`
-	MaxReconcileActions   int                              `yaml:"max_reconcile_actions,omitempty"`
+	Name                      string `yaml:"name"`
+	CatalogTransferConfig     `yaml:",inline"`
+	MemberDefaults            CatalogTransferConfig            `yaml:"member_defaults"`
+	Groups                    map[string]CatalogTransferConfig `yaml:"groups,omitempty"`
+	MemberAllowSuffixes       []string                         `yaml:"member_allow_suffixes,omitempty"`
+	MemberDenySuffixes        []string                         `yaml:"member_deny_suffixes,omitempty"`
+	MaxMembers                int                              `yaml:"max_members,omitempty"`
+	MaxReconcileActions       int                              `yaml:"max_reconcile_actions,omitempty"`
+	ReconcileActionsPerMinute int                              `yaml:"reconcile_actions_per_minute,omitempty"`
+	ReconcileActionBurst      int                              `yaml:"reconcile_action_burst,omitempty"`
 }
 
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone

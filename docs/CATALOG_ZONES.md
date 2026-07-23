@@ -52,6 +52,8 @@ catalog_zones:
     member_deny_suffixes: [suspended.customer.example.]
     max_members: 100000
     max_reconcile_actions: 200000
+    reconcile_actions_per_minute: 200000
+    reconcile_action_burst: 200000
     max_transfer_records: 1000000
     max_transfer_bytes: 268435456
 
@@ -75,9 +77,12 @@ the allow list. A scope violation rejects the complete catalog snapshot and
 retains the last-valid fleet state.
 
 Catalog sources are capped at 128. Each catalog also has bounded member and
-reconciliation action counts. AXFR/IXFR ingestion enforces record and estimated
-wire-byte limits before copying records into the zone model; the same transfer
-limits apply to ordinary secondaries and catalog-provisioned members.
+reconciliation action counts. `reconcile_actions_per_minute` and
+`reconcile_action_burst` additionally bound churn across repeated valid
+snapshots; rejected or failed atomic reconciliations refund their reservation.
+AXFR/IXFR ingestion enforces record and estimated wire-byte limits before
+copying records into the zone model; the same transfer limits apply to ordinary
+secondaries and catalog-provisioned members.
 
 A configured catalog zone can never be provisioned as a member. Self-directed
 `coo` properties and deterministic multi-catalog `coo` cycles are rejected

@@ -207,7 +207,8 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [x] Bound configured catalogs, members per catalog, reconciliation action
   counts, AXFR/IXFR records, transfer bytes, and member provisioning concurrency
   (currently serialized).
-- [ ] Add an operator-configurable catalog reconciliation rate budget.
+- [x] Add an operator-configurable per-catalog reconciliation token budget with
+  lazy refill and failure refunds.
 - [x] Reject configured catalogs as member zones, self-referential `coo`, and
   deterministic cross-catalog ownership cycles before persistence or side effects.
 - [ ] Provide dry-run and approval modes for mass deletion or replacement.
