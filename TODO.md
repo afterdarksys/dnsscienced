@@ -166,7 +166,8 @@ fleet-scale policy, operations, interoperability, and producer support.
 
 - [x] Add explicit catalog consumer configuration, primary endpoints, TSIG
   credentials, refresh policy, and per-catalog group mappings.
-- [ ] Add catalog producer support and RFC 9103 TLS transfer credentials.
+- [ ] Add catalog producer support with explicit query/transfer ACLs and RFC 9103
+  TLS transfer credentials.
 - [x] Parse and validate `version.<catalog> TXT "2"` exactly as RFC 9432 requires.
 - [x] Parse member nodes as one-PTR RRsets beneath
   `<unique>.zones.<catalog>` and reject duplicate member names or malformed sets.
@@ -210,7 +211,9 @@ fleet-scale policy, operations, interoperability, and producer support.
   default.
 - [x] Support confidential catalog and catalog-member transfer using strict
   RFC 9103 TLS 1.3 with optional mTLS and no cleartext fallback.
-- [ ] Restrict catalog queries and transfers with explicit ACLs.
+- [x] Keep consumer catalog contents outside the authoritative query/transfer
+  store (deny-all by architecture); any future producer surface is gated above
+  on explicit query/transfer ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.
 - [x] Bound configured catalogs, members per catalog, reconciliation action
