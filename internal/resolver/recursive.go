@@ -111,6 +111,14 @@ type Recursive struct {
 	roots  []string
 }
 
+type validationResolver struct{ recursive *Recursive }
+
+func (v validationResolver) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
+	// DNSKEY/DS lookups must bypass Recursive.Resolve's validation stage or the
+	// validator recursively invokes itself while constructing its own chain.
+	return v.recursive.resolveIterative(ctx, dns.Fqdn(name), qtype, dns.ClassINET)
+}
+
 // DefaultConfig returns an RFC-compliant default configuration with all three
 // resolver features enabled (QNAME minimization, Aggressive NSEC, Serve Stale).
 // Callers who want specific features off should start from DefaultConfig() and
@@ -196,9 +204,14 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.EnableDNSSEC {
 		vcfg := cfg.DNSSECConfig
 		if vcfg.MaxChainDepth == 0 {
-			vcfg = dnssec.DefaultValidatorConfig()
+			defaults := dnssec.DefaultValidatorConfig()
+			defaults.TrustAnchorFile = vcfg.TrustAnchorFile
+			vcfg = defaults
 		}
-		v, err := dnssec.NewValidator(vcfg, r)
+		if vcfg.TrustAnchorFile == "" {
+			return nil, fmt.Errorf("init dnssec validator: trust_anchor_file is required when enable_dnssec is true")
+		}
+		v, err := dnssec.NewValidator(vcfg, validationResolver{recursive: r})
 		if err != nil {
 			return nil, fmt.Errorf("init dnssec validator: %w", err)
 		}

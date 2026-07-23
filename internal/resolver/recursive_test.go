@@ -119,6 +119,13 @@ func TestNewRecursive_WithRRL(t *testing.T) {
 	}
 }
 
+func TestNewRecursive_DNSSECRequiresTrustAnchor(t *testing.T) {
+	_, err := NewRecursive(Config{EnableDNSSEC: true})
+	if err == nil || !strings.Contains(err.Error(), "trust_anchor_file") {
+		t.Fatalf("NewRecursive error=%v, want missing trust anchor error", err)
+	}
+}
+
 func TestResolve_NoQuestion(t *testing.T) {
 	cfg := Config{}
 	r, err := NewRecursive(cfg)

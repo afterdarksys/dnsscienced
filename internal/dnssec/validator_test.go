@@ -2,7 +2,10 @@ package dnssec
 
 import (
 	"context"
+	"crypto"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +18,132 @@ type stubResolver struct{}
 
 func (stubResolver) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
 	return &dns.Msg{}, nil
+}
+
+type mapResolver map[string]*dns.Msg
+
+func (r mapResolver) Query(_ context.Context, name string, qtype uint16) (*dns.Msg, error) {
+	msg := r[dns.Fqdn(name)+":"+dns.TypeToString[qtype]]
+	if msg == nil {
+		return new(dns.Msg), nil
+	}
+	return msg.Copy(), nil
+}
+
+func generatedDNSKEY(t *testing.T, owner string) (dns.DNSKEY, crypto.Signer) {
+	t.Helper()
+	key := dns.DNSKEY{Hdr: dns.RR_Header{Name: owner, Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 300}, Flags: 257, Protocol: 3, Algorithm: dns.ECDSAP256SHA256}
+	private, err := key.Generate(256)
+	if err != nil {
+		t.Fatalf("Generate(%s): %v", owner, err)
+	}
+	signer, ok := private.(crypto.Signer)
+	if !ok {
+		t.Fatalf("generated private key %T is not crypto.Signer", private)
+	}
+	return key, signer
+}
+
+func signedRRSet(t *testing.T, rrset []dns.RR, signer string, key dns.DNSKEY, private crypto.Signer) *dns.RRSIG {
+	t.Helper()
+	hdr := rrset[0].Header()
+	now := time.Now()
+	sig := &dns.RRSIG{
+		Hdr:         dns.RR_Header{Name: hdr.Name, Rrtype: dns.TypeRRSIG, Class: hdr.Class, Ttl: hdr.Ttl},
+		TypeCovered: hdr.Rrtype, Algorithm: key.Algorithm, Labels: uint8(dns.CountLabel(hdr.Name)), OrigTtl: hdr.Ttl,
+		Expiration: uint32(now.Add(time.Hour).Unix()), Inception: uint32(now.Add(-time.Minute).Unix()),
+		KeyTag: key.KeyTag(), SignerName: signer,
+	}
+	if err := sig.Sign(private, rrset); err != nil {
+		t.Fatalf("Sign(%s/%s): %v", hdr.Name, dns.TypeToString[hdr.Rrtype], err)
+	}
+	return sig
+}
+
+func TestValidateAuthenticatesDSDNSKEYChain(t *testing.T) {
+	rootKey, rootPrivate := generatedDNSKEY(t, ".")
+	comKey, comPrivate := generatedDNSKEY(t, "com.")
+	exampleKey, examplePrivate := generatedDNSKEY(t, "example.com.")
+
+	rootRRs := []dns.RR{&rootKey}
+	rootMsg := &dns.Msg{Answer: append(rootRRs, signedRRSet(t, rootRRs, ".", rootKey, rootPrivate))}
+	comDS := comKey.ToDS(dns.SHA256)
+	comDSRRs := []dns.RR{comDS}
+	comDSMsg := &dns.Msg{Answer: append(comDSRRs, signedRRSet(t, comDSRRs, ".", rootKey, rootPrivate))}
+	comKeyRRs := []dns.RR{&comKey}
+	comKeyMsg := &dns.Msg{Answer: append(comKeyRRs, signedRRSet(t, comKeyRRs, "com.", comKey, comPrivate))}
+	exampleDS := exampleKey.ToDS(dns.SHA256)
+	exampleDSRRs := []dns.RR{exampleDS}
+	exampleDSMsg := &dns.Msg{Answer: append(exampleDSRRs, signedRRSet(t, exampleDSRRs, "com.", comKey, comPrivate))}
+	exampleKeyRRs := []dns.RR{&exampleKey}
+	exampleKeyMsg := &dns.Msg{Answer: append(exampleKeyRRs, signedRRSet(t, exampleKeyRRs, "example.com.", exampleKey, examplePrivate))}
+
+	resolver := mapResolver{
+		".:DNSKEY":            rootMsg,
+		"com.:DS":             comDSMsg,
+		"com.:DNSKEY":         comKeyMsg,
+		"example.com.:DS":     exampleDSMsg,
+		"example.com.:DNSKEY": exampleKeyMsg,
+	}
+	v, err := NewValidator(DefaultValidatorConfig(), resolver)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	v.AddTrustAnchor(rootKey)
+	leaf := testARecord()
+	leafRRs := []dns.RR{leaf}
+	msg := &dns.Msg{Answer: append(leafRRs, signedRRSet(t, leafRRs, "example.com.", exampleKey, examplePrivate))}
+	result, err := v.Validate(context.Background(), msg, testQname, dns.TypeA)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.Secure || result.Bogus || result.ChainDepth != 3 {
+		t.Fatalf("result=%+v, want authenticated three-zone chain", result)
+	}
+}
+
+func TestLoadTrustAnchorsFromFile(t *testing.T) {
+	key := dns.DNSKEY{
+		Hdr:       dns.RR_Header{Name: ".", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 3600},
+		Flags:     257,
+		Protocol:  3,
+		Algorithm: dns.ECDSAP256SHA256,
+	}
+	if _, err := key.Generate(256); err != nil {
+		t.Fatalf("Generate DNSKEY: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "anchors.conf")
+	if err := os.WriteFile(path, []byte("; root anchor\n"+key.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	v, err := NewValidator(DefaultValidatorConfig(), stubResolver{})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	if err := v.LoadTrustAnchorsFromFile(path); err != nil {
+		t.Fatalf("LoadTrustAnchorsFromFile: %v", err)
+	}
+	if len(v.trustAnchors) != 1 || v.trustAnchors[0].KeyTag() != key.KeyTag() {
+		t.Fatalf("anchors=%v, want generated key", v.trustAnchors)
+	}
+}
+
+func TestMatchDSKeysRejectsUnrelatedDNSKEY(t *testing.T) {
+	trusted := dns.DNSKEY{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET}, Flags: 257, Protocol: 3, Algorithm: dns.ECDSAP256SHA256}
+	if _, err := trusted.Generate(256); err != nil {
+		t.Fatalf("Generate trusted key: %v", err)
+	}
+	attacker := dns.DNSKEY{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET}, Flags: 257, Protocol: 3, Algorithm: dns.ECDSAP256SHA256}
+	if _, err := attacker.Generate(256); err != nil {
+		t.Fatalf("Generate attacker key: %v", err)
+	}
+	ds := trusted.ToDS(dns.SHA256)
+	if got := matchDSKeys([]dns.DS{*ds}, []dns.DNSKEY{attacker}); len(got) != 0 {
+		t.Fatalf("attacker key matched authenticated DS: %v", got)
+	}
+	if got := matchDSKeys([]dns.DS{*ds}, []dns.DNSKEY{trusted}); len(got) != 1 {
+		t.Fatalf("trusted key did not match DS: %v", got)
+	}
 }
 
 const testQname = "example.com."
