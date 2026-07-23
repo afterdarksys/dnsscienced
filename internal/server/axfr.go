@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dnsscience/dnsscienced/internal/transport"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
@@ -23,7 +24,7 @@ const axfrBatchSize = 100
 //  7. Stream: opening SOA + batched RRs + closing SOA via dns.Transfer.Out
 func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 	// 1. UDP truncation (D-08): signal retry over TCP; do NOT return zone data.
-	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	if _, ok := transport.UDPAddress(w.RemoteAddr()); ok {
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Truncated = true

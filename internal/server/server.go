@@ -132,6 +132,9 @@ type Config struct {
 	// UDP buffer sizes
 	UDPReadBuffer  int `yaml:"udp_read_buffer"`
 	UDPWriteBuffer int `yaml:"udp_write_buffer"`
+	// UDPBatchSize enables Linux recvmmsg receive batching when positive.
+	// Zero retains the portable miekg/dns listener.
+	UDPBatchSize int `yaml:"udp_batch_size"`
 }
 
 // DSYNCConfig configures inbound RFC 9859 NOTIFY handling.
@@ -241,13 +244,17 @@ type Server struct {
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
-	tcpServer  *dns.Server
-	tcpLimiter *transport.LimitedListener
-	dohServer  *transport.DoHListener
-	dotServer  *transport.DoTListener
-	xotServer  *dns.Server
-	xotTLS     *tls.Config
-	xotLimiter *transport.LimitedListener
+	// udpBatchStats is server-owned because dns.Server.PacketConn is assigned
+	// by miekg/dns during startup and cannot be inspected concurrently.
+	udpBatchStatsMu sync.RWMutex
+	udpBatchStats   []transport.UDPBatchStatser
+	tcpServer       *dns.Server
+	tcpLimiter      *transport.LimitedListener
+	dohServer       *transport.DoHListener
+	dotServer       *transport.DoTListener
+	xotServer       *dns.Server
+	xotTLS          *tls.Config
+	xotLimiter      *transport.LimitedListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -281,6 +288,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.UpdateReplayCacheSize < 1 || cfg.UpdateReplayCacheSize > 16_777_216 {
 		return nil, fmt.Errorf("update_replay_cache_size must be zero (default) or between 1 and 16777216 (got %d)", cfg.UpdateReplayCacheSize)
+	}
+	if cfg.UDPBatchSize < 0 || cfg.UDPBatchSize > 256 {
+		return nil, fmt.Errorf("udp_batch_size must be between 0 and 256 (got %d)", cfg.UDPBatchSize)
+	}
+	if cfg.UDPBatchSize > 0 && !transport.UDPBatchSupported() {
+		return nil, fmt.Errorf("udp_batch_size requires Linux recvmmsg support")
 	}
 	if err := cfg.TCPProtection.Validate(); err != nil {
 		return nil, err
@@ -663,15 +676,67 @@ func (s *Server) Start() error {
 			s.xotLimiter = nil
 		}
 	}
+	closeUDPListeners := func() {
+		for _, udpServer := range s.udpServers {
+			if udpServer.PacketConn != nil {
+				_ = udpServer.PacketConn.Close()
+				udpServer.PacketConn = nil
+			}
+		}
+		s.udpBatchStatsMu.Lock()
+		s.udpBatchStats = nil
+		s.udpBatchStatsMu.Unlock()
+	}
+	if s.cfg.UDPBatchSize > 0 {
+		batchStats := make([]transport.UDPBatchStatser, 0, len(s.udpServers))
+		for i, udpServer := range s.udpServers {
+			conn, err := transport.ListenUDPReusePort(s.cfg.UDPAddr)
+			if err != nil {
+				closeUDPListeners()
+				closeTCPListener()
+				return fmt.Errorf("listen batched UDP DNS %d: %w", i, err)
+			}
+			if s.cfg.UDPReadBuffer > 0 {
+				if err := conn.SetReadBuffer(s.cfg.UDPReadBuffer); err != nil {
+					_ = conn.Close()
+					closeUDPListeners()
+					closeTCPListener()
+					return fmt.Errorf("set batched UDP read buffer %d: %w", i, err)
+				}
+			}
+			if s.cfg.UDPWriteBuffer > 0 {
+				if err := conn.SetWriteBuffer(s.cfg.UDPWriteBuffer); err != nil {
+					_ = conn.Close()
+					closeUDPListeners()
+					closeTCPListener()
+					return fmt.Errorf("set batched UDP write buffer %d: %w", i, err)
+				}
+			}
+			packetConn, err := transport.NewUDPBatchPacketConn(conn, s.cfg.UDPBatchSize, udpServer.UDPSize)
+			if err != nil {
+				_ = conn.Close()
+				closeUDPListeners()
+				closeTCPListener()
+				return fmt.Errorf("prepare batched UDP DNS %d: %w", i, err)
+			}
+			udpServer.PacketConn = packetConn
+			batchStats = append(batchStats, packetConn)
+		}
+		s.udpBatchStatsMu.Lock()
+		s.udpBatchStats = batchStats
+		s.udpBatchStatsMu.Unlock()
+	}
 	if s.xotServer != nil {
 		baseListener, err := net.Listen("tcp", xotAddress(s.cfg.XoT))
 		if err != nil {
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("listen XFR-over-TLS: %w", err)
 		}
 		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
 		if err != nil {
 			_ = baseListener.Close()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("protect XFR-over-TLS listener: %w", err)
 		}
@@ -683,6 +748,7 @@ func (s *Server) Start() error {
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
@@ -693,6 +759,7 @@ func (s *Server) Start() error {
 				_ = s.dohServer.Stop()
 			}
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
@@ -706,6 +773,7 @@ func (s *Server) Start() error {
 				_ = s.dotServer.Stop()
 			}
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
@@ -719,9 +787,15 @@ func (s *Server) Start() error {
 		go func() {
 			defer s.wg.Done()
 
-			fmt.Printf("UDP listener %d started on %s (SO_REUSEPORT)\n", i, s.cfg.UDPAddr)
+			fmt.Printf("UDP listener %d started on %s (SO_REUSEPORT, batch=%d)\n", i, s.cfg.UDPAddr, s.cfg.UDPBatchSize)
 
-			if err := udpServer.ListenAndServe(); err != nil {
+			var err error
+			if udpServer.PacketConn != nil {
+				err = udpServer.ActivateAndServe()
+			} else {
+				err = udpServer.ListenAndServe()
+			}
+			if err != nil {
 				fmt.Printf("UDP listener %d error: %v\n", i, err)
 			}
 		}()
@@ -948,7 +1022,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
 
 	// Transport split counter
-	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	if _, ok := transport.UDPAddress(w.RemoteAddr()); ok {
 		s.udpQueries.Add(1)
 	} else {
 		s.tcpQueries.Add(1)
@@ -956,7 +1030,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Get client IP
 	var clientIP net.IP
-	if addr, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	if addr, ok := transport.UDPAddress(w.RemoteAddr()); ok {
 		clientIP = addr.IP
 	} else if addr, ok := w.RemoteAddr().(*net.TCPAddr); ok {
 		clientIP = addr.IP
@@ -1076,7 +1150,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// (no-op when bus is nil). Called before each response write in the normal path.
 	queryStart := time.Now()
 	queryProto := "udp"
-	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+	if _, ok := transport.UDPAddress(w.RemoteAddr()); !ok {
 		queryProto = "tcp"
 	}
 	queryDomain := ""
@@ -1635,6 +1709,9 @@ type Stats struct {
 	ComplexityRejected uint64
 	UpdateReplays      uint64
 	UpdateReplayFull   uint64
+	UDPBatchReadCalls  uint64
+	UDPBatchDatagrams  uint64
+	UDPBatchTruncated  uint64
 
 	ClientReputation reputation.Stats
 	TCPConnections   transport.TCPConnectionStats
@@ -1681,6 +1758,14 @@ func (s *Server) GetStats() Stats {
 		notifyStats := s.primaryNotifier.Stats()
 		stats.PrimaryNotify = &notifyStats
 	}
+	s.udpBatchStatsMu.RLock()
+	for _, batch := range s.udpBatchStats {
+		batchStats := batch.BatchStats()
+		stats.UDPBatchReadCalls += batchStats.ReadCalls
+		stats.UDPBatchDatagrams += batchStats.Datagrams
+		stats.UDPBatchTruncated += batchStats.TruncatedDatagrams
+	}
+	s.udpBatchStatsMu.RUnlock()
 
 	return stats
 }

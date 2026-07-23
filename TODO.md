@@ -121,8 +121,12 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   response-header builder's corrupted output pointer.
 - [x] Add a bounded Linux-only recvmmsg/sendmmsg transport primitive with reusable
   packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
-- [ ] Integrate Linux batching into a feature-parity listener only after complete
-  receive-parse-route-send load tests improve throughput and tail latency.
+- [x] Integrate opt-in Linux recvmmsg receive batching through the production
+  `miekg/dns` parser/handler path with SO_REUSEPORT, destination-address
+  preservation, TSIG failure parity, bounded batches, and fill/truncation stats.
+- [ ] Promote Linux batching from opt-in (`server.udp_batch_size`) only after
+  complete receive-parse-route-send NIC/RSS load tests improve throughput and
+  p99/p99.9 latency versus the portable listener.
 - [x] Define an opt-in XDP/AF_XDP architecture with guarded `XDP_PASS` fallback,
   queue-owned workers, generation-based cache/policy coherence, least privilege,
   observability, hardware qualification, and portable-path differential tests.

@@ -17,6 +17,7 @@ server:
   udp_addr: "0.0.0.0:53"
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
+  udp_batch_size: 0              # Linux recvmmsg batch (1-256); 0 keeps portable listener
   primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
   update_replay_cache_size: 65536 # Authenticated RFC 2136 MACs retained during the TSIG window
   read_timeout: 5s
