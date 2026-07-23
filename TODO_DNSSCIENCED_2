@@ -85,14 +85,15 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   8. Advanced DDoS Protection
 
-  Status: **Partial** — RRL, bounded worker queues, overload rejection, and
-  defensive controls exist; adaptive reputation limits and explicit SYN-flood
-  deployment qualification remain.
+  Status: **Partial** — RRL, bounded worker queues, query-complexity controls,
+  adaptive client reputation, established-TCP admission limits, and explicit
+  Linux SYN-cookie/backlog guidance exist. Upstream scrubbing and optional
+  proof-of-work research remain deployment-specific.
 
-  - SYN flood protection: TCP connection rate limiting
-  - Query complexity scoring: Penalize expensive queries (wildcards, ANY)
+  - [x] SYN flood protection: TCP connection rate limiting plus Linux guidance
+  - [x] Query complexity scoring: Penalize expensive query combinations
   - Proof-of-work challenges: For clients during attack
-  - IP reputation scoring: Dynamic rate limits based on past behavior
+  - [x] IP reputation scoring: Dynamic rate limits based on past behavior
 
   9. Data Loss Prevention & Exfiltration Detection
 

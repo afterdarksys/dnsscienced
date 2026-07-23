@@ -72,8 +72,13 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   not an operational listener.
 - [ ] Implement Oblivious DoH (RFC 9230).
 - [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103).
-- [ ] Add query-complexity controls, adaptive IP-reputation limits, and explicit
-  TCP/SYN-flood deployment protections.
+- [x] Add configurable query-complexity admission scoring before policy,
+  authoritative, and recursive processing, with Prometheus rejection counters.
+- [x] Add bounded adaptive IP-reputation admission limits with lazy score decay,
+  fixed-capacity sharded state, trusted CIDR exemptions, and Prometheus metrics.
+- [x] Add explicit TCP/SYN-flood protections: bounded global/per-client
+  established connections, handshake admission rate, idle/query limits,
+  Prometheus metrics, and Linux SYN-cookie/backlog deployment guidance.
 - [ ] Add forensic query replay and SOC 2/ISO 27001 reporting workflows.
 - [ ] Add SIEM/SOAR export formats and integrations.
 
@@ -173,7 +178,9 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [x] Fetch catalog zones through authenticated AXFR/IXFR and refresh them after
   SOA NOTIFY or timer expiry.
 - [x] Compute a deterministic add/update/remove plan from the last valid catalog.
-- [ ] Apply a valid catalog atomically so readers never observe a partial fleet.
+- [x] Prepare all catalog member transfers before atomically swapping the
+  authoritative fleet; failures retain the previous catalog, workers, and
+  durable ownership state.
 - [x] Automatically provision newly listed member zones using the catalog's group
   mapping and transfer policy.
 - [x] Remove a member and its associated state only when that same catalog created
@@ -197,13 +204,17 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [ ] Restrict catalog queries and transfers with explicit ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.
-- [ ] Add limits for catalogs, members per catalog, reconciliation rate, transfer
-  size, and simultaneous member provisioning.
-- [ ] Reject recursive/self-referential ownership and provisioning cycles.
-- [ ] Provide dry-run and approval modes for mass deletion or replacement.
+- [x] Bound configured catalogs, members per catalog, reconciliation action
+  counts, AXFR/IXFR records, transfer bytes, and member provisioning concurrency
+  (currently serialized).
+- [x] Add an operator-configurable per-catalog reconciliation token budget with
+  lazy refill and failure refunds.
+- [x] Reject configured catalogs as member zones, self-referential `coo`, and
+  deterministic cross-catalog ownership cycles before persistence or side effects.
+- [x] Provide dry-run and serial-bound approval modes for mass deletion or replacement.
 - [ ] Add structured audit events for catalog receipt, validation, reconciliation,
   conflicts, migrations, and state resets.
-- [ ] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
+- [x] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
   members, reconcile outcomes, and transfer failures.
 - [ ] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.

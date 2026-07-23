@@ -202,6 +202,15 @@ catalog_zones:
     transfer_tsig_key: catalog-key.example.
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
+    max_members: 50000
+    max_reconcile_actions: 100000
+    reconcile_actions_per_minute: 12000
+    reconcile_action_burst: 24000
+    dry_run: true
+    approval_required_above: 25
+    approved_serial: 43
+    max_transfer_records: 200000
+    max_transfer_bytes: 67108864
     member_defaults:
       masters: [192.0.2.2]
       transfer_tsig_key: member-key.example.
@@ -224,7 +233,17 @@ catalog_zones:
 		cfg.CatalogZones[0].MemberDefaults.Masters[0] != "192.0.2.2" ||
 		cfg.CatalogZones[0].Groups["blue"].Masters[0] != "192.0.2.3" ||
 		cfg.CatalogZones[0].MemberAllowSuffixes[0] != "customer.example." ||
-		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." {
+		cfg.CatalogZones[0].MemberDenySuffixes[0] != "suspended.customer.example." ||
+		cfg.CatalogZones[0].MaxMembers != 50000 ||
+		cfg.CatalogZones[0].MaxReconcileActions != 100000 ||
+		cfg.CatalogZones[0].ReconcileActionsPerMinute != 12000 ||
+		cfg.CatalogZones[0].ReconcileActionBurst != 24000 ||
+		!cfg.CatalogZones[0].DryRun ||
+		cfg.CatalogZones[0].ApprovalRequiredAbove != 25 ||
+		cfg.CatalogZones[0].ApprovedSerial == nil ||
+		*cfg.CatalogZones[0].ApprovedSerial != 43 ||
+		cfg.CatalogZones[0].MaxTransferRecords != 200000 ||
+		cfg.CatalogZones[0].MaxTransferBytes != 67108864 {
 		t.Fatalf("catalog config = %+v", cfg.CatalogZones)
 	}
 }

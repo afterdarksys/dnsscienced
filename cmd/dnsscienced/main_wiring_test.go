@@ -143,10 +143,12 @@ func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
 			Secret:    "c2VjcmV0",
 		}},
 		Zones: []config.ZoneConfig{{
-			Name:            "secondary.test",
-			Type:            "secondary",
-			Masters:         []string{"192.0.2.1"},
-			TransferTSIGKey: "xfer.example",
+			Name:               "secondary.test",
+			Type:               "secondary",
+			Masters:            []string{"192.0.2.1"},
+			TransferTSIGKey:    "xfer.example",
+			MaxTransferRecords: 250000,
+			MaxTransferBytes:   33554432,
 		}},
 	}
 
@@ -154,7 +156,11 @@ func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].TransferKey == nil || got[0].TransferKey.Secret != "c2VjcmV0" {
+	if len(got) != 1 ||
+		got[0].TransferKey == nil ||
+		got[0].TransferKey.Secret != "c2VjcmV0" ||
+		got[0].MaxTransferRecords != 250000 ||
+		got[0].MaxTransferBytes != 33554432 {
 		t.Fatalf("secondary configs = %+v", got)
 	}
 }
@@ -193,6 +199,7 @@ func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T)
 }
 
 func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
+	approvedSerial := uint32(43)
 	cfg := &config.Config{
 		TsigKeys: []config.TsigKeyConfig{{
 			Name:      "catalog-xfer.example.",
@@ -200,21 +207,34 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 			Secret:    "c2VjcmV0",
 		}},
 		CatalogZones: []config.CatalogZoneConfig{{
-			Name:                "catalog.example.",
-			MemberAllowSuffixes: []string{"customer.example."},
-			MemberDenySuffixes:  []string{"blocked.customer.example."},
+			Name:                      "catalog.example.",
+			MemberAllowSuffixes:       []string{"customer.example."},
+			MemberDenySuffixes:        []string{"blocked.customer.example."},
+			MaxMembers:                50000,
+			MaxReconcileActions:       100000,
+			ReconcileActionsPerMinute: 12000,
+			ReconcileActionBurst:      24000,
+			DryRun:                    true,
+			ApprovalRequiredAbove:     25,
+			ApprovedSerial:            &approvedSerial,
 			CatalogTransferConfig: config.CatalogTransferConfig{
-				Masters:         []string{"192.0.2.1"},
-				TransferTSIGKey: "catalog-xfer.example.",
+				Masters:            []string{"192.0.2.1"},
+				TransferTSIGKey:    "catalog-xfer.example.",
+				MaxTransferRecords: 200000,
+				MaxTransferBytes:   67108864,
 			},
 			MemberDefaults: config.CatalogTransferConfig{
-				Masters:         []string{"192.0.2.2"},
-				TransferTSIGKey: "catalog-xfer.example.",
+				Masters:            []string{"192.0.2.2"},
+				TransferTSIGKey:    "catalog-xfer.example.",
+				MaxTransferRecords: 300000,
+				MaxTransferBytes:   100663296,
 			},
 			Groups: map[string]config.CatalogTransferConfig{
 				"blue": {
-					Masters:         []string{"192.0.2.3"},
-					TransferTSIGKey: "catalog-xfer.example.",
+					Masters:            []string{"192.0.2.3"},
+					TransferTSIGKey:    "catalog-xfer.example.",
+					MaxTransferRecords: 400000,
+					MaxTransferBytes:   134217728,
 				},
 			},
 		}},
@@ -226,8 +246,22 @@ func TestBuildCatalogConfigsRequiresAndResolvesAuthentication(t *testing.T) {
 	if len(sources) != 1 ||
 		sources[0].Defaults.TransferKey == nil ||
 		sources[0].Groups["blue"].TransferKey == nil ||
+		sources[0].Defaults.MaxTransferRecords != 300000 ||
+		sources[0].Defaults.MaxTransferBytes != 100663296 ||
+		sources[0].Groups["blue"].MaxTransferRecords != 400000 ||
+		sources[0].Groups["blue"].MaxTransferBytes != 134217728 ||
 		sources[0].MemberAllowSuffixes[0] != "customer.example." ||
 		sources[0].MemberDenySuffixes[0] != "blocked.customer.example." ||
+		sources[0].MaxMembers != 50000 ||
+		sources[0].MaxReconcileActions != 100000 ||
+		sources[0].ReconcileActionsPerMinute != 12000 ||
+		sources[0].ReconcileActionBurst != 24000 ||
+		!sources[0].DryRun ||
+		sources[0].ApprovalRequiredAbove != 25 ||
+		sources[0].ApprovedSerial == nil ||
+		*sources[0].ApprovedSerial != 43 ||
+		transfers["catalog.example."].MaxTransferRecords != 200000 ||
+		transfers["catalog.example."].MaxTransferBytes != 67108864 ||
 		transfers["catalog.example."].TransferKey == nil {
 		t.Fatalf("sources=%+v transfers=%+v", sources, transfers)
 	}

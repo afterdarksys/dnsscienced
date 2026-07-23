@@ -23,6 +23,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/primarynotify"
 	"github.com/dnsscience/dnsscienced/internal/protective"
+	"github.com/dnsscience/dnsscienced/internal/reputation"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/transport"
@@ -70,6 +71,14 @@ type Config struct {
 	// be reloaded with ReloadRPZ.
 	RPZ RPZConfig `yaml:"rpz"`
 
+	// QueryComplexity rejects unusually expensive query combinations before
+	// authoritative, policy, or recursive work.
+	QueryComplexity QueryComplexityConfig `yaml:"query_complexity"`
+
+	// ClientReputation progressively reduces the admission rate for clients
+	// that send suspicious or policy-blocked traffic.
+	ClientReputation reputation.Config `yaml:"client_reputation"`
+
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
 
@@ -108,9 +117,10 @@ type Config struct {
 	DSYNC DSYNCConfig `yaml:"dsync"`
 
 	// Performance tuning
-	ReadTimeout  time.Duration `yaml:"read_timeout"`
-	WriteTimeout time.Duration `yaml:"write_timeout"`
-	IdleTimeout  time.Duration `yaml:"idle_timeout"` // TCP only
+	ReadTimeout   time.Duration                 `yaml:"read_timeout"`
+	WriteTimeout  time.Duration                 `yaml:"write_timeout"`
+	IdleTimeout   time.Duration                 `yaml:"idle_timeout"` // TCP only
+	TCPProtection transport.TCPProtectionConfig `yaml:"tcp_protection"`
 
 	// UDP buffer sizes
 	UDPReadBuffer  int `yaml:"udp_read_buffer"`
@@ -171,11 +181,14 @@ func DefaultConfig() Config {
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
 
-		Experimental: experimental.DefaultConfig(),
+		Experimental:     experimental.DefaultConfig(),
+		QueryComplexity:  defaultQueryComplexityConfig(),
+		ClientReputation: reputation.DefaultConfig(),
 
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:   5 * time.Second,
+		WriteTimeout:  5 * time.Second,
+		IdleTimeout:   60 * time.Second,
+		TCPProtection: transport.DefaultTCPProtectionConfig(),
 
 		UDPReadBuffer:  8 * 1024 * 1024, // 8MB
 		UDPWriteBuffer: 8 * 1024 * 1024, // 8MB
@@ -197,6 +210,7 @@ type Server struct {
 	cookies          *cookie.Manager
 	rrl              *rrl.Limiter
 	defensive        *defensive.Manager
+	reputation       *reputation.Limiter
 	protective       *protective.Engine
 	firewall         *firewalld.Firewall
 	rpz              atomic.Pointer[engine.RPZAggregate]
@@ -219,6 +233,7 @@ type Server struct {
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
 	tcpServer  *dns.Server
+	tcpLimiter *transport.LimitedListener
 	dohServer  *transport.DoHListener
 	dotServer  *transport.DoTListener
 
@@ -229,8 +244,9 @@ type Server struct {
 	nxdomain atomic.Uint64
 
 	// Transport-level counters
-	udpQueries atomic.Uint64
-	tcpQueries atomic.Uint64
+	udpQueries         atomic.Uint64
+	tcpQueries         atomic.Uint64
+	complexityRejected atomic.Uint64
 
 	// Lifecycle
 	ctx    context.Context
@@ -246,6 +262,18 @@ func New(cfg Config) (*Server, error) {
 	if cfg.UDPListeners < 1 || cfg.UDPListeners > 65536 {
 		return nil, fmt.Errorf("udp_listeners must be zero (auto) or between 1 and 65536 (got %d)", cfg.UDPListeners)
 	}
+	if err := cfg.TCPProtection.Validate(); err != nil {
+		return nil, err
+	}
+	complexityConfig, err := normalizeQueryComplexityConfig(cfg.QueryComplexity)
+	if err != nil {
+		return nil, err
+	}
+	cfg.QueryComplexity = complexityConfig
+	clientReputation, err := reputation.New(cfg.ClientReputation)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -254,6 +282,7 @@ func New(cfg Config) (*Server, error) {
 		ctx:         ctx,
 		cancel:      cancel,
 		ixfrJournal: zone.NewJournal(100),
+		reputation:  clientReputation,
 	}
 
 	// Initialize recursive resolver if enabled
@@ -536,7 +565,11 @@ func New(cfg Config) (*Server, error) {
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-		TsigProvider: s.tsigKeyRing,
+		IdleTimeout: func() time.Duration {
+			return cfg.IdleTimeout
+		},
+		MaxTCPQueries: cfg.TCPProtection.MaxQueriesPerConnection,
+		TsigProvider:  s.tsigKeyRing,
 	}
 
 	if cfg.DoH.Enabled {
@@ -561,8 +594,31 @@ func New(cfg Config) (*Server, error) {
 
 // Start starts all DNS listeners
 func (s *Server) Start() error {
+	if s.cfg.TCPAddr != "" {
+		baseListener, err := net.Listen("tcp", s.cfg.TCPAddr)
+		if err != nil {
+			return fmt.Errorf("listen TCP DNS: %w", err)
+		}
+		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
+		if err != nil {
+			_ = baseListener.Close()
+			return fmt.Errorf("protect TCP DNS listener: %w", err)
+		}
+		s.tcpServer.Listener = listener
+		if limited, ok := listener.(*transport.LimitedListener); ok {
+			s.tcpLimiter = limited
+		}
+	}
+	closeTCPListener := func() {
+		if s.tcpServer.Listener != nil {
+			_ = s.tcpServer.Listener.Close()
+			s.tcpServer.Listener = nil
+			s.tcpLimiter = nil
+		}
+	}
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
+			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
 	}
@@ -571,6 +627,7 @@ func (s *Server) Start() error {
 			if s.dohServer != nil {
 				_ = s.dohServer.Stop()
 			}
+			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
 	}
@@ -582,6 +639,7 @@ func (s *Server) Start() error {
 			if s.dotServer != nil {
 				_ = s.dotServer.Stop()
 			}
+			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
 	}
@@ -602,17 +660,19 @@ func (s *Server) Start() error {
 		}()
 	}
 
-	// Start TCP listener
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	// Start the pre-bound, admission-limited TCP listener.
+	if s.tcpServer.Listener != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
 
-		fmt.Printf("TCP listener started on %s\n", s.cfg.TCPAddr)
+			fmt.Printf("TCP listener started on %s\n", s.cfg.TCPAddr)
 
-		if err := s.tcpServer.ListenAndServe(); err != nil {
-			fmt.Printf("TCP listener error: %v\n", err)
-		}
-	}()
+			if err := s.tcpServer.ActivateAndServe(); err != nil {
+				fmt.Printf("TCP listener error: %v\n", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -642,8 +702,10 @@ func (s *Server) Stop() error {
 	}
 
 	// Shutdown TCP server
-	if err := s.tcpServer.Shutdown(); err != nil {
-		fmt.Printf("Error shutting down TCP listener: %v\n", err)
+	if s.tcpServer.Listener != nil {
+		if err := s.tcpServer.Shutdown(); err != nil {
+			fmt.Printf("Error shutting down TCP listener: %v\n", err)
+		}
 	}
 
 	// Wait for all goroutines
@@ -982,6 +1044,22 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	// Apply adaptive admission before allocating a pooled response or running
+	// policy/authoritative/recursive work. Control-plane opcodes are dispatched
+	// above and retain their dedicated authentication and rate limits.
+	if s.reputation != nil && !s.reputation.Allow(clientIP, time.Now()) {
+		if s.reputation.Action() == "refused" {
+			m := pool.GetMessage()
+			defer pool.PutMessage(m)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			s.errors.Add(1)
+			emitQuery(m.Rcode, "")
+			writeMsg(w, m) //nolint:errcheck
+		}
+		return
+	}
+
 	// Create response message
 	m := pool.GetMessage()
 	defer pool.PutMessage(m)
@@ -999,6 +1077,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Validate query
 	if len(r.Question) != 1 {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeFormatError
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1006,6 +1085,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	if r.Opcode != dns.OpcodeQuery {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeNotImplemented
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1013,6 +1093,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	if r.Question[0].Qclass != dns.ClassINET {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeRefused
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1025,6 +1106,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// with RCODE BADVERS and an OPT RR advertising our supported version (0),
 	// with no answer/authority/additional data beyond that OPT.
 	if reqOpt := r.IsEdns0(); reqOpt != nil && reqOpt.Version() > 0 {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeBadVers
 		respOpt := &dns.OPT{
 			Hdr: dns.RR_Header{
@@ -1042,6 +1124,17 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	question := r.Question[0]
+	if s.cfg.QueryComplexity.Enabled &&
+		queryComplexityScore(r, s.cfg.QueryComplexity) > s.cfg.QueryComplexity.MaxScore {
+		s.observeClient(clientIP, reputation.SignalComplexity)
+		m.Rcode = dns.RcodeRefused
+		s.errors.Add(1)
+		s.complexityRejected.Add(1)
+		queryComplexityRejectedTotal.Inc()
+		emitQuery(m.Rcode, "")
+		writeMsg(w, m) //nolint:errcheck
+		return
+	}
 
 	// Log query if enabled
 	if s.defensive != nil {
@@ -1052,6 +1145,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if s.protective != nil {
 		result, err := s.protective.CheckQuery(question.Name, clientIP)
 		if err == nil && result.Blocked {
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			// Domain is blocked - rewrite response
 			blockedResp := s.protective.RewriteResponse(r, result)
 
@@ -1077,8 +1171,10 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		d := s.firewall.Check(r, clientIP)
 		switch d.Verdict {
 		case firewalld.VerdictDrop:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			return
 		case firewalld.VerdictNXDomain, firewalld.VerdictRewrite:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			resp := s.firewall.Apply(r, d)
 			if resp != nil {
 				if s.shouldRateLimit(resp, clientIP) {
@@ -1093,6 +1189,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 		case firewalld.VerdictRedirect:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			resp := s.firewall.Redirect(r, d)
 			if s.shouldRateLimit(resp, clientIP) {
 				return
@@ -1108,6 +1205,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if matched, drop, rule := s.applyRPZ(r, m); matched {
+		s.observeClient(clientIP, reputation.SignalPolicy)
 		if drop {
 			return
 		}
@@ -1416,9 +1514,11 @@ func (s *Server) shouldRateLimit(m *dns.Msg, clientIP net.IP) bool {
 
 	switch action {
 	case rrl.ActionDrop:
+		s.observeClient(clientIP, reputation.SignalRateLimited)
 		return true // Drop response
 
 	case rrl.ActionSlip:
+		s.observeClient(clientIP, reputation.SignalRateLimited)
 		// Send truncated response (TC bit set)
 		m.Truncated = true
 		m.Answer = nil
@@ -1431,6 +1531,12 @@ func (s *Server) shouldRateLimit(m *dns.Msg, clientIP net.IP) bool {
 	}
 }
 
+func (s *Server) observeClient(clientIP net.IP, signal reputation.Signal) {
+	if s.reputation != nil {
+		s.reputation.Observe(clientIP, signal, time.Now())
+	}
+}
+
 // Stats returns server statistics
 type Stats struct {
 	Queries  uint64
@@ -1439,8 +1545,12 @@ type Stats struct {
 	NXDOMAIN uint64
 
 	// Transport-level counters
-	UDPQueries uint64
-	TCPQueries uint64
+	UDPQueries         uint64
+	TCPQueries         uint64
+	ComplexityRejected uint64
+
+	ClientReputation reputation.Stats
+	TCPConnections   transport.TCPConnectionStats
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1450,12 +1560,19 @@ type Stats struct {
 // GetStats returns current statistics
 func (s *Server) GetStats() Stats {
 	stats := Stats{
-		Queries:    s.queries.Load(),
-		Answers:    s.answers.Load(),
-		Errors:     s.errors.Load(),
-		NXDOMAIN:   s.nxdomain.Load(),
-		UDPQueries: s.udpQueries.Load(),
-		TCPQueries: s.tcpQueries.Load(),
+		Queries:            s.queries.Load(),
+		Answers:            s.answers.Load(),
+		Errors:             s.errors.Load(),
+		NXDOMAIN:           s.nxdomain.Load(),
+		UDPQueries:         s.udpQueries.Load(),
+		TCPQueries:         s.tcpQueries.Load(),
+		ComplexityRejected: s.complexityRejected.Load(),
+	}
+	if s.reputation != nil {
+		stats.ClientReputation = s.reputation.Stats()
+	}
+	if s.tcpLimiter != nil {
+		stats.TCPConnections = s.tcpLimiter.Stats()
 	}
 
 	if s.recursive != nil {
@@ -1531,6 +1648,69 @@ func (s *Server) AddZone(z *zone.Zone) error {
 	s.persistMu.Unlock()
 	if s.primaryNotifier != nil {
 		_ = s.primaryNotifier.Notify(z.Origin, z.SOA)
+	}
+	return nil
+}
+
+// ApplyZoneBatch validates every replacement before atomically swapping the
+// authoritative zone map. Readers observe either the complete old fleet or the
+// complete new fleet.
+func (s *Server) ApplyZoneBatch(upserts []*zone.Zone, removals []string) error {
+	seen := make(map[string]struct{}, len(upserts))
+	for _, z := range upserts {
+		if z == nil {
+			return fmt.Errorf("zone batch contains nil zone")
+		}
+		if err := z.Validate(); err != nil {
+			return fmt.Errorf("zone %s validation failed: %w", z.Origin, err)
+		}
+		name := strings.ToLower(dns.Fqdn(z.Origin))
+		if _, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("zone batch contains duplicate %s", name)
+		}
+		seen[name] = struct{}{}
+	}
+	normalizedRemovals := make([]string, 0, len(removals))
+	removedSet := make(map[string]struct{}, len(removals))
+	for _, removed := range removals {
+		name := strings.ToLower(dns.Fqdn(removed))
+		if _, duplicate := removedSet[name]; duplicate {
+			continue
+		}
+		if _, replaced := seen[name]; replaced {
+			return fmt.Errorf("zone batch both removes and replaces %s", name)
+		}
+		removedSet[name] = struct{}{}
+		normalizedRemovals = append(normalizedRemovals, name)
+	}
+
+	s.persistMu.Lock()
+	s.zonesMu.Lock()
+	next := make(map[string]*zone.Zone, len(s.cfg.Zones)+len(upserts))
+	for name, existing := range s.cfg.Zones {
+		next[name] = existing
+	}
+	for _, name := range normalizedRemovals {
+		delete(next, name)
+		s.ixfrJournal.Reset(name)
+	}
+	for _, replacement := range upserts {
+		name := strings.ToLower(dns.Fqdn(replacement.Origin))
+		if previous := s.cfg.Zones[name]; previous == nil {
+			s.ixfrJournal.Reset(name)
+		} else {
+			s.ixfrJournal.Record(previous, replacement)
+		}
+		next[name] = replacement
+	}
+	s.cfg.Zones = next
+	s.zonesMu.Unlock()
+	s.persistMu.Unlock()
+
+	if s.primaryNotifier != nil {
+		for _, replacement := range upserts {
+			_ = s.primaryNotifier.Notify(replacement.Origin, replacement.SOA)
+		}
 	}
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/dnsscience/dnsscienced/internal/catalog"
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/health"
 	"github.com/dnsscience/dnsscienced/internal/logging"
@@ -53,6 +54,12 @@ type AdminSrvAdapter interface {
 	GetZoneNames() []string
 }
 
+// CatalogStatusSource exposes a read-only, bounded operator view without
+// allowing the admin plane to mutate reconciliation state.
+type CatalogStatusSource interface {
+	Statuses() []catalog.Status
+}
+
 // Service implements the AdminService gRPC interface
 type Service struct {
 	pb.UnimplementedAdminServiceServer
@@ -65,13 +72,14 @@ type Service struct {
 	shutdownFn func() error
 
 	// New fields for zone/record CRUD, metrics, rate limiting
-	srv         AdminSrvAdapter
-	zonesDir    string
-	compileBin  string
-	rrlLimiter  *rrl.Limiter          // may be nil; nil-guarded at call sites
-	tsigKeyRing *tsig.KeyRing         // may be nil; set from server's key ring
+	srv          AdminSrvAdapter
+	zonesDir     string
+	compileBin   string
+	rrlLimiter   *rrl.Limiter             // may be nil; nil-guarded at call sites
+	tsigKeyRing  *tsig.KeyRing            // may be nil; set from server's key ring
 	connRegistry *grpcserver.ConnRegistry // may be nil; wired in Plan 04 (conn tracking)
 	bus          *eventbus.Bus            // may be nil; provides real-time query stream
+	catalogs     CatalogStatusSource      // may be nil when catalog zones are disabled
 }
 
 // NewService creates a new admin service
@@ -85,9 +93,10 @@ func NewService(
 	zonesDir string,
 	compileBin string,
 	rrlLimiter *rrl.Limiter,
-	tsigKeyRing *tsig.KeyRing,             // may be nil
+	tsigKeyRing *tsig.KeyRing, // may be nil
 	connRegistry *grpcserver.ConnRegistry, // may be nil; wired in Plan 04
-	bus *eventbus.Bus,                     // may be nil; enables WatchQueryEvents
+	bus *eventbus.Bus, // may be nil; enables WatchQueryEvents
+	catalogs CatalogStatusSource, // may be nil when catalog zones are disabled
 ) *Service {
 	return &Service{
 		cache:        cache,
@@ -103,6 +112,7 @@ func NewService(
 		tsigKeyRing:  tsigKeyRing,
 		connRegistry: connRegistry,
 		bus:          bus,
+		catalogs:     catalogs,
 	}
 }
 
@@ -913,6 +923,33 @@ func (s *Service) GetServerStatus(ctx context.Context, req *emptypb.Empty) (*pb.
 			Healthy: zoneCount > 0,
 			Message: fmt.Sprintf("%d zones loaded", zoneCount),
 		},
+	}
+	if s.catalogs != nil {
+		for _, catalogStatus := range s.catalogs.Statuses() {
+			catalogHealthy := catalogStatus.LastError == ""
+			message := fmt.Sprintf(
+				"serial=%d members=%d freshness=unknown",
+				catalogStatus.Serial,
+				catalogStatus.Members,
+			)
+			if !catalogStatus.LastSuccess.IsZero() {
+				message = fmt.Sprintf(
+					"serial=%d members=%d freshness=%s",
+					catalogStatus.Serial,
+					catalogStatus.Members,
+					time.Since(catalogStatus.LastSuccess).Round(time.Second),
+				)
+			}
+			if catalogStatus.LastError != "" {
+				message += " last_error=" + catalogStatus.LastError
+			}
+			components = append(components, &pb.AdminComponentStatus{
+				Name:    "catalog:" + catalogStatus.Name,
+				Healthy: catalogHealthy,
+				Message: message,
+			})
+			healthy = healthy && catalogHealthy
+		}
 	}
 
 	return &pb.AdminServerStatusResponse{

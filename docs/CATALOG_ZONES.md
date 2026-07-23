@@ -50,6 +50,15 @@ catalog_zones:
     transfer_tsig_key: catalog-xfer.example.
     member_allow_suffixes: [customer.example.]
     member_deny_suffixes: [suspended.customer.example.]
+    max_members: 100000
+    max_reconcile_actions: 200000
+    reconcile_actions_per_minute: 200000
+    reconcile_action_burst: 200000
+    dry_run: false
+    approval_required_above: 1000
+    # approved_serial: 2026072301
+    max_transfer_records: 1000000
+    max_transfer_bytes: 268435456
 
     member_defaults:
       masters: [192.0.2.20]
@@ -70,8 +79,54 @@ of those DNS suffixes. `member_deny_suffixes` is evaluated first and overrides
 the allow list. A scope violation rejects the complete catalog snapshot and
 retains the last-valid fleet state.
 
+Catalog sources are capped at 128. Each catalog also has bounded member and
+reconciliation action counts. `reconcile_actions_per_minute` and
+`reconcile_action_burst` additionally bound churn across repeated valid
+snapshots; rejected or failed atomic reconciliations refund their reservation.
+AXFR/IXFR ingestion enforces record and estimated wire-byte limits before
+copying records into the zone model; the same transfer limits apply to ordinary
+secondaries and catalog-provisioned members.
+
+Set `dry_run: true` to validate and plan incoming snapshots without changing
+the accepted catalog or member fleet. `approval_required_above` blocks plans
+whose removal, member-label reset, or state-resetting ownership-transfer count
+exceeds the configured threshold. Approval is fail-closed and bound to the
+exact incoming SOA serial through `approved_serial`; a later serial requires a
+new approval, preventing a stale authorization from approving unrelated
+destructive changes.
+
+A configured catalog zone can never be provisioned as a member. Self-directed
+`coo` properties and deterministic multi-catalog `coo` cycles are rejected
+before the snapshot is persisted or any member transfer is changed. References
+to a destination catalog that is not configured remain inert until an operator
+configures that catalog and a complete acyclic ownership handoff is present.
+
 State is written atomically with mode `0600` and includes last-valid catalog
-records, member-zone records, and catalog ownership. Startup restores those
-zones before attempting refresh, so a temporary primary outage does not empty
-the authoritative service. Operator-configured primary and secondary names
-are reserved: a catalog clash is reported internally and cannot replace them.
+records, member-zone records, catalog ownership, and each catalog's last
+successful reconciliation timestamp. Startup restores those zones before
+attempting refresh, so a temporary primary outage does not empty the
+authoritative service. Operator-configured primary and secondary names are
+reserved: a catalog clash is reported internally and cannot replace them.
+
+## Observability
+
+The existing admin `GetServerStatus` RPC includes one
+`catalog:<catalog-name>` component per configured source. Its message reports
+the last accepted serial, member count, freshness, and the last transfer,
+validation, or reconciliation error. A catalog error makes that component and
+the aggregate server status unhealthy while the last-valid fleet remains
+served.
+
+Prometheus exports bounded-label catalog metrics:
+
+- `dnsscienced_catalog_serial`
+- `dnsscienced_catalog_members`
+- `dnsscienced_catalog_last_success_timestamp_seconds`
+- `dnsscienced_catalog_transfers_total{outcome}`
+- `dnsscienced_catalog_reconciles_total{outcome}`
+- `dnsscienced_catalog_reconcile_actions_total{action}`
+- `dnsscienced_catalog_reconcile_duration_seconds{outcome}`
+
+The `catalog` label is bounded by the configured 128-source limit. Outcome and
+action labels are fixed enums, so malformed input cannot create metric
+cardinality.

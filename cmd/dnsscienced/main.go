@@ -337,6 +337,7 @@ func main() {
 	// Load secondary zones before opening listeners. Initial transfer failure is
 	// a startup failure so the daemon never advertises an empty secondary.
 	var secondaryMgr *secondary.Manager
+	var catalogRuntime *catalog.Runtime
 	if loadedCfg != nil {
 		secondaryConfigs, err := buildSecondaryConfigs(loadedCfg)
 		if err != nil {
@@ -344,7 +345,6 @@ func main() {
 			os.Exit(1)
 		}
 		var secondaryStore secondary.ZoneStore = srv
-		var catalogRuntime *catalog.Runtime
 		if len(loadedCfg.CatalogZones) > 0 {
 			sources, catalogTransfers, err := buildCatalogConfigs(loadedCfg)
 			if err != nil {
@@ -439,7 +439,7 @@ func main() {
 		var adminSvc *admin.Service
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger, queryBus)
+				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger, queryBus, catalogRuntime)
 			},
 			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
 			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
@@ -688,6 +688,8 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			MaxRefreshTime:        zc.MaxRefreshTime,
 			MinRetryTime:          zc.MinRetryTime,
 			MaxRetryTime:          zc.MaxRetryTime,
+			MaxTransferRecords:    zc.MaxTransferRecords,
+			MaxTransferBytes:      zc.MaxTransferBytes,
 			AllowAXFRFallback:     true,
 		}
 		if zc.AllowAXFRFallback != nil {
@@ -746,11 +748,18 @@ func buildCatalogConfigs(cfg *config.Config) (
 			groups[group] = resolved
 		}
 		sources = append(sources, catalog.SourceConfig{
-			Name:                name,
-			Defaults:            defaults,
-			Groups:              groups,
-			MemberAllowSuffixes: append([]string(nil), configured.MemberAllowSuffixes...),
-			MemberDenySuffixes:  append([]string(nil), configured.MemberDenySuffixes...),
+			Name:                      name,
+			Defaults:                  defaults,
+			Groups:                    groups,
+			MemberAllowSuffixes:       append([]string(nil), configured.MemberAllowSuffixes...),
+			MemberDenySuffixes:        append([]string(nil), configured.MemberDenySuffixes...),
+			MaxMembers:                configured.MaxMembers,
+			MaxReconcileActions:       configured.MaxReconcileActions,
+			ReconcileActionsPerMinute: configured.ReconcileActionsPerMinute,
+			ReconcileActionBurst:      configured.ReconcileActionBurst,
+			DryRun:                    configured.DryRun,
+			ApprovalRequiredAbove:     configured.ApprovalRequiredAbove,
+			ApprovedSerial:            configured.ApprovedSerial,
 		})
 		transfers[name] = transfer
 	}
@@ -771,6 +780,8 @@ func catalogTransferConfig(
 		MaxRefreshTime:        configured.MaxRefreshTime,
 		MinRetryTime:          configured.MinRetryTime,
 		MaxRetryTime:          configured.MaxRetryTime,
+		MaxTransferRecords:    configured.MaxTransferRecords,
+		MaxTransferBytes:      configured.MaxTransferBytes,
 		AllowAXFRFallback:     true,
 	}
 	if configured.AllowAXFRFallback != nil {

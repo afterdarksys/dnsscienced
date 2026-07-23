@@ -11,6 +11,13 @@ import (
 	"github.com/miekg/dns"
 )
 
+const (
+	defaultMaxTransferRecords  = 1_000_000
+	defaultMaxTransferBytes    = int64(256 << 20)
+	absoluteMaxTransferRecords = 10_000_000
+	absoluteMaxTransferBytes   = int64(2 << 30)
+)
+
 // AXFRFetcher retrieves a complete zone over TCP.
 type AXFRFetcher struct {
 	Timeout time.Duration
@@ -56,6 +63,7 @@ func transferRecords(ctx context.Context, cfg Config, master string, timeout tim
 	if err != nil {
 		return nil, err
 	}
+	defer conn.Close()
 
 	transfer := &dns.Transfer{
 		Conn:         &dns.Conn{Conn: conn},
@@ -69,20 +77,65 @@ func transferRecords(ctx context.Context, cfg Config, master string, timeout tim
 
 	envelopes, err := transfer.In(request, master)
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 
-	var records []dns.RR
+	accumulator, err := newTransferAccumulator(cfg)
+	if err != nil {
+		return nil, err
+	}
 	for envelope := range envelopes {
 		if envelope.Error != nil {
 			return nil, envelope.Error
 		}
 		for _, rr := range envelope.RR {
-			records = append(records, dns.Copy(rr))
+			if err := accumulator.add(rr); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return records, nil
+	return accumulator.records, nil
+}
+
+type transferAccumulator struct {
+	maxRecords int
+	maxBytes   int64
+	bytes      int64
+	records    []dns.RR
+}
+
+func newTransferAccumulator(cfg Config) (*transferAccumulator, error) {
+	maxRecords := cfg.MaxTransferRecords
+	if maxRecords == 0 {
+		maxRecords = defaultMaxTransferRecords
+	}
+	maxBytes := cfg.MaxTransferBytes
+	if maxBytes == 0 {
+		maxBytes = defaultMaxTransferBytes
+	}
+	if maxRecords < 1 || maxRecords > absoluteMaxTransferRecords {
+		return nil, fmt.Errorf("max_transfer_records must be between 1 and %d", absoluteMaxTransferRecords)
+	}
+	if maxBytes < 1 || maxBytes > absoluteMaxTransferBytes {
+		return nil, fmt.Errorf("max_transfer_bytes must be between 1 and %d", absoluteMaxTransferBytes)
+	}
+	return &transferAccumulator{maxRecords: maxRecords, maxBytes: maxBytes}, nil
+}
+
+func (a *transferAccumulator) add(rr dns.RR) error {
+	if rr == nil {
+		return fmt.Errorf("transfer contains nil record")
+	}
+	if len(a.records) >= a.maxRecords {
+		return fmt.Errorf("transfer exceeds max_transfer_records %d", a.maxRecords)
+	}
+	wireBytes := int64(dns.Len(rr))
+	if wireBytes > a.maxBytes-a.bytes {
+		return fmt.Errorf("transfer exceeds max_transfer_bytes %d", a.maxBytes)
+	}
+	a.records = append(a.records, dns.Copy(rr))
+	a.bytes += wireBytes
+	return nil
 }
 
 func zoneFromAXFR(name string, records []dns.RR) (*zone.Zone, error) {

@@ -112,7 +112,7 @@ func main() {
 		h := health.NewServer()
 		healthpb.RegisterHealthServer(s, h)
 		reflection.Register(s)
-		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil, nil, nil, nil)
+		registry.RegisterAll(s, &registry.NoopSrvAdapter{}, "", "", nil, nil, nil, nil, nil)
 	}
 
 	gs, ln, _, _, err := server.New(cfg, deps)

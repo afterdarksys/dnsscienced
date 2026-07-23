@@ -4,17 +4,220 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+func TestRuntimeStatusAndMetricsRetainLastSuccessAfterFailure(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, _ := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	runtime.now = func() time.Time { return now }
+
+	successBefore := testutil.ToFloat64(
+		catalogReconcilesTotal.WithLabelValues("catalog.example.", "success"),
+	)
+	failureBefore := testutil.ToFloat64(
+		catalogReconcilesTotal.WithLabelValues("catalog.example.", "failure"),
+	)
+	addBefore := testutil.ToFloat64(
+		catalogReconcileActionsTotal.WithLabelValues("catalog.example.", string(ActionAdd)),
+	)
+
+	accepted := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(accepted); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	statuses := runtime.Statuses()
+	if len(statuses) != 1 ||
+		statuses[0].Serial != accepted.SOA.Serial ||
+		statuses[0].Members != 1 ||
+		!statuses[0].LastSuccess.Equal(now) ||
+		statuses[0].LastError != "" {
+		t.Fatalf("status after success = %+v", statuses)
+	}
+	if got := testutil.ToFloat64(catalogSerial.WithLabelValues("catalog.example.")); got != float64(accepted.SOA.Serial) {
+		t.Fatalf("serial metric = %v", got)
+	}
+	if got := testutil.ToFloat64(catalogMembers.WithLabelValues("catalog.example.")); got != 1 {
+		t.Fatalf("member metric = %v", got)
+	}
+	if got := testutil.ToFloat64(catalogReconcilesTotal.WithLabelValues("catalog.example.", "success")); got != successBefore+1 {
+		t.Fatalf("success counter = %v, want %v", got, successBefore+1)
+	}
+	if got := testutil.ToFloat64(catalogReconcileActionsTotal.WithLabelValues("catalog.example.", string(ActionAdd))); got != addBefore+1 {
+		t.Fatalf("add action counter = %v, want %v", got, addBefore+1)
+	}
+
+	now = now.Add(time.Minute)
+	if err := runtime.AddZone(accepted); err == nil {
+		t.Fatal("stale catalog serial was accepted")
+	}
+	statuses = runtime.Statuses()
+	if statuses[0].Serial != accepted.SOA.Serial ||
+		statuses[0].Members != 1 ||
+		!statuses[0].LastSuccess.Equal(now.Add(-time.Minute)) ||
+		statuses[0].LastAttempt != now ||
+		statuses[0].LastError == "" {
+		t.Fatalf("status after failure = %+v", statuses[0])
+	}
+	if got := testutil.ToFloat64(catalogReconcilesTotal.WithLabelValues("catalog.example.", "failure")); got != failureBefore+1 {
+		t.Fatalf("failure counter = %v, want %v", got, failureBefore+1)
+	}
+}
+
+func TestRuntimeRestoresCatalogFreshness(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "catalog-state.json")
+	store := newRuntimeStore()
+	first, _ := newTestRuntime(t, store, statePath)
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	first.now = func() time.Time { return now }
+	if err := first.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+
+	restored, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		statePath,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	statuses := restored.Statuses()
+	if len(statuses) != 1 || !statuses[0].LastSuccess.Equal(now) {
+		t.Fatalf("restored status = %+v", statuses)
+	}
+}
+
+func TestRuntimeObservesConfiguredCatalogTransferFailure(t *testing.T) {
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	runtime.now = func() time.Time { return now }
+	before := testutil.ToFloat64(
+		catalogTransfersTotal.WithLabelValues("catalog.example.", "failure"),
+	)
+
+	runtime.ObserveTransfer("ordinary-secondary.example.", errors.New("ignored"))
+	runtime.ObserveTransfer("catalog.example.", errors.New("master timeout"))
+
+	statuses := runtime.Statuses()
+	if len(statuses) != 1 ||
+		statuses[0].LastAttempt != now ||
+		statuses[0].LastError != "catalog transfer: master timeout" {
+		t.Fatalf("status = %+v", statuses)
+	}
+	if got := testutil.ToFloat64(catalogTransfersTotal.WithLabelValues("catalog.example.", "failure")); got != before+1 {
+		t.Fatalf("transfer failure counter = %v, want %v", got, before+1)
+	}
+}
+
+func TestRuntimeDryRunRetainsFleet(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.DryRun = true
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	err = runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	))
+	if err == nil || !strings.Contains(err.Error(), "dry-run plan") {
+		t.Fatalf("dry-run error = %v", err)
+	}
+	if runtime.GetZone("alpha.example.") != nil || runtime.catalogs["catalog.example."] != nil {
+		t.Fatal("dry-run mutated catalog fleet")
+	}
+}
+
+func TestRuntimeRequiresSerialBoundApprovalForMassDestruction(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.ApprovalRequiredAbove = 1
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	initial := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`a2.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	if err := runtime.AddZone(initial); err != nil {
+		t.Fatalf("initial AddZone: %v", err)
+	}
+	replacement := catalogZone(t, "catalog.example.", `a3.zones.catalog.example. 0 IN PTR gamma.example.`)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil || !strings.Contains(err.Error(), "requires explicit approval") {
+		t.Fatalf("unapproved error = %v", err)
+	}
+	if runtime.GetZone("alpha.example.") == nil || runtime.GetZone("beta.example.") == nil {
+		t.Fatal("unapproved plan withdrew the last-valid fleet")
+	}
+
+	approved := uint32(43)
+	updated := runtime.sources["catalog.example."]
+	updated.ApprovedSerial = &approved
+	runtime.sources["catalog.example."] = updated
+	if err := runtime.AddZone(replacement); err != nil {
+		t.Fatalf("approved AddZone: %v", err)
+	}
+	if runtime.GetZone("alpha.example.") != nil ||
+		runtime.GetZone("beta.example.") != nil ||
+		runtime.GetZone("gamma.example.") == nil {
+		t.Fatalf("approved fleet not applied; removed=%v", controller.removed)
+	}
+}
+
 type runtimeStore struct {
-	mu    sync.RWMutex
-	zones map[string]*zone.Zone
+	mu         sync.RWMutex
+	zones      map[string]*zone.Zone
+	batchCalls int
+	batchErr   error
 }
 
 func newRuntimeStore() *runtimeStore {
@@ -27,6 +230,37 @@ func (s *runtimeStore) AddZone(z *zone.Zone) error {
 	}
 	s.mu.Lock()
 	s.zones[normalizeName(z.Origin)] = z
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *runtimeStore) ApplyZoneBatch(upserts []*zone.Zone, removals []string) error {
+	for _, z := range upserts {
+		if z == nil {
+			return errors.New("nil zone")
+		}
+		if err := z.Validate(); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	if s.batchErr != nil {
+		err := s.batchErr
+		s.mu.Unlock()
+		return err
+	}
+	next := make(map[string]*zone.Zone, len(s.zones)+len(upserts))
+	for name, z := range s.zones {
+		next[name] = z
+	}
+	for _, name := range removals {
+		delete(next, normalizeName(name))
+	}
+	for _, z := range upserts {
+		next[normalizeName(z.Origin)] = z
+	}
+	s.zones = next
+	s.batchCalls++
 	s.mu.Unlock()
 	return nil
 }
@@ -62,6 +296,21 @@ type runtimeController struct {
 	err     error
 }
 
+type catalogIntegrationFetcher struct {
+	catalog *zone.Zone
+}
+
+func (f catalogIntegrationFetcher) Fetch(
+	_ context.Context,
+	cfg secondary.Config,
+	_ *zone.Zone,
+) (*zone.Zone, error) {
+	if normalizeName(cfg.Name) == normalizeName(f.catalog.Origin) {
+		return f.catalog.Clone(), nil
+	}
+	return runtimeMemberZone(cfg.Name, 1), nil
+}
+
 func (c *runtimeController) Upsert(_ context.Context, cfg secondary.Config, reset bool) error {
 	c.mu.Lock()
 	c.upserts = append(c.upserts, cfg)
@@ -80,6 +329,43 @@ func (c *runtimeController) Remove(name string) bool {
 	c.removed = append(c.removed, normalizeName(name))
 	c.mu.Unlock()
 	return true
+}
+
+func (c *runtimeController) ApplyBatch(
+	_ context.Context,
+	changes []secondary.BatchChange,
+	publish secondary.BatchPublisher,
+) error {
+	c.mu.Lock()
+	err := c.err
+	baseSerial := len(c.upserts)
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	upserts := make([]*zone.Zone, 0, len(changes))
+	removals := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if change.Remove {
+			removals = append(removals, normalizeName(change.Name))
+			continue
+		}
+		upserts = append(upserts, runtimeMemberZone(change.Config.Name, uint32(baseSerial+len(upserts)+1)))
+	}
+	if err := publish(upserts, removals); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	for _, change := range changes {
+		if change.Remove {
+			c.removed = append(c.removed, normalizeName(change.Name))
+			continue
+		}
+		c.upserts = append(c.upserts, change.Config)
+		c.resets = append(c.resets, change.ResetState)
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 func runtimeMemberZone(name string, serial uint32) *zone.Zone {
@@ -162,6 +448,58 @@ func TestRuntimeProvisionsGroupedMemberAndKeepsCatalogPrivate(t *testing.T) {
 	defer controller.mu.Unlock()
 	if len(controller.upserts) != 1 || controller.upserts[0].Masters[0] != "192.0.2.2" {
 		t.Fatalf("upserts=%+v, want blue group master", controller.upserts)
+	}
+}
+
+func TestRuntimeAndSecondaryManagerAtomicallyProvisionInitialCatalog(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`a2.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	manager, err := secondary.NewManager(
+		runtime,
+		catalogIntegrationFetcher{catalog: catalog},
+		[]secondary.Config{{
+			Name:                  "catalog.example.",
+			Masters:               []string{"192.0.2.1"},
+			AllowUnsignedTransfer: true,
+			RetainOnError:         true,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AttachController(manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	if store.GetZone("catalog.example.") != nil {
+		t.Fatal("catalog zone was exposed through the authoritative store")
+	}
+	if store.GetZone("alpha.example.") == nil || store.GetZone("beta.example.") == nil {
+		t.Fatal("initial catalog fleet was not published")
+	}
+	store.mu.RLock()
+	batchCalls := store.batchCalls
+	store.mu.RUnlock()
+	if batchCalls != 1 {
+		t.Fatalf("authoritative batch publications = %d, want 1", batchCalls)
 	}
 }
 
@@ -311,6 +649,241 @@ func TestRuntimeRejectsPersistedMemberOutsideNarrowedScope(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnforcesMemberAndReconcileLimits(t *testing.T) {
+	records := []string{
+		`a1.zones.catalog.example. 0 IN PTR one.example.`,
+		`a2.zones.catalog.example. 0 IN PTR two.example.`,
+	}
+	for name, configure := range map[string]func(*SourceConfig){
+		"members": func(source *SourceConfig) { source.MaxMembers = 1 },
+		"actions": func(source *SourceConfig) { source.MaxReconcileActions = 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := runtimeSource("catalog.example.")
+			configure(&source)
+			runtime, err := NewRuntime(
+				newRuntimeStore(),
+				[]SourceConfig{source},
+				filepath.Join(t.TempDir(), "catalog-state.json"),
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller := &runtimeController{runtime: runtime}
+			if err := runtime.AttachController(controller); err != nil {
+				t.Fatal(err)
+			}
+			if err := runtime.AddZone(catalogZone(t, "catalog.example.", records...)); err == nil {
+				t.Fatalf("%s limit was not enforced", name)
+			}
+			controller.mu.Lock()
+			defer controller.mu.Unlock()
+			if len(controller.upserts) != 0 {
+				t.Fatalf("%s limit allowed partial provisioning: %v", name, controller.upserts)
+			}
+		})
+	}
+}
+
+func TestRuntimeRejectsInvalidResourceLimits(t *testing.T) {
+	for name, configure := range map[string]func(*SourceConfig){
+		"members":      func(source *SourceConfig) { source.MaxMembers = -1 },
+		"actions":      func(source *SourceConfig) { source.MaxReconcileActions = -1 },
+		"action_rate":  func(source *SourceConfig) { source.ReconcileActionsPerMinute = -1 },
+		"action_burst": func(source *SourceConfig) { source.ReconcileActionBurst = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := runtimeSource("catalog.example.")
+			configure(&source)
+			if _, err := NewRuntime(
+				newRuntimeStore(),
+				[]SourceConfig{source},
+				filepath.Join(t.TempDir(), "catalog-state.json"),
+				nil,
+			); err == nil {
+				t.Fatalf("invalid %s limit was accepted", name)
+			}
+		})
+	}
+}
+
+func TestRuntimeBoundsCatalogSourceCount(t *testing.T) {
+	sources := make([]SourceConfig, maxCatalogSources+1)
+	for i := range sources {
+		sources[i] = runtimeSource("catalog-" + serialStringForRuntime(uint32(i+1)) + ".example.")
+	}
+	if _, err := NewRuntime(
+		newRuntimeStore(),
+		sources,
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	); err == nil {
+		t.Fatal("catalog source limit was not enforced")
+	}
+}
+
+func TestRuntimeReconcileRateBudgetRefillsOverTime(t *testing.T) {
+	store := newRuntimeStore()
+	source := runtimeSource("catalog.example.")
+	source.MaxReconcileActions = 10
+	source.ReconcileActionsPerMinute = 2
+	source.ReconcileActionBurst = 2
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	runtime.now = func() time.Time { return now }
+	runtime.budgets["catalog.example."].lastRefill = now
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	replacement := catalogZone(
+		t,
+		"catalog.example.",
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil {
+		t.Fatal("two-action replacement exceeded the remaining burst")
+	}
+	if store.GetZone("alpha.example.") == nil || store.GetZone("beta.example.") != nil {
+		t.Fatal("rate-limited reconciliation changed the fleet")
+	}
+	now = now.Add(30 * time.Second)
+	if err := runtime.AddZone(replacement); err != nil {
+		t.Fatalf("refilled action budget rejected reconciliation: %v", err)
+	}
+	if store.GetZone("alpha.example.") != nil || store.GetZone("beta.example.") == nil {
+		t.Fatal("refilled reconciliation did not atomically replace the fleet")
+	}
+}
+
+func TestRuntimeReconcileRateBudgetRefundsFailure(t *testing.T) {
+	store := newRuntimeStore()
+	source := runtimeSource("catalog.example.")
+	source.ReconcileActionsPerMinute = 1
+	source.ReconcileActionBurst = 1
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &runtimeController{runtime: runtime, err: errors.New("transfer failed")}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(catalog); err == nil {
+		t.Fatal("failed transfer was accepted")
+	}
+	controller.mu.Lock()
+	controller.err = nil
+	controller.mu.Unlock()
+	if err := runtime.AddZone(catalog); err != nil {
+		t.Fatalf("failed reconciliation did not refund its token: %v", err)
+	}
+}
+
+func TestRuntimeRejectsConfiguredCatalogAsMember(t *testing.T) {
+	runtime, controller := newTestRuntime(
+		t,
+		newRuntimeStore(),
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+	)
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`self.zones.catalog.example. 0 IN PTR catalog.example.`,
+	)); err == nil {
+		t.Fatal("configured catalog was accepted as its own member")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.upserts) != 0 {
+		t.Fatalf("self-member caused provisioning: %v", controller.upserts)
+	}
+}
+
+func TestRuntimeRejectsSelfReferentialCOO(t *testing.T) {
+	runtime, _ := newTestRuntime(
+		t,
+		newRuntimeStore(),
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+	)
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`coo.a1.zones.catalog.example. 0 IN PTR catalog.example.`,
+	)); err == nil {
+		t.Fatal("self-referential COO was accepted")
+	}
+}
+
+func TestRuntimeRejectsCrossCatalogOwnershipCycle(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{
+			runtimeSource("first.catalog."),
+			runtimeSource("second.catalog."),
+		},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"first.catalog.",
+		`a1.zones.first.catalog. 0 IN PTR alpha.example.`,
+		`coo.a1.zones.first.catalog. 0 IN PTR second.catalog.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"second.catalog.",
+		`b1.zones.second.catalog. 0 IN PTR alpha.example.`,
+		`coo.b1.zones.second.catalog. 0 IN PTR first.catalog.`,
+	)); err == nil {
+		t.Fatal("cross-catalog COO cycle was accepted")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.upserts) != 1 {
+		t.Fatalf("cycle rejection caused side effects: %v", controller.upserts)
+	}
+}
+
 func TestRuntimeRemovalWithdrawsOnlyOwnedMember(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
@@ -416,6 +989,82 @@ func TestRuntimeFailedProvisionDoesNotClaimMember(t *testing.T) {
 	runtime.mu.RUnlock()
 	if owned {
 		t.Fatal("failed member transfer created ownership")
+	}
+}
+
+func TestRuntimeFailedMultiActionRetainsPreviousCatalogAndFleet(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	controller.err = errors.New("second fleet unavailable")
+	replacement := catalogZone(
+		t,
+		"catalog.example.",
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil {
+		t.Fatal("failed multi-action reconciliation was accepted")
+	}
+	if store.GetZone("alpha.example.") == nil {
+		t.Fatal("previous member disappeared after failed reconciliation")
+	}
+	if store.GetZone("beta.example.") != nil {
+		t.Fatal("new member leaked after failed reconciliation")
+	}
+	runtime.mu.RLock()
+	serial := runtime.catalogs["catalog.example."].Serial
+	_, ownsAlpha := runtime.ownership["alpha.example."]
+	_, ownsBeta := runtime.ownership["beta.example."]
+	runtime.mu.RUnlock()
+	if serial != 42 || !ownsAlpha || ownsBeta {
+		t.Fatalf("state after failure: serial=%d ownsAlpha=%v ownsBeta=%v", serial, ownsAlpha, ownsBeta)
+	}
+}
+
+func TestRuntimeAuthoritativeBatchFailureRollsBackPersistedState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "catalog-state.json")
+	store := newRuntimeStore()
+	runtime, _ := newTestRuntime(t, store, statePath)
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.batchErr = errors.New("atomic publication unavailable")
+	store.mu.Unlock()
+	replacement := catalogZone(
+		t,
+		"catalog.example.",
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+	)
+	replacement.SOA.Serial = 43
+	if err := runtime.AddZone(replacement); err == nil {
+		t.Fatal("failed authoritative batch was accepted")
+	}
+	if store.GetZone("alpha.example.") == nil || store.GetZone("beta.example.") != nil {
+		t.Fatal("authoritative fleet changed after batch failure")
+	}
+
+	store.mu.Lock()
+	store.batchErr = nil
+	store.mu.Unlock()
+	restoredStore := newRuntimeStore()
+	restored, _ := newTestRuntime(t, restoredStore, statePath)
+	restored.mu.RLock()
+	serial := restored.catalogs["catalog.example."].Serial
+	restored.mu.RUnlock()
+	if serial != 42 || restoredStore.GetZone("alpha.example.") == nil {
+		t.Fatalf("persisted rollback did not retain serial 42 and alpha member (serial=%d)", serial)
 	}
 }
 

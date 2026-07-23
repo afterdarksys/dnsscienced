@@ -18,6 +18,41 @@ server:
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
   primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
+  read_timeout: 5s
+  write_timeout: 5s
+  idle_timeout: 60s              # Bounds idle TCP connection lifetime
+  tcp_protection:
+    enabled: true
+    max_connections: 20000
+    max_connections_per_client: 128
+    accept_rate_per_second: 10000
+    accept_burst: 20000
+    max_queries_per_connection: 100
+  query_complexity:
+    enabled: true
+    max_score: 20
+    any_cost: 6
+    dnssec_cost: 4
+    long_name_cost: 5
+    edns_option_cost: 1
+  client_reputation:
+    enabled: true
+    base_qps: 500                 # Clean-client admission rate per source prefix
+    minimum_qps: 25               # Floor reached as reputation worsens
+    burst: 1000
+    max_entries: 65536            # Fixed upper bound; O(1) ring eviction
+    max_score: 100
+    decay_per_second: 1
+    protocol_penalty: 20
+    complexity_penalty: 40
+    policy_penalty: 2
+    rate_limit_penalty: 5
+    ipv4_prefix_len: 32
+    ipv6_prefix_len: 64
+    action: "drop"                # drop (recommended) or refused
+    exempt_cidrs:
+      - "127.0.0.0/8"
+      - "::1/128"
 
   # Enable modes
   enable_authoritative: true     # Enable authoritative server
@@ -174,6 +209,8 @@ zones:
   #   max_refresh_time: 24h
   #   min_retry_time: 30s
   #   max_retry_time: 1h
+  #   max_transfer_records: 1000000
+  #   max_transfer_bytes: 268435456
   #
   # Define referenced transfer and NOTIFY keys at top level:
   # tsig_keys:
@@ -190,6 +227,16 @@ zones:
 #     transfer_tsig_key: "secondary-xfer.example."
 #     member_allow_suffixes: ["customer.example."]
 #     member_deny_suffixes: ["suspended.customer.example."]
+#     max_members: 100000
+#     max_reconcile_actions: 200000
+#     reconcile_actions_per_minute: 200000
+#     reconcile_action_burst: 200000
+#     dry_run: false
+#     approval_required_above: 1000
+#     # One-shot approval bound to the exact incoming RFC 1982 serial:
+#     # approved_serial: 2026072301
+#     max_transfer_records: 1000000
+#     max_transfer_bytes: 268435456
 #     member_defaults:
 #       masters: ["192.0.2.20:53"]
 #       transfer_tsig_key: "secondary-xfer.example."

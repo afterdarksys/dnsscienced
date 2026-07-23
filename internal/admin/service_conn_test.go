@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
 	"github.com/dnsscience/dnsscienced/internal/admin"
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
 	"google.golang.org/grpc/stats"
 )
 
 // makeServiceWithRegistry creates a minimal Service with a wired ConnRegistry for testing.
 func makeServiceWithRegistry() (*admin.Service, *grpcserver.ConnRegistry) {
 	reg := grpcserver.NewConnRegistry()
-	svc := admin.NewService(nil, nil, nil, nil, nil, nil, "", "", nil, nil, reg, nil)
+	svc := admin.NewService(nil, nil, nil, nil, nil, nil, "", "", nil, nil, reg, nil, nil)
 	return svc, reg
 }
 
