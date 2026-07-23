@@ -981,6 +981,17 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	// Get records
 	records := matchedZone.GetRecords(qname, qtype)
 
+	// RFC 1034 §3.6.2: a CNAME record must be returned for a query of ANY
+	// type at that owner name, since the name is an alias. Without this,
+	// queries for A/AAAA/etc. at a CNAME-only name incorrectly return NODATA
+	// instead of the CNAME, breaking resolution for any client that doesn't
+	// query the exact CNAME type (i.e. every real-world client).
+	if len(records) == 0 && qtype != dns.TypeCNAME {
+		if cnameRecords := matchedZone.GetRecords(qname, dns.TypeCNAME); len(cnameRecords) > 0 {
+			records = cnameRecords
+		}
+	}
+
 	if len(records) > 0 {
 		m.Answer = records
 	} else {
