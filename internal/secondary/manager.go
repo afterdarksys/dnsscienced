@@ -55,6 +55,18 @@ type ZoneStore interface {
 	GetZone(string) *zone.Zone
 }
 
+// BatchChange describes one prepared secondary worker mutation.
+type BatchChange struct {
+	Name       string
+	Config     Config
+	Remove     bool
+	ResetState bool
+}
+
+// BatchPublisher atomically publishes all prepared replacements and removals.
+// It is called before any worker mutation becomes active.
+type BatchPublisher func(upserts []*zone.Zone, removals []string) error
+
 // Fetcher obtains a complete, validated replacement zone.
 type Fetcher interface {
 	Fetch(context.Context, Config, *zone.Zone) (*zone.Zone, error)
@@ -222,6 +234,152 @@ func (m *Manager) Upsert(ctx context.Context, cfg Config, resetState bool) error
 	return nil
 }
 
+// ApplyBatch prepares every transfer while existing workers are quiesced,
+// invokes publish exactly once, and only then activates the new worker set.
+// A prepare or publish failure leaves the active workers unchanged.
+func (m *Manager) ApplyBatch(ctx context.Context, changes []BatchChange, publish BatchPublisher) error {
+	if publish == nil {
+		return fmt.Errorf("secondary: batch publisher is required")
+	}
+	m.mutationMu.Lock()
+	defer m.mutationMu.Unlock()
+
+	m.mu.RLock()
+	started := m.started
+	managerCtx := m.ctx
+	m.mu.RUnlock()
+	if !started {
+		return fmt.Errorf("secondary: batch reconciliation requires a started manager")
+	}
+
+	type preparedChange struct {
+		name      string
+		candidate *managedZone
+		previous  *managedZone
+		remove    bool
+		reset     bool
+	}
+	prepared := make([]preparedChange, 0, len(changes))
+	seen := make(map[string]struct{}, len(changes))
+	for _, change := range changes {
+		name := change.Name
+		if !change.Remove {
+			name = change.Config.Name
+		}
+		name = strings.ToLower(dns.Fqdn(strings.TrimSpace(name)))
+		if name == "." {
+			return fmt.Errorf("secondary: batch change has no zone name")
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("secondary: duplicate batch change for %s", name)
+		}
+		seen[name] = struct{}{}
+
+		m.mu.RLock()
+		previous := m.zones[name]
+		m.mu.RUnlock()
+		if change.Remove {
+			prepared = append(prepared, preparedChange{name: name, previous: previous, remove: true})
+			continue
+		}
+		candidate, err := prepareManagedZone(change.Config)
+		if err != nil {
+			return err
+		}
+		prepared = append(prepared, preparedChange{
+			name:      name,
+			candidate: candidate,
+			previous:  previous,
+			reset:     change.ResetState,
+		})
+	}
+
+	locked := make([]*managedZone, 0, len(prepared))
+	for i := range prepared {
+		if prepared[i].previous != nil {
+			prepared[i].previous.opMu.Lock()
+			locked = append(locked, prepared[i].previous)
+		}
+	}
+	unlockWorkers := func() {
+		for i := len(locked) - 1; i >= 0; i-- {
+			locked[i].opMu.Unlock()
+		}
+	}
+	defer unlockWorkers()
+
+	upserts := make([]*zone.Zone, 0, len(prepared))
+	removals := make([]string, 0, len(prepared))
+	for i := range prepared {
+		item := &prepared[i]
+		if item.remove {
+			removals = append(removals, item.name)
+			continue
+		}
+		current := m.store.GetZone(item.name)
+		fetchCurrent := current
+		force := item.reset
+		if force {
+			fetchCurrent = nil
+		}
+		replacement, err := m.fetcher.Fetch(ctx, item.candidate.cfg, fetchCurrent)
+		if err != nil {
+			if !(item.candidate.cfg.RetainOnError && current != nil) {
+				return fmt.Errorf("secondary %s: transfer failed: %w", item.name, err)
+			}
+			continue
+		}
+		if err := validateReplacement(item.candidate.cfg, replacement); err != nil {
+			return err
+		}
+		if !force && current != nil && current.SOA != nil &&
+			!zone.SerialGreater(replacement.SOA.Serial, current.SOA.Serial) {
+			continue
+		}
+		upserts = append(upserts, replacement)
+	}
+
+	if err := publish(upserts, removals); err != nil {
+		return err
+	}
+
+	toCancel := make([]context.CancelFunc, 0, len(prepared))
+	toStart := make([]*managedZone, 0, len(prepared))
+	m.mu.Lock()
+	for i := range prepared {
+		item := &prepared[i]
+		if item.remove {
+			if current := m.zones[item.name]; current != nil {
+				delete(m.zones, item.name)
+				removeOrderedZone(&m.order, item.name)
+				if current.cancel != nil {
+					toCancel = append(toCancel, current.cancel)
+				}
+			}
+			continue
+		}
+		item.candidate.ctx, item.candidate.cancel = context.WithCancel(managerCtx)
+		if current := m.zones[item.name]; current == nil {
+			m.order = append(m.order, item.name)
+		} else if current.cancel != nil {
+			toCancel = append(toCancel, current.cancel)
+		}
+		m.zones[item.name] = item.candidate
+		m.wg.Add(1)
+		toStart = append(toStart, item.candidate)
+	}
+	m.mu.Unlock()
+	for _, cancel := range toCancel {
+		cancel()
+	}
+	unlockWorkers()
+	locked = nil
+	for _, candidate := range toStart {
+		m.runZoneAsync(candidate)
+	}
+	return nil
+}
+
 // Remove stops refreshes for a zone. The published zone is intentionally left
 // untouched so callers can order worker removal and authoritative withdrawal
 // transactionally.
@@ -321,11 +479,8 @@ func (m *Manager) refresh(ctx context.Context, managed *managedZone) error {
 }
 
 func (m *Manager) publish(cfg Config, replacement *zone.Zone, force bool) error {
-	if replacement == nil || replacement.SOA == nil {
-		return fmt.Errorf("secondary %s: transfer returned no SOA", cfg.Name)
-	}
-	if replacement.Origin != cfg.Name {
-		return fmt.Errorf("secondary %s: transfer returned origin %s", cfg.Name, replacement.Origin)
+	if err := validateReplacement(cfg, replacement); err != nil {
+		return err
 	}
 	current := m.store.GetZone(cfg.Name)
 	if !force && current != nil && current.SOA != nil &&
@@ -336,6 +491,25 @@ func (m *Manager) publish(cfg Config, replacement *zone.Zone, force bool) error 
 		return fmt.Errorf("secondary %s: publish: %w", cfg.Name, err)
 	}
 	return nil
+}
+
+func validateReplacement(cfg Config, replacement *zone.Zone) error {
+	if replacement == nil || replacement.SOA == nil {
+		return fmt.Errorf("secondary %s: transfer returned no SOA", cfg.Name)
+	}
+	if replacement.Origin != cfg.Name {
+		return fmt.Errorf("secondary %s: transfer returned origin %s", cfg.Name, replacement.Origin)
+	}
+	return nil
+}
+
+func removeOrderedZone(order *[]string, name string) {
+	for i, orderedName := range *order {
+		if orderedName == name {
+			*order = append((*order)[:i], (*order)[i+1:]...)
+			return
+		}
+	}
 }
 
 func prepareManagedZone(cfg Config) (*managedZone, error) {

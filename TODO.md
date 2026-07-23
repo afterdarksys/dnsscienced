@@ -178,7 +178,9 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [x] Fetch catalog zones through authenticated AXFR/IXFR and refresh them after
   SOA NOTIFY or timer expiry.
 - [x] Compute a deterministic add/update/remove plan from the last valid catalog.
-- [ ] Apply a valid catalog atomically so readers never observe a partial fleet.
+- [x] Prepare all catalog member transfers before atomically swapping the
+  authoritative fleet; failures retain the previous catalog, workers, and
+  durable ownership state.
 - [x] Automatically provision newly listed member zones using the catalog's group
   mapping and transfer policy.
 - [x] Remove a member and its associated state only when that same catalog created

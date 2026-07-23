@@ -1652,6 +1652,69 @@ func (s *Server) AddZone(z *zone.Zone) error {
 	return nil
 }
 
+// ApplyZoneBatch validates every replacement before atomically swapping the
+// authoritative zone map. Readers observe either the complete old fleet or the
+// complete new fleet.
+func (s *Server) ApplyZoneBatch(upserts []*zone.Zone, removals []string) error {
+	seen := make(map[string]struct{}, len(upserts))
+	for _, z := range upserts {
+		if z == nil {
+			return fmt.Errorf("zone batch contains nil zone")
+		}
+		if err := z.Validate(); err != nil {
+			return fmt.Errorf("zone %s validation failed: %w", z.Origin, err)
+		}
+		name := strings.ToLower(dns.Fqdn(z.Origin))
+		if _, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("zone batch contains duplicate %s", name)
+		}
+		seen[name] = struct{}{}
+	}
+	normalizedRemovals := make([]string, 0, len(removals))
+	removedSet := make(map[string]struct{}, len(removals))
+	for _, removed := range removals {
+		name := strings.ToLower(dns.Fqdn(removed))
+		if _, duplicate := removedSet[name]; duplicate {
+			continue
+		}
+		if _, replaced := seen[name]; replaced {
+			return fmt.Errorf("zone batch both removes and replaces %s", name)
+		}
+		removedSet[name] = struct{}{}
+		normalizedRemovals = append(normalizedRemovals, name)
+	}
+
+	s.persistMu.Lock()
+	s.zonesMu.Lock()
+	next := make(map[string]*zone.Zone, len(s.cfg.Zones)+len(upserts))
+	for name, existing := range s.cfg.Zones {
+		next[name] = existing
+	}
+	for _, name := range normalizedRemovals {
+		delete(next, name)
+		s.ixfrJournal.Reset(name)
+	}
+	for _, replacement := range upserts {
+		name := strings.ToLower(dns.Fqdn(replacement.Origin))
+		if previous := s.cfg.Zones[name]; previous == nil {
+			s.ixfrJournal.Reset(name)
+		} else {
+			s.ixfrJournal.Record(previous, replacement)
+		}
+		next[name] = replacement
+	}
+	s.cfg.Zones = next
+	s.zonesMu.Unlock()
+	s.persistMu.Unlock()
+
+	if s.primaryNotifier != nil {
+		for _, replacement := range upserts {
+			_ = s.primaryNotifier.Notify(replacement.Origin, replacement.SOA)
+		}
+	}
+	return nil
+}
+
 // RemoveZone removes a zone from the server
 func (s *Server) RemoveZone(origin string) {
 	origin = strings.ToLower(dns.Fqdn(origin))

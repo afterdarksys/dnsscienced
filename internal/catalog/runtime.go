@@ -30,6 +30,7 @@ const (
 // member zones. Catalog zones themselves are deliberately kept private.
 type AuthoritativeStore interface {
 	AddZone(*zone.Zone) error
+	ApplyZoneBatch([]*zone.Zone, []string) error
 	GetZone(string) *zone.Zone
 	RemoveZone(string)
 	GetZoneNames() []string
@@ -40,6 +41,7 @@ type AuthoritativeStore interface {
 type SecondaryController interface {
 	Upsert(context.Context, secondary.Config, bool) error
 	Remove(string) bool
+	ApplyBatch(context.Context, []secondary.BatchChange, secondary.BatchPublisher) error
 }
 
 // SourceConfig maps an authenticated catalog to transfer settings inherited by
@@ -332,17 +334,9 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			r.sources[name].MaxReconcileActions,
 		)
 	}
-	// Persist the accepted snapshot before side effects. If reconciliation is
-	// interrupted, the next refresh deterministically resumes missing actions
-	// from persisted ownership rather than forgetting the desired state.
-	r.mu.Lock()
-	r.catalogs[name] = accepted
-	r.catalogZone[name] = raw.Clone()
-	err = r.persistLocked()
-	r.mu.Unlock()
-	if err != nil {
-		return err
-	}
+
+	changes := make([]secondary.BatchChange, 0, len(actions))
+	finalOwnership := cloneOwnership(ownership)
 	for _, action := range actions {
 		if action.Kind == ActionConflict {
 			continue
@@ -357,19 +351,11 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			if err != nil {
 				return err
 			}
-			if err := r.controller.Upsert(context.Background(), cfg, action.ResetState); err != nil {
-				return fmt.Errorf("catalog: %s member %s: %w", action.Kind, action.Zone, err)
-			}
-			r.mu.Lock()
-			r.ownership[action.Zone] = Ownership{Catalog: action.Catalog, Label: action.Label}
-			if published := r.store.GetZone(action.Zone); published != nil {
-				r.memberZone[action.Zone] = published.Clone()
-			}
-			err = r.persistLocked()
-			r.mu.Unlock()
-			if err != nil {
-				return err
-			}
+			changes = append(changes, secondary.BatchChange{
+				Config:     cfg,
+				ResetState: action.ResetState,
+			})
+			finalOwnership[action.Zone] = Ownership{Catalog: action.Catalog, Label: action.Label}
 		case ActionTransferOwnership:
 			if !memberExists {
 				return fmt.Errorf("catalog: ownership transfer has no destination member %s", action.Zone)
@@ -378,35 +364,93 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			if err != nil {
 				return err
 			}
-			if err := r.controller.Upsert(context.Background(), cfg, action.ResetState); err != nil {
-				return fmt.Errorf("catalog: transfer member %s: %w", action.Zone, err)
-			}
-			r.mu.Lock()
-			r.ownership[action.Zone] = Ownership{Catalog: action.Catalog, Label: action.Label}
-			if published := r.store.GetZone(action.Zone); published != nil {
-				r.memberZone[action.Zone] = published.Clone()
-			}
-			err = r.persistLocked()
-			r.mu.Unlock()
-			if err != nil {
-				return err
-			}
+			changes = append(changes, secondary.BatchChange{
+				Config:     cfg,
+				ResetState: action.ResetState,
+			})
+			finalOwnership[action.Zone] = Ownership{Catalog: action.Catalog, Label: action.Label}
 		case ActionRemove:
-			r.controller.Remove(action.Zone)
-			r.store.RemoveZone(action.Zone)
-			r.mu.Lock()
-			delete(r.ownership, action.Zone)
-			delete(r.memberZone, action.Zone)
-			err = r.persistLocked()
-			r.mu.Unlock()
-			if err != nil {
-				return err
-			}
+			changes = append(changes, secondary.BatchChange{Name: action.Zone, Remove: true})
+			delete(finalOwnership, action.Zone)
 		default:
 			return fmt.Errorf("catalog: unsupported reconciliation action %q", action.Kind)
 		}
 	}
 
+	err = r.controller.ApplyBatch(
+		context.Background(),
+		changes,
+		func(upserts []*zone.Zone, removals []string) error {
+			return r.commitReconciliation(name, raw, next, finalOwnership, upserts, removals)
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("catalog %s reconciliation: %w", name, err)
+	}
+	return nil
+}
+
+func (r *Runtime) commitReconciliation(
+	name string,
+	raw *zone.Zone,
+	next map[string]*Catalog,
+	finalOwnership map[string]Ownership,
+	upserts []*zone.Zone,
+	removals []string,
+) error {
+	r.mu.Lock()
+	previousCatalogs := r.catalogs
+	previousCatalogZones := r.catalogZone
+	previousOwnership := r.ownership
+	previousMembers := r.memberZone
+
+	nextCatalogZones := cloneZoneMap(previousCatalogZones)
+	nextCatalogZones[name] = raw.Clone()
+	nextMembers := cloneZoneMap(previousMembers)
+	for _, member := range upserts {
+		if member == nil {
+			r.mu.Unlock()
+			return fmt.Errorf("catalog: batch contains nil member zone")
+		}
+		nextMembers[normalizeName(member.Origin)] = member.Clone()
+	}
+	for _, removed := range removals {
+		delete(nextMembers, normalizeName(removed))
+	}
+	for memberName := range finalOwnership {
+		if nextMembers[memberName] == nil {
+			r.mu.Unlock()
+			return fmt.Errorf("catalog: committed owner %s has no member zone data", memberName)
+		}
+	}
+
+	r.catalogs = next
+	r.catalogZone = nextCatalogZones
+	r.ownership = cloneOwnership(finalOwnership)
+	r.memberZone = nextMembers
+	if err := r.persistLocked(); err != nil {
+		r.catalogs = previousCatalogs
+		r.catalogZone = previousCatalogZones
+		r.ownership = previousOwnership
+		r.memberZone = previousMembers
+		r.mu.Unlock()
+		return err
+	}
+	r.mu.Unlock()
+
+	if err := r.store.ApplyZoneBatch(upserts, removals); err != nil {
+		r.mu.Lock()
+		r.catalogs = previousCatalogs
+		r.catalogZone = previousCatalogZones
+		r.ownership = previousOwnership
+		r.memberZone = previousMembers
+		rollbackErr := r.persistLocked()
+		r.mu.Unlock()
+		if rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("catalog: roll back persisted state: %w", rollbackErr))
+		}
+		return err
+	}
 	return nil
 }
 
@@ -667,6 +711,14 @@ func cloneOwnership(source map[string]Ownership) map[string]Ownership {
 	result := make(map[string]Ownership, len(source))
 	for name, owner := range source {
 		result[name] = owner
+	}
+	return result
+}
+
+func cloneZoneMap(source map[string]*zone.Zone) map[string]*zone.Zone {
+	result := make(map[string]*zone.Zone, len(source))
+	for name, z := range source {
+		result[name] = z
 	}
 	return result
 }

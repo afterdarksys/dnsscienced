@@ -2,6 +2,7 @@ package secondary
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -47,6 +48,17 @@ type fakeFetcher struct {
 type orderedFetcher struct {
 	mu    sync.Mutex
 	names []string
+}
+
+type selectiveFetcher struct {
+	failName string
+}
+
+func (f selectiveFetcher) Fetch(_ context.Context, cfg Config, _ *zone.Zone) (*zone.Zone, error) {
+	if cfg.Name == f.failName {
+		return nil, errors.New("selected transfer failed")
+	}
+	return validZone(cfg.Name, 1), nil
 }
 
 func (f *orderedFetcher) Fetch(_ context.Context, cfg Config, _ *zone.Zone) (*zone.Zone, error) {
@@ -251,6 +263,117 @@ func TestManagerDynamicallyAddsReconfiguresAndRemovesZone(t *testing.T) {
 	}
 	if err := manager.HandleNotify(context.Background(), "dynamic.test.", net.ParseIP("192.0.2.1"), "xfer.example."); err != ErrUnknownZone {
 		t.Fatalf("removed zone NOTIFY error = %v, want %v", err, ErrUnknownZone)
+	}
+}
+
+func TestManagerApplyBatchPreparesAllBeforePublishing(t *testing.T) {
+	store := newMemoryStore()
+	manager, err := NewManager(store, &fakeFetcher{serial: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	publishCalls := 0
+	err = manager.ApplyBatch(context.Background(), []BatchChange{
+		{Config: batchSecondaryConfig("alpha.test.")},
+		{Config: batchSecondaryConfig("beta.test.")},
+	}, func(upserts []*zone.Zone, removals []string) error {
+		publishCalls++
+		if len(upserts) != 2 || len(removals) != 0 {
+			t.Fatalf("batch publication upserts=%d removals=%v", len(upserts), removals)
+		}
+		for _, replacement := range upserts {
+			if err := store.AddZone(replacement); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publishCalls != 1 || store.GetZone("alpha.test.") == nil || store.GetZone("beta.test.") == nil {
+		t.Fatalf("batch was not published exactly once: calls=%d", publishCalls)
+	}
+	manager.mu.RLock()
+	managedCount := len(manager.zones)
+	manager.mu.RUnlock()
+	if managedCount != 2 {
+		t.Fatalf("active workers = %d, want 2", managedCount)
+	}
+}
+
+func TestManagerApplyBatchPrepareFailureLeavesWorkersAndStoreUnchanged(t *testing.T) {
+	store := newMemoryStore()
+	manager, err := NewManager(store, selectiveFetcher{failName: "beta.test."}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	published := false
+	err = manager.ApplyBatch(context.Background(), []BatchChange{
+		{Config: batchSecondaryConfig("alpha.test.")},
+		{Config: batchSecondaryConfig("beta.test.")},
+	}, func(_ []*zone.Zone, _ []string) error {
+		published = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("batch with failed transfer was accepted")
+	}
+	if published || store.GetZone("alpha.test.") != nil || store.GetZone("beta.test.") != nil {
+		t.Fatal("prepare failure caused partial publication")
+	}
+	manager.mu.RLock()
+	managedCount := len(manager.zones)
+	manager.mu.RUnlock()
+	if managedCount != 0 {
+		t.Fatalf("prepare failure activated %d workers", managedCount)
+	}
+}
+
+func TestManagerApplyBatchPublishFailureLeavesWorkersUnchanged(t *testing.T) {
+	store := newMemoryStore()
+	manager, err := NewManager(store, &fakeFetcher{serial: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	err = manager.ApplyBatch(
+		context.Background(),
+		[]BatchChange{{Config: batchSecondaryConfig("alpha.test.")}},
+		func(_ []*zone.Zone, _ []string) error {
+			return errors.New("atomic publication failed")
+		},
+	)
+	if err == nil {
+		t.Fatal("failed publisher was accepted")
+	}
+	manager.mu.RLock()
+	managedCount := len(manager.zones)
+	manager.mu.RUnlock()
+	if managedCount != 0 || store.GetZone("alpha.test.") != nil {
+		t.Fatal("publish failure changed workers or store")
+	}
+}
+
+func batchSecondaryConfig(name string) Config {
+	return Config{
+		Name:                  name,
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
 	}
 }
 
