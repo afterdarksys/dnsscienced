@@ -278,3 +278,35 @@ func TestHandleAXFR_Success_StreamsSOA(t *testing.T) {
 		t.Error("w.Close() was not called — transfer path was not entered (early guard rejection?)")
 	}
 }
+
+func TestHandleAXFR_MixedCaseZoneName(t *testing.T) {
+	s, err := testServerWithAXFR([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithAXFR: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+	w := newAXFRTestWriter("192.0.2.100")
+	r := makeAXFRRequest("ExAmPlE.CoM.")
+	r.SetTsig("test.", dns.HmacSHA256, 300, time.Now().Unix())
+	s.handleAXFR(w, r, net.ParseIP("192.0.2.100"))
+	if !w.closed {
+		t.Fatal("mixed-case AXFR name was not normalized")
+	}
+}
+
+func TestHandleIXFR_HonorsDisabledAXFRFallback(t *testing.T) {
+	s, err := testServerWithAXFR([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithAXFR: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+	s.cfg.ZoneAllowAXFRFallback = map[string]bool{"example.com.": false}
+	w := newAXFRTestWriter("192.0.2.100")
+	r := makeAXFRRequest("example.com.")
+	r.Question[0].Qtype = dns.TypeIXFR
+	r.SetTsig("test.", dns.HmacSHA256, 300, time.Now().Unix())
+	s.handleAXFR(w, r, net.ParseIP("192.0.2.100"))
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeNotImplemented {
+		t.Fatalf("response=%v, want NOTIMP when AXFR fallback is disabled", w.msgs)
+	}
+}

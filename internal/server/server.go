@@ -73,7 +73,8 @@ type Config struct {
 	// ZoneTransferCIDRs maps zone FQDN origin to CIDR strings allowed to AXFR.
 	// Populated by main.go from config.ZoneConfig.AllowTransfer.
 	// Empty/absent = deny all (D-01).
-	ZoneTransferCIDRs map[string][]string `yaml:"-"`
+	ZoneTransferCIDRs     map[string][]string `yaml:"-"`
+	ZoneAllowAXFRFallback map[string]bool     `yaml:"-"`
 
 	// ZoneUpdateCIDRs maps zone FQDN origin to CIDR strings allowed to send RFC 2136 UPDATE.
 	// Populated by main.go from config.ZoneConfig.AllowUpdate.
@@ -187,6 +188,7 @@ type Server struct {
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
 	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
+	persistMu        sync.Mutex                  // Orders zone swaps and durable snapshots across UPDATE requests.
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -414,8 +416,8 @@ func New(cfg Config) (*Server, error) {
 			ReadTimeout:  cfg.ReadTimeout,
 			WriteTimeout: cfg.WriteTimeout,
 
-			UDPSize:    4096,
-			TsigSecret: s.tsigSecretMap(), // populate for automatic TSIG verification
+			UDPSize:      4096,
+			TsigProvider: s.tsigKeyRing,
 		}
 
 		s.udpServers = append(s.udpServers, udpServer)
@@ -429,7 +431,7 @@ func New(cfg Config) (*Server, error) {
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-		TsigSecret:   s.tsigSecretMap(), // populate for automatic TSIG verification
+		TsigProvider: s.tsigKeyRing,
 	}
 
 	return s, nil

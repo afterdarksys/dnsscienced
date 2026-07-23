@@ -37,10 +37,10 @@ type serverSrvAdapter struct {
 	s *server.Server
 }
 
-func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone         { return a.s.GetZone(origin) }
-func (a *serverSrvAdapter) AddZone(z *zone.Zone) error               { return a.s.AddZone(z) }
-func (a *serverSrvAdapter) RemoveZone(origin string)                 { a.s.RemoveZone(origin) }
-func (a *serverSrvAdapter) GetFirewall() *firewalld.Firewall         { return a.s.GetFirewall() }
+func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone { return a.s.GetZone(origin) }
+func (a *serverSrvAdapter) AddZone(z *zone.Zone) error       { return a.s.AddZone(z) }
+func (a *serverSrvAdapter) RemoveZone(origin string)         { a.s.RemoveZone(origin) }
+func (a *serverSrvAdapter) GetFirewall() *firewalld.Firewall { return a.s.GetFirewall() }
 func (a *serverSrvAdapter) GetStats() services.SrvStats {
 	raw := a.s.GetStats()
 	s := services.SrvStats{
@@ -147,6 +147,7 @@ func main() {
 		// carries them to the AXFR handler. Wired here to avoid import cycle.
 		if len(loadedCfg.Zones) > 0 {
 			cfg.ZoneTransferCIDRs = make(map[string][]string, len(loadedCfg.Zones))
+			cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(loadedCfg.Zones))
 			for _, zc := range loadedCfg.Zones {
 				// Ensure zone name is FQDN (trailing dot)
 				zoneName := zc.Name
@@ -154,6 +155,11 @@ func main() {
 					zoneName += "."
 				}
 				cfg.ZoneTransferCIDRs[zoneName] = zc.AllowTransfer
+				allowFallback := true
+				if zc.AllowAXFRFallback != nil {
+					allowFallback = *zc.AllowAXFRFallback
+				}
+				cfg.ZoneAllowAXFRFallback[zoneName] = allowFallback
 			}
 		}
 

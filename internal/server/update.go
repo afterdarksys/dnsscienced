@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
@@ -50,10 +52,19 @@ func classifyPrereq(rr dns.RR, zoneClass uint16) prereqType {
 // Returns (0, true) if all prerequisites pass, or (failRcode, false) on the first failure.
 // Per RFC 2136 §3.2, all prerequisites are evaluated; the first failure wins.
 func evaluatePrereqs(prereqs []dns.RR, z *zone.Zone) (rcode int, ok bool) {
+	valueGroups := make(map[string][]dns.RR)
 	for _, rr := range prereqs {
+		if rr.Header().Ttl != 0 {
+			return dns.RcodeFormatError, false
+		}
 		pt := classifyPrereq(rr, z.Class)
 		owner := strings.ToLower(rr.Header().Name)
 		rrtype := rr.Header().Rrtype
+		if rr.Header().Class == dns.ClassANY || rr.Header().Class == dns.ClassNONE {
+			if _, emptyRData := rr.(*dns.ANY); !emptyRData {
+				return dns.RcodeFormatError, false
+			}
+		}
 
 		switch pt {
 		case prereqNameInUse:
@@ -70,39 +81,74 @@ func evaluatePrereqs(prereqs []dns.RR, z *zone.Zone) (rcode int, ok bool) {
 
 		case prereqRRSetExists:
 			// RRset of given type must exist
-			if len(z.GetRecords(owner, rrtype)) == 0 {
+			if len(z.ExactRecords(owner, rrtype)) == 0 {
 				return dns.RcodeNXRrset, false // NXRrset (8)
 			}
 
 		case prereqRRSetNotExists:
 			// RRset of given type must NOT exist
-			if len(z.GetRecords(owner, rrtype)) > 0 {
+			if len(z.ExactRecords(owner, rrtype)) > 0 {
 				return dns.RcodeYXRrset, false // YXRrset (7)
 			}
 
 		case prereqRRSetExistsValue:
-			// The specific RR (by value) must be present in the zone
-			existing := z.GetRecords(owner, rrtype)
-			normalized := dns.Copy(rr)
-			normalized.Header().Name = owner
-			target := normalized.String()
-			found := false
-			for _, e := range existing {
-				if e.String() == target {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return dns.RcodeNXRrset, false // NXRrset (8)
-			}
+			key := owner + "\x00" + strconv.Itoa(int(rrtype))
+			valueGroups[key] = append(valueGroups[key], rr)
 
 		case prereqFormatError:
 			return dns.RcodeFormatError, false
 		}
 	}
 
+	for key, requested := range valueGroups {
+		separator := strings.LastIndexByte(key, 0)
+		owner := key[:separator]
+		rrtype64, _ := strconv.ParseUint(key[separator+1:], 10, 16)
+		existing := z.ExactRecords(owner, uint16(rrtype64))
+		if !sameRRSetValues(requested, existing, z.Class) {
+			return dns.RcodeNXRrset, false
+		}
+	}
+
 	return 0, true
+}
+
+func sameRRSetValues(left, right []dns.RR, zoneClass uint16) bool {
+	leftSet := make(map[string]struct{}, len(left))
+	rightSet := make(map[string]struct{}, len(right))
+	for _, rr := range left {
+		leftSet[normalizedRRValue(rr, zoneClass)] = struct{}{}
+	}
+	for _, rr := range right {
+		rightSet[normalizedRRValue(rr, zoneClass)] = struct{}{}
+	}
+	if len(leftSet) != len(rightSet) {
+		return false
+	}
+	for value := range leftSet {
+		if _, ok := rightSet[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedRRValue(rr dns.RR, zoneClass uint16) string {
+	copyRR := dns.Copy(rr)
+	copyRR.Header().Name = strings.ToLower(dns.Fqdn(copyRR.Header().Name))
+	copyRR.Header().Class = zoneClass
+	copyRR.Header().Ttl = 0
+	return copyRR.String()
+}
+
+func containsRRValue(records []dns.RR, candidate dns.RR, zoneClass uint16) bool {
+	want := normalizedRRValue(candidate, zoneClass)
+	for _, rr := range records {
+		if normalizedRRValue(rr, zoneClass) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // handleUpdate handles RFC 2136 Dynamic DNS Update requests.
@@ -117,6 +163,7 @@ func evaluatePrereqs(prereqs []dns.RR, z *zone.Zone) (rcode int, ok bool) {
 //  7. Evaluate prerequisites (r.Answer) against live zone
 //  8. Clone live zone
 //  9. Apply Update section (r.Ns) to clone
+//
 // 10. clone.Validate() → SERVFAIL on failure
 // 11. clone.IncrementSerial()
 // 12. Atomic swap: s.cfg.Zones[zoneName] = clone
@@ -128,6 +175,9 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Rcode = rcode
+		if reqTSIG := r.IsTsig(); reqTSIG != nil {
+			m.SetTsig(reqTSIG.Hdr.Name, reqTSIG.Algorithm, reqTSIG.Fudge, time.Now().Unix())
+		}
 		w.WriteMsg(m) //nolint:errcheck
 	}
 
@@ -146,7 +196,8 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 
 	// 3. Empty Zone section guard.
-	if len(r.Question) == 0 {
+	if len(r.Question) != 1 || r.Question[0].Qtype != dns.TypeSOA ||
+		(r.Question[0].Qclass == dns.ClassANY || r.Question[0].Qclass == dns.ClassNONE) {
 		sendRcode(dns.RcodeFormatError)
 		return
 	}
@@ -160,6 +211,10 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	s.zonesMu.RUnlock()
 	if !ok {
 		sendRcode(dns.RcodeRefused)
+		return
+	}
+	if r.Question[0].Qclass != z.Class {
+		sendRcode(dns.RcodeFormatError)
 		return
 	}
 
@@ -223,6 +278,9 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 					sendRcode(dns.RcodeRefused)
 					return
 				}
+			}
+			if containsRRValue(clone.ExactRecords(owner, rrtype), rr, z.Class) {
+				continue
 			}
 			if err := clone.AddRecord(rr); err != nil {
 				sendRcode(dns.RcodeServerFailure)
@@ -310,6 +368,8 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 
 	// 12. Atomic swap: replace the live zone with the validated, serial-incremented clone (D-05, DYNUP-04).
 	// CR-01: write lock protects concurrent write to cfg.Zones map.
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.zonesMu.Lock()
 	s.cfg.Zones[zoneName] = clone
 	s.zonesMu.Unlock()
@@ -321,17 +381,8 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	// TSIG-authenticated. Sign using the same key that authenticated the request.
 	m := new(dns.Msg)
 	m.SetReply(r)
-	if reqTsig := r.IsTsig(); reqTsig != nil && s.tsigKeyRing != nil {
-		keyName := reqTsig.Hdr.Name
-		secret, keyOK := s.tsigKeyRing.Secret(keyName)
-		if keyOK {
-			alg, _ := s.tsigKeyRing.Algorithm(keyName)
-			m.SetTsig(keyName, alg, 300, int64(reqTsig.TimeSigned)) //nolint:gosec
-			// TsigGenerate returns an error only on packing failure; non-fatal if it occurs.
-			_, _, _ = dns.TsigGenerate(m, secret, reqTsig.MAC, false)
-		}
-		// If the key is not found, the response is sent unsigned. This should not happen
-		// since the request was already verified (step 2), but is safe to ignore here.
+	if reqTsig := r.IsTsig(); reqTsig != nil {
+		m.SetTsig(reqTsig.Hdr.Name, reqTsig.Algorithm, reqTsig.Fudge, time.Now().Unix())
 	}
 	w.WriteMsg(m) //nolint:errcheck
 
@@ -341,9 +392,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	// clients waiting on the zone lock. The in-memory swap already succeeded; the
 	// acknowledged trade-off (D-14) is that a crash between reply and persist leaves
 	// the zone file one serial behind the response already sent to the client.
-	zoneNameCopy := zoneName
-	cloneCopy := clone
-	go s.persistZone(zoneNameCopy, cloneCopy)
+	s.persistZone(zoneName, clone)
 }
 
 // persistZone writes the zone to disk if a persist path is configured for it (D-11, D-13).

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/miekg/dns"
@@ -50,7 +51,8 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 	}
 
 	// 4. Empty question guard.
-	if len(r.Question) == 0 {
+	if len(r.Question) != 1 ||
+		(r.Question[0].Qtype != dns.TypeAXFR && r.Question[0].Qtype != dns.TypeIXFR) {
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Rcode = dns.RcodeRefused
@@ -59,12 +61,29 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 	}
 
 	// 5. Zone lookup.
-	qname := r.Question[0].Name
+	qname := strings.ToLower(dns.Fqdn(r.Question[0].Name))
+	s.zonesMu.RLock()
 	z, ok := s.cfg.Zones[qname]
+	s.zonesMu.RUnlock()
 	if !ok {
 		m := new(dns.Msg)
 		m.SetReply(r)
 		m.Rcode = dns.RcodeRefused
+		w.WriteMsg(m) //nolint:errcheck
+		return
+	}
+	if r.Question[0].Qclass != z.Class {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Rcode = dns.RcodeRefused
+		w.WriteMsg(m) //nolint:errcheck
+		return
+	}
+	allowFallback, fallbackConfigured := s.cfg.ZoneAllowAXFRFallback[qname]
+	if r.Question[0].Qtype == dns.TypeIXFR && fallbackConfigured && !allowFallback {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Rcode = dns.RcodeNotImplemented
 		w.WriteMsg(m) //nolint:errcheck
 		return
 	}
