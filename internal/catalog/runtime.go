@@ -82,6 +82,7 @@ type Runtime struct {
 	budgets     map[string]*reconcileBudget
 	status      map[string]Status
 	now         func() time.Time
+	auditSink   AuditSink
 }
 
 // Status is an immutable operator view of one configured catalog.
@@ -119,6 +120,7 @@ func NewRuntime(
 	sources []SourceConfig,
 	statePath string,
 	reservedZones []string,
+	auditSinks ...AuditSink,
 ) (*Runtime, error) {
 	if store == nil {
 		return nil, fmt.Errorf("catalog: authoritative store is required")
@@ -128,6 +130,9 @@ func NewRuntime(
 	}
 	if len(sources) > maxCatalogSources {
 		return nil, fmt.Errorf("catalog: at most %d sources are allowed", maxCatalogSources)
+	}
+	if len(auditSinks) > 1 {
+		return nil, fmt.Errorf("catalog: at most one audit sink is allowed")
 	}
 	r := &Runtime{
 		store:       store,
@@ -141,6 +146,9 @@ func NewRuntime(
 		budgets:     make(map[string]*reconcileBudget, len(sources)),
 		status:      make(map[string]Status, len(sources)),
 		now:         time.Now,
+	}
+	if len(auditSinks) == 1 {
+		r.auditSink = auditSinks[0]
 	}
 	for _, source := range sources {
 		source.Name = normalizeName(source.Name)
@@ -353,17 +361,52 @@ func (r *Runtime) AddZone(z *zone.Zone) error {
 	}
 
 	started := r.recordAttempt(name)
+	r.emitAudit(AuditEvent{
+		Time:    started,
+		Kind:    AuditReceipt,
+		Catalog: name,
+		Outcome: "received",
+		Stage:   "receipt",
+	})
 	parsed, err := Parse(z)
 	if err != nil {
 		r.recordFailure(name, started, err)
+		r.emitAudit(AuditEvent{
+			Time:    r.now(),
+			Kind:    AuditRejected,
+			Catalog: name,
+			Outcome: "rejected",
+			Stage:   "validation",
+			Error:   err.Error(),
+		})
 		return fmt.Errorf("catalog %s rejected; retaining last valid state: %w", name, err)
 	}
 	actions, err := r.reconcile(name, parsed, z)
 	if err != nil {
 		r.recordFailure(name, started, err)
+		r.emitAudit(AuditEvent{
+			Time:    r.now(),
+			Kind:    AuditRejected,
+			Catalog: name,
+			Serial:  parsed.Serial,
+			Members: len(parsed.Members),
+			Outcome: "rejected",
+			Stage:   "reconciliation",
+			Error:   err.Error(),
+		})
 		return err
 	}
 	r.recordSuccess(name, started, parsed, actions)
+	r.emitAudit(AuditEvent{
+		Time:         r.now(),
+		Kind:         AuditReconciliation,
+		Catalog:      name,
+		Serial:       parsed.Serial,
+		Members:      len(parsed.Members),
+		Outcome:      "committed",
+		Stage:        "reconciliation",
+		ActionCounts: auditActionCounts(actions),
+	})
 	return nil
 }
 
@@ -398,6 +441,34 @@ func (r *Runtime) ObserveTransfer(name string, err error) {
 		r.mu.Unlock()
 	}
 	catalogTransfersTotal.WithLabelValues(name, outcome).Inc()
+	event := AuditEvent{
+		Time:    r.now(),
+		Kind:    AuditTransfer,
+		Catalog: name,
+		Outcome: outcome,
+		Stage:   "transfer",
+	}
+	if err != nil {
+		event.Error = err.Error()
+	}
+	r.emitAudit(event)
+}
+
+func (r *Runtime) emitAudit(event AuditEvent) {
+	if r.auditSink != nil {
+		r.auditSink.EmitCatalogAudit(event)
+	}
+}
+
+func auditActionCounts(actions []Action) map[string]int {
+	counts := make(map[string]int)
+	for _, action := range actions {
+		counts[string(action.Kind)]++
+		if action.ResetState {
+			counts["state_reset"]++
+		}
+	}
+	return counts
 }
 
 // GetZone implements secondary.ZoneStore without exposing catalog zones to the

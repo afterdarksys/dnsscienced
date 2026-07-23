@@ -288,6 +288,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Catalog reconciliation and admin RPCs share one structured control-plane
+	// logger. Initialize it before secondary startup so initial catalog transfer
+	// and validation decisions are auditable.
+	var controlLogger *logging.Logger
+	if loadedCfg != nil && (loadedCfg.Admin.Enabled || len(loadedCfg.CatalogZones) > 0) {
+		logCfg := loadedCfg.Logging
+		controlLogger, err = logging.NewLogger(logCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating control-plane logger: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Attach event bus for real-time query streaming (256-event buffer).
 	queryBus := eventbus.New(256)
 	srv.SetBus(queryBus)
@@ -360,6 +373,7 @@ func main() {
 				sources,
 				loadedCfg.CatalogStateFile,
 				reservedSecondaries,
+				catalog.NewLoggingAuditSink(controlLogger),
 			)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading catalog state: %v\n", err)
@@ -422,27 +436,16 @@ func main() {
 			TLSClientCAs: loadedCfg.Admin.TLSClientCAs,
 		}
 
-		// Build a logger for admin middleware audit entries.
-		logCfg := logging.DefaultConfig()
-		if loadedCfg != nil {
-			logCfg = loadedCfg.Logging
-		}
-		adminLogger, err := logging.NewLogger(logCfg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating admin logger: %v\n", err)
-			os.Exit(1)
-		}
-
 		// adminSvc is captured from the Register closure and used post-construction
 		// to wire the ConnRegistry (chicken-and-egg: connReg isn't available until after
 		// grpcserver.New returns, but Register runs inside New).
 		var adminSvc *admin.Service
 		grpcDeps := grpcserver.Deps{
 			Register: func(s *grpc.Server) {
-				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), adminLogger, queryBus, catalogRuntime)
+				adminSvc = registry.RegisterAll(s, &serverSrvAdapter{srv}, loadedCfg.ZonesDir, compileBin, nil, srv.GetDSYNCNotifier(), controlLogger, queryBus, catalogRuntime)
 			},
-			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(adminLogger)},
-			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(adminLogger)},
+			Unary:  []grpc.UnaryServerInterceptor{middleware.AuditUnaryInterceptor(controlLogger)},
+			Stream: []grpc.StreamServerInterceptor{middleware.AuditStreamInterceptor(controlLogger)},
 		}
 
 		var connReg *grpcserver.ConnRegistry

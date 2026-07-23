@@ -15,6 +15,23 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+type auditRecorder struct {
+	mu     sync.Mutex
+	events []AuditEvent
+}
+
+func (r *auditRecorder) EmitCatalogAudit(event AuditEvent) {
+	r.mu.Lock()
+	r.events = append(r.events, event)
+	r.mu.Unlock()
+}
+
+func (r *auditRecorder) snapshot() []AuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]AuditEvent(nil), r.events...)
+}
+
 func TestRuntimeStatusAndMetricsRetainLastSuccessAfterFailure(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, _ := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
@@ -133,6 +150,59 @@ func TestRuntimeObservesConfiguredCatalogTransferFailure(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(catalogTransfersTotal.WithLabelValues("catalog.example.", "failure")); got != before+1 {
 		t.Fatalf("transfer failure counter = %v, want %v", got, before+1)
+	}
+}
+
+func TestRuntimeEmitsStructuredCatalogAuditEvents(t *testing.T) {
+	recorder := &auditRecorder{}
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+		recorder,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	accepted := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(accepted); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	if err := runtime.AddZone(accepted); err == nil {
+		t.Fatal("stale catalog was accepted")
+	}
+	runtime.ObserveTransfer("catalog.example.", errors.New("master timeout"))
+
+	events := recorder.snapshot()
+	if len(events) != 5 {
+		t.Fatalf("audit events = %+v", events)
+	}
+	if events[0].Kind != AuditReceipt ||
+		events[1].Kind != AuditReconciliation ||
+		events[1].Serial != 42 ||
+		events[1].Members != 1 ||
+		events[1].ActionCounts[string(ActionAdd)] != 1 {
+		t.Fatalf("successful audit events = %+v", events[:2])
+	}
+	if events[2].Kind != AuditReceipt ||
+		events[3].Kind != AuditRejected ||
+		events[3].Stage != "reconciliation" ||
+		events[3].Error == "" {
+		t.Fatalf("rejection audit events = %+v", events[2:4])
+	}
+	if events[4].Kind != AuditTransfer ||
+		events[4].Outcome != "failure" ||
+		events[4].Error != "master timeout" {
+		t.Fatalf("transfer audit event = %+v", events[4])
 	}
 }
 

@@ -130,3 +130,12 @@ Prometheus exports bounded-label catalog metrics:
 The `catalog` label is bounded by the configured 128-source limit. Outcome and
 action labels are fixed enums, so malformed input cannot create metric
 cardinality.
+
+Catalog control-plane decisions are also written to the configured structured
+system log with `message="catalog audit"`. Fixed event types cover transfer,
+receipt, rejection, and committed reconciliation. Each record includes the
+catalog, serial, member count, outcome, stage, error, and aggregate action
+counts. The action summary explicitly records conflicts, ownership migrations,
+and state resets without emitting an attacker-controlled number of log lines.
+The logger is initialized before initial catalog transfers, so startup failures
+are included in the audit trail.
