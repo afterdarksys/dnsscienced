@@ -125,13 +125,132 @@ func (e *Entry) estimateSize() int64 {
 type shard struct {
 	mu         sync.RWMutex
 	entries    map[uint64]*Entry // Keyed by hash
+	expiry     expiryQueue
 	maxSize    int
 	memoryUsed atomic.Int64 // Current memory usage in bytes
 	maxMemory  int64        // Maximum memory per shard in bytes
 }
 
-// ShardedCache implements a thread-safe, lock-contention-free cache
-// using sharding to distribute load across multiple locks
+type expiryItem struct {
+	hash        uint64
+	removeAfter time.Time
+}
+
+// expiryQueue is an indexed min-heap. All methods must run while the owning
+// shard is write-locked.
+type expiryQueue struct {
+	items   []expiryItem
+	indices map[uint64]int
+}
+
+func newExpiryQueue(capacity int) expiryQueue {
+	return expiryQueue{
+		items:   make([]expiryItem, 0, capacity),
+		indices: make(map[uint64]int, capacity),
+	}
+}
+
+func (q *expiryQueue) less(i, j int) bool {
+	if q.items[i].removeAfter.Equal(q.items[j].removeAfter) {
+		return q.items[i].hash < q.items[j].hash
+	}
+	return q.items[i].removeAfter.Before(q.items[j].removeAfter)
+}
+
+func (q *expiryQueue) swap(i, j int) {
+	q.items[i], q.items[j] = q.items[j], q.items[i]
+	q.indices[q.items[i].hash] = i
+	q.indices[q.items[j].hash] = j
+}
+
+func (q *expiryQueue) up(index int) {
+	for index > 0 {
+		parent := (index - 1) / 2
+		if !q.less(index, parent) {
+			return
+		}
+		q.swap(index, parent)
+		index = parent
+	}
+}
+
+func (q *expiryQueue) down(index int) {
+	for {
+		left := index*2 + 1
+		if left >= len(q.items) {
+			return
+		}
+		smallest := left
+		right := left + 1
+		if right < len(q.items) && q.less(right, left) {
+			smallest = right
+		}
+		if !q.less(smallest, index) {
+			return
+		}
+		q.swap(index, smallest)
+		index = smallest
+	}
+}
+
+func (q *expiryQueue) set(hash uint64, removeAfter time.Time) {
+	if index, ok := q.indices[hash]; ok {
+		old := q.items[index].removeAfter
+		q.items[index].removeAfter = removeAfter
+		if removeAfter.Before(old) {
+			q.up(index)
+		} else {
+			q.down(index)
+		}
+		return
+	}
+	q.items = append(q.items, expiryItem{hash: hash, removeAfter: removeAfter})
+	index := len(q.items) - 1
+	q.indices[hash] = index
+	q.up(index)
+}
+
+func (q *expiryQueue) peek() (expiryItem, bool) {
+	if len(q.items) == 0 {
+		return expiryItem{}, false
+	}
+	return q.items[0], true
+}
+
+func (q *expiryQueue) pop() (expiryItem, bool) {
+	if len(q.items) == 0 {
+		return expiryItem{}, false
+	}
+	item := q.items[0]
+	q.remove(item.hash)
+	return item, true
+}
+
+func (q *expiryQueue) remove(hash uint64) bool {
+	index, ok := q.indices[hash]
+	if !ok {
+		return false
+	}
+	last := len(q.items) - 1
+	delete(q.indices, hash)
+	if index == last {
+		q.items = q.items[:last]
+		return true
+	}
+
+	q.items[index] = q.items[last]
+	q.items = q.items[:last]
+	q.indices[q.items[index].hash] = index
+	if index > 0 && q.less(index, (index-1)/2) {
+		q.up(index)
+	} else {
+		q.down(index)
+	}
+	return true
+}
+
+// ShardedCache implements a thread-safe, low-contention cache using sharding
+// to distribute work across multiple independent locks.
 type ShardedCache struct {
 	shards []*shard
 
@@ -365,6 +484,7 @@ func NewShardedCache(cfg Config) *ShardedCache {
 	for i := 0; i < cfg.ShardCount; i++ {
 		c.shards[i] = &shard{
 			entries:   make(map[uint64]*Entry, shardSize),
+			expiry:    newExpiryQueue(shardSize),
 			maxSize:   shardSize,
 			maxMemory: maxMemoryPerShard,
 		}
@@ -516,9 +636,6 @@ func (c *ShardedCache) applyTTLPolicy(entry *Entry) {
 func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 	shard := c.getShard(hash)
 
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-
 	// Validation Mode Logic
 	if !entry.DNSSECValidated {
 		switch c.validationMode {
@@ -538,38 +655,44 @@ func (c *ShardedCache) Set(hash uint64, entry *Entry) {
 		c.enricher.EnrichEntry(entry)
 	}
 
-	// Publish Store Event (only if threat found or always? Plan said important events. Let's publish all new stores for now, stream filtering handles the rest)
-	if c.broadcaster != nil {
-		c.broadcaster.PublishStore(entry)
-	}
-
 	// Calculate entry size
 	entrySize := entry.estimateSize()
 
-	// Check if we need to evict based on size or memory
-	needsEviction := len(shard.entries) >= shard.maxSize
+	shard.mu.Lock()
 
-	// Memory-aware eviction
-	if shard.maxMemory > 0 {
-		currentMemory := shard.memoryUsed.Load()
-		if currentMemory+entrySize > shard.maxMemory {
-			needsEviction = true
-		}
+	// An entry larger than the entire shard budget cannot be made to fit.
+	// Preserve any existing value for this hash rather than flushing useful
+	// entries for an object that still exceeds the limit.
+	if shard.maxMemory > 0 && entrySize > shard.maxMemory {
+		shard.mu.Unlock()
+		return
 	}
 
-	if needsEviction {
-		c.evictOldest(shard)
-	}
-
-	// Remove old entry if replacing
+	// Remove a replacement before capacity checks. The previous implementation
+	// evicted an unrelated key whenever a full shard received an update.
 	if oldEntry, exists := shard.entries[hash]; exists {
-		oldSize := oldEntry.estimateSize()
-		shard.memoryUsed.Add(-oldSize)
+		shard.memoryUsed.Add(-oldEntry.estimateSize())
+		delete(shard.entries, hash)
+		shard.expiry.remove(hash)
+	}
+
+	// Evict as many entries as needed to satisfy both count and memory bounds.
+	for len(shard.entries) >= shard.maxSize ||
+		(shard.maxMemory > 0 && shard.memoryUsed.Load()+entrySize > shard.maxMemory) {
+		if !c.evictNext(shard) {
+			break
+		}
 	}
 
 	// Add new entry
 	shard.entries[hash] = entry
+	shard.expiry.set(hash, c.removeAfter(entry))
 	shard.memoryUsed.Add(entrySize)
+	shard.mu.Unlock()
+
+	if c.broadcaster != nil {
+		c.broadcaster.PublishStore(entry)
+	}
 }
 
 // Delete removes an entry from cache
@@ -581,34 +704,33 @@ func (c *ShardedCache) Delete(hash uint64) {
 		entrySize := entry.estimateSize()
 		shard.memoryUsed.Add(-entrySize)
 		delete(shard.entries, hash)
+		shard.expiry.remove(hash)
 	}
 	shard.mu.Unlock()
 }
 
-// evictOldest removes the oldest entry from a shard (must hold lock)
-func (c *ShardedCache) evictOldest(s *shard) {
-	var oldestHash uint64
-	var oldestEntry *Entry
-	var oldestTime time.Time
-	first := true
-
-	for hash, entry := range s.entries {
-		if first || entry.ExpiresAt.Before(oldestTime) {
-			oldestHash = hash
-			oldestEntry = entry
-			oldestTime = entry.ExpiresAt
-			first = false
-		}
+func (c *ShardedCache) removeAfter(entry *Entry) time.Time {
+	if c.serveStale {
+		return entry.ExpiresAt.Add(c.maxStaleTTL)
 	}
+	return entry.ExpiresAt
+}
 
-	if !first && oldestEntry != nil {
-		// Update memory tracking
-		entrySize := oldestEntry.estimateSize()
-		s.memoryUsed.Add(-entrySize)
-
-		delete(s.entries, oldestHash)
-		c.evictions.Add(1)
+// evictNext removes the earliest-expiring entry in O(log n). The caller must
+// hold the shard write lock.
+func (c *ShardedCache) evictNext(s *shard) bool {
+	item, ok := s.expiry.pop()
+	if !ok {
+		return false
 	}
+	entry, ok := s.entries[item.hash]
+	if !ok {
+		return false
+	}
+	s.memoryUsed.Add(-entry.estimateSize())
+	delete(s.entries, item.hash)
+	c.evictions.Add(1)
+	return true
 }
 
 // Flush clears all entries from cache
@@ -616,6 +738,7 @@ func (c *ShardedCache) Flush() {
 	for _, shard := range c.shards {
 		shard.mu.Lock()
 		shard.entries = make(map[uint64]*Entry, shard.maxSize)
+		shard.expiry = newExpiryQueue(shard.maxSize)
 		shard.memoryUsed.Store(0)
 		shard.mu.Unlock()
 	}
@@ -640,49 +763,31 @@ func (c *ShardedCache) cleanupExpired() {
 
 // performCleanup removes expired entries from all shards
 func (c *ShardedCache) performCleanup() {
+	now := time.Now()
 	for _, shard := range c.shards {
 		shard.mu.Lock()
 
-		// Collect expired keys and their entries for memory tracking
-		type expiredEntry struct {
-			hash uint64
-			size int64
-		}
-		var expired []expiredEntry
-
-		for hash, entry := range shard.entries {
-			shouldExpire := false
-			if c.serveStale {
-				// Only remove if beyond serve-stale window
-				if entry.IsExpired() && !entry.IsStale(c.maxStaleTTL) {
-					shouldExpire = true
-				}
-			} else {
-				// Remove all expired
-				if entry.IsExpired() {
-					shouldExpire = true
-				}
+		expired := 0
+		for {
+			next, ok := shard.expiry.peek()
+			if !ok || next.removeAfter.After(now) {
+				break
 			}
-
-			if shouldExpire {
-				expired = append(expired, expiredEntry{
-					hash: hash,
-					size: entry.estimateSize(),
-				})
+			shard.expiry.pop()
+			entry, exists := shard.entries[next.hash]
+			if !exists {
+				continue
 			}
-		}
-
-		// Delete expired entries and update memory tracking
-		for _, exp := range expired {
-			delete(shard.entries, exp.hash)
-			shard.memoryUsed.Add(-exp.size)
+			delete(shard.entries, next.hash)
+			shard.memoryUsed.Add(-entry.estimateSize())
 			c.expirations.Add(1)
+			expired++
 		}
 
 		shard.mu.Unlock()
 
 		// Yield to prevent blocking for too long
-		if len(expired) > 0 {
+		if expired > 0 {
 			time.Sleep(time.Millisecond)
 		}
 	}

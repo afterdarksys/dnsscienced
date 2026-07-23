@@ -82,7 +82,7 @@ Legend:
 - [ ] Bring the experimental assembly-parser UDP server to feature and security
   parity before considering it for production; the primary UDP path remains the
   audited `miekg/dns` server.
-- [ ] Replace linear eviction work under cache-shard locks with a measured
+- [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
 - [x] Add validated runtime controls and documentation for listener count, resolver

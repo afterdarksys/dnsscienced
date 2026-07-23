@@ -18,7 +18,7 @@ a UDP listener is not a worker.
 | Is parsing zero-copy? | Not end to end. Production output and encrypted-transport buffers are pooled; the audited `miekg/dns` UDP server also pools input buffers. DNS message decoding still constructs Go objects. |
 | Is I/O asynchronous? | Go's network poller provides nonblocking readiness underneath the goroutine API. DNS handlers use ordinary synchronous-looking Go calls; there is no application-specific `io_uring` path. |
 | Is `sync.Pool` used for byte buffers? | Yes, on measured production UDP/TCP response packing and DoT/DoH framing paths. The pools store pointers to fixed arrays so pool use itself does not allocate. |
-| Is the cache lock-free? | No. It uses many independently locked shards and atomic counters. Reads contend only within a shard, but replacement currently performs linear eviction while holding that shard's lock. |
+| Is the cache lock-free? | No. It uses many independently locked shards and atomic counters. Reads contend only within a shard; expiry and capacity eviction use a per-shard indexed min-heap. |
 | Are worker pools fixed and routed? | Yes. Distinct recursive cache misses enter a bounded fixed worker pool. Coalesced requests share one lookup. A full queue fails fast with SERVFAIL. |
 
 ## Configuration
@@ -101,10 +101,17 @@ query mix.
 The assembly-parser UDP server is experimental. Its microbenchmarks do not
 establish feature, protocol, or security parity with the production server.
 
+## Measured cache eviction
+
+The per-shard indexed expiry heap replaces a full map scan at capacity. On the
+project's 4,096-entry single-shard benchmark, insertion at capacity improved
+from roughly 92–96 µs/op to 4.1–4.4 µs/op (about 22x) on an Intel i9-9880H.
+Allocations remained at 10/op; most are entry/event construction outside the
+eviction index. Treat this as a focused microbenchmark, not a production QPS
+claim.
+
 ## Remaining performance work
 
-- Replace linear oldest-entry scanning under a shard lock with a measured
-  low-contention eviction policy.
 - Add production-like mixed hit/miss and slow-authority load tests with explicit
   p95/p99 and overload budgets.
 - Expose explicit public-recursive and conditional-forwarding modes.
