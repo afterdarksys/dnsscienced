@@ -101,6 +101,34 @@ query mix.
 The assembly-parser UDP server is experimental. Its microbenchmarks do not
 establish feature, protocol, or security parity with the production server.
 
+## Measured packet-header parsing
+
+The DNS header fast path now uses `ParseHeaderInto`, a bounds-checked scalar Go
+parser with caller-owned storage. The x86 assembly implementation remains
+buildable for research, but it is not selected by the production UDP listener.
+
+In a Linux/amd64 container on an Intel i9-9880H, five benchmark runs produced:
+
+| Parser | Time | Allocations | Decision |
+|---|---:|---:|---|
+| One header through cgo/assembly | 101.7–111.9 ns | 1 | Do not use for header rejection |
+| Scalar Go, caller-owned output | 4.58–4.81 ns/header | 0 | Selected fast path |
+| Public scalar Go API | 5.22–5.76 ns/header | 0 | Selected compatibility path |
+| 64-header fixed-stride Go batch | 8.04–8.22 ns/header | 0 | Suitable input layout for a future `recvmmsg` prototype |
+
+The assembly parser was also corrected to read exactly 12 bytes rather than
+over-reading a 16-byte vector at the end of a short buffer. It now uses baseline
+SSE2 and its response-header builder no longer corrupts the output pointer.
+AVX2/AVX-512 are not justified for one 12-byte DNS header; any future SIMD work
+must benchmark multiple independent headers per vector and include runtime CPU
+feature dispatch.
+
+`recvmmsg`/`sendmmsg` remains a Linux-only experiment until end-to-end batching
+beats the production listener under equivalent protocol and security behavior.
+XDP/eBPF is a separate deployment architecture: it needs cache-coherency,
+policy-parity, privilege, observability, and fallback designs before code is
+attached to a network interface.
+
 ## Measured cache eviction
 
 The per-shard indexed expiry heap replaces a full map scan at capacity. On the
@@ -117,5 +145,6 @@ claim.
 - Expose explicit public-recursive and conditional-forwarding modes.
 - Profile long-running memory behavior and tune pool retention under realistic
   packet-size distributions.
-- Consider platform-specific receive/send batching only after the production
-  protocol and security behavior has regression coverage.
+- Prototype Linux `recvmmsg`/`sendmmsg`, then retain it only if complete
+  receive-parse-route-send benchmarks improve throughput and tail latency.
+- Evaluate an opt-in XDP cache-hit path separately from the portable resolver.

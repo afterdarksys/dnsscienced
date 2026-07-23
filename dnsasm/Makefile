@@ -57,18 +57,21 @@ USE_ASM ?= 0
 
 ifeq ($(USE_ASM),1)
 ifeq ($(ARCH),x86_64)
-    ASM_SRCS := $(wildcard $(SRC_DIR)/x86_64/*.asm)
+    # Header parsing is the measured fast path. Keep the more complex name
+    # parser on the audited C implementation until it has equivalent fuzzing.
+    ASM_SRCS := $(SRC_DIR)/x86_64/header.asm
     ASM_OBJS := $(patsubst $(SRC_DIR)/x86_64/%.asm,$(OBJ_DIR)/%.o,$(ASM_SRCS))
 else ifeq ($(ARCH),arm64)
-    ASM_SRCS := $(wildcard $(SRC_DIR)/arm64/*.s)
+    ASM_SRCS := $(SRC_DIR)/arm64/header.s
     ASM_OBJS := $(patsubst $(SRC_DIR)/arm64/%.s,$(OBJ_DIR)/%.o,$(ASM_SRCS))
 endif
+    CFLAGS += -DDNSASM_ASM_HEADER
 else
     ASM_OBJS :=
 endif
 
 # All objects
-ALL_OBJS := $(C_OBJS) $(ASM_OBJS)
+ALL_OBJS := $(ASM_OBJS) $(C_OBJS)
 
 # Targets
 STATIC_LIB := $(LIB_DIR)/libdnsasm.a

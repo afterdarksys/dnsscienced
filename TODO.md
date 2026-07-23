@@ -82,6 +82,18 @@ Legend:
 - [ ] Bring the experimental assembly-parser UDP server to feature and security
   parity before considering it for production; the primary UDP path remains the
   audited `miekg/dns` server.
+- [x] Add a fixed-stride, recvmmsg-compatible batch header API with reusable output
+  storage and measured zero-allocation steady-state parsing. Benchmarking showed
+  scalar Go is faster than cgo even after amortizing the transition, so production
+  header rejection stays in Go.
+- [x] Make the x86 SIMD header parser read exactly the 12-byte DNS header, use
+  baseline SSE2 instead of assuming optional CPU features, and repair the assembly
+  response-header builder's corrupted output pointer.
+- [ ] Add a Linux-only recvmmsg/sendmmsg transport prototype and benchmark complete
+  receive-parse-route-send batches before changing the production listener.
+- [ ] Evaluate XDP/eBPF as a separately deployable cache-hit fast path with explicit
+  security-policy parity, cache-coherency, privilege, observability, and portable
+  fallback requirements; do not couple it to the portable resolver by default.
 - [x] Replace linear eviction work under cache-shard locks with a measured
   low-contention policy; do not claim the cache is lock-free while it uses shard
   mutexes.
