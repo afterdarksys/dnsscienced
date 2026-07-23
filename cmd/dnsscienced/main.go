@@ -26,6 +26,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
 	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/primarynotify"
+	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/server"
@@ -142,6 +143,10 @@ func main() {
 		// Wait, let's restart. config.Load returns a *config.Config which CONTAINS server.Config.
 		// So we should take cfg = loadedCfg.Server.
 		cfg = loadedCfg.Server
+		if err := wireResolverForwarding(&cfg.RecursiveConfig, loadedCfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring resolver forwarding: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Initialize defensive features if configured
 		if hasDefensiveFeatures(loadedCfg.Defensive) {
@@ -524,6 +529,12 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 			}
 			continue
 		}
+		if kind == "forward" {
+			if len(zc.Forwarders) == 0 {
+				return loaded, fmt.Errorf("zone %s: forward zone requires forwarders", zc.Name)
+			}
+			continue
+		}
 		if kind != "primary" {
 			return loaded, fmt.Errorf("zone %s: type %q is not implemented", zc.Name, kind)
 		}
@@ -552,6 +563,48 @@ func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, er
 		loaded++
 	}
 	return loaded, nil
+}
+
+func wireResolverForwarding(resolverConfig *resolver.Config, cfg *config.Config) error {
+	if resolverConfig.ConditionalForwarders == nil {
+		resolverConfig.ConditionalForwarders = make(map[string][]string)
+	}
+	if resolverConfig.ForwardZoneModes == nil {
+		resolverConfig.ForwardZoneModes = make(map[string]string)
+	}
+	for configuredSuffix, servers := range cfg.Forwarders {
+		suffix := ""
+		if strings.TrimSpace(configuredSuffix) != "" {
+			suffix = strings.ToLower(dns.Fqdn(configuredSuffix))
+		}
+		if suffix == "" {
+			if len(resolverConfig.Forwarders) > 0 {
+				return fmt.Errorf("duplicate global forwarders")
+			}
+			resolverConfig.Forwarders = append([]string(nil), servers...)
+			continue
+		}
+		if _, exists := resolverConfig.ConditionalForwarders[suffix]; exists {
+			return fmt.Errorf("duplicate forwarder suffix %q", configuredSuffix)
+		}
+		resolverConfig.ConditionalForwarders[suffix] = append([]string(nil), servers...)
+	}
+	for _, zoneConfig := range cfg.Zones {
+		if strings.ToLower(strings.TrimSpace(zoneConfig.Type)) != "forward" {
+			continue
+		}
+		suffix := strings.ToLower(dns.Fqdn(zoneConfig.Name))
+		if _, exists := resolverConfig.ConditionalForwarders[suffix]; exists {
+			return fmt.Errorf("duplicate forwarder suffix %s", suffix)
+		}
+		resolverConfig.ConditionalForwarders[suffix] = append([]string(nil), zoneConfig.Forwarders...)
+		mode := zoneConfig.ForwardMode
+		if mode == "" {
+			mode = resolver.ForwardModeOnly
+		}
+		resolverConfig.ForwardZoneModes[suffix] = mode
+	}
+	return nil
 }
 
 func buildPrimaryNotifyConfigs(cfg *config.Config) (map[string]primarynotify.ZoneConfig, error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/server"
 )
 
@@ -83,6 +84,54 @@ func TestConfiguredZonesDefersSecondaryToTransferManager(t *testing.T) {
 	loaded, err := loadConfiguredZones(srv, []config.ZoneConfig{{Name: "secondary.test", Type: "secondary", Masters: []string{"192.0.2.1"}}})
 	if err != nil || loaded != 0 {
 		t.Fatalf("loaded=%d error=%v, want secondary deferred without error", loaded, err)
+	}
+}
+
+func TestWireResolverForwardingIncludesGlobalAndZonePolicies(t *testing.T) {
+	resolverConfig := resolver.Config{ForwardMode: resolver.ForwardModeFirst}
+	cfg := &config.Config{
+		Forwarders: map[string][]string{
+			"":             {"8.8.8.8:53"},
+			"corp.example": {"192.0.2.10:53"},
+		},
+		Zones: []config.ZoneConfig{{
+			Name:        "private.example",
+			Type:        "forward",
+			Forwarders:  []string{"192.0.2.11:53"},
+			ForwardMode: "only",
+		}},
+	}
+	if err := wireResolverForwarding(&resolverConfig, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if resolverConfig.Forwarders[0] != "8.8.8.8:53" ||
+		resolverConfig.ConditionalForwarders["corp.example."][0] != "192.0.2.10:53" ||
+		resolverConfig.ConditionalForwarders["private.example."][0] != "192.0.2.11:53" ||
+		resolverConfig.ForwardZoneModes["private.example."] != resolver.ForwardModeOnly {
+		t.Fatalf(
+			"resolver forwarding = global:%+v conditional:%+v modes=%v",
+			resolverConfig.Forwarders,
+			resolverConfig.ConditionalForwarders,
+			resolverConfig.ForwardZoneModes,
+		)
+	}
+}
+
+func TestConfiguredZonesDefersForwardZoneToResolver(t *testing.T) {
+	cfg := server.DefaultConfig()
+	cfg.UDPListeners = 1
+	srv, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	loaded, err := loadConfiguredZones(srv, []config.ZoneConfig{{
+		Name:       "private.example",
+		Type:       "forward",
+		Forwarders: []string{"192.0.2.11:53"},
+	}})
+	if err != nil || loaded != 0 {
+		t.Fatalf("loaded=%d error=%v, want forward zone deferred without error", loaded, err)
 	}
 }
 

@@ -21,8 +21,10 @@ server:
 
   # Recursive resolver configuration
   recursive:
-    # The current resolver is fully iterative from root hints; it does not use
-    # the host/ISP recursive resolver. Explicit forwarding modes are planned.
+    # direct: iterate from root hints and bypass ISP resolvers entirely
+    # first: try global forwarders below, then fall back to direct iteration
+    # only: use global forwarders exclusively and fail closed if unavailable
+    forward_mode: first
     workers: 100                 # Maximum concurrent distinct cache-miss lookups
     worker_queue_size: 1000      # Bounded waiting lookups; excess receives SERVFAIL
     query_timeout: 2s            # Timeout for each authoritative nameserver query

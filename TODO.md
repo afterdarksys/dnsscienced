@@ -130,7 +130,7 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   concurrency, queue size, cache size/shards, and Go memory/GC limits.
 - [x] Decide and document CPU-affinity support. Prefer service-manager/container
   affinity unless measurements justify per-worker OS-thread pinning.
-- [ ] Add explicit forwarding/upstream modes so operators can choose direct
+- [x] Add explicit forwarding/upstream modes so operators can choose direct
   iterative resolution, public recursive resolvers, or conditional forwarders
   without relying on ignored configuration.
 
