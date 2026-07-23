@@ -44,7 +44,8 @@ type Entry struct {
 	OrigTTL   uint32
 
 	// Statistics (atomic for lock-free updates)
-	Hits atomic.Uint64
+	Hits       atomic.Uint64
+	refreshing atomic.Bool
 
 	// DNSSEC validation status
 	DNSSECValidated bool
@@ -89,13 +90,13 @@ func (e *Entry) estimateSize() int64 {
 	size += int64(len(e.Data))
 
 	// Fixed-size fields
-	size += 8  // ExpiresAt (time.Time is 3 words on 64-bit)
-	size += 4  // OrigTTL
-	size += 8  // Hits (atomic.Uint64)
-	size += 1  // DNSSECValidated
-	size += 1  // DNSSECBogus
-	size += 2  // QType
-	size += 2  // QClass
+	size += 8 // ExpiresAt (time.Time is 3 words on 64-bit)
+	size += 4 // OrigTTL
+	size += 8 // Hits (atomic.Uint64)
+	size += 1 // DNSSECValidated
+	size += 1 // DNSSECBogus
+	size += 2 // QType
+	size += 2 // QClass
 
 	// String fields
 	size += int64(len(e.QName))
@@ -121,11 +122,11 @@ func (e *Entry) estimateSize() int64 {
 
 // shard represents a single cache shard with its own lock
 type shard struct {
-	mu          sync.RWMutex
-	entries     map[uint64]*Entry // Keyed by hash
-	maxSize     int
-	memoryUsed  atomic.Int64      // Current memory usage in bytes
-	maxMemory   int64             // Maximum memory per shard in bytes
+	mu         sync.RWMutex
+	entries    map[uint64]*Entry // Keyed by hash
+	maxSize    int
+	memoryUsed atomic.Int64 // Current memory usage in bytes
+	maxMemory  int64        // Maximum memory per shard in bytes
 }
 
 // ShardedCache implements a thread-safe, lock-contention-free cache
@@ -226,7 +227,7 @@ type Config struct {
 	// PrefetchMinTTLPct of its original TTL remaining. This keeps popular records
 	// perpetually fresh and reduces the re-query window that an attacker could race
 	// to inject a poisoned response. (Unbound prefetch: yes)
-	Prefetch         bool    `yaml:"prefetch"`
+	Prefetch          bool    `yaml:"prefetch"`
 	PrefetchMinTTLPct float64 `yaml:"prefetch_min_ttl_pct"` // default 0.1 (10%)
 
 	// RebindingProtection prevents public names from resolving to RFC-1918 / loopback
@@ -383,8 +384,12 @@ func (c *ShardedCache) Get(hash uint64) (*Entry, bool) {
 		if c.prefetch && c.prefetchFn != nil && entry.OrigTTL > 0 {
 			remaining := time.Until(entry.ExpiresAt)
 			total := time.Duration(entry.OrigTTL) * time.Second
-			if float64(remaining)/float64(total) < c.prefetchMinTTLPct {
-				go c.prefetchFn(entry.QName, entry.QType, entry.QClass)
+			if float64(remaining)/float64(total) < c.prefetchMinTTLPct &&
+				entry.refreshing.CompareAndSwap(false, true) {
+				go func() {
+					defer entry.refreshing.Store(false)
+					c.prefetchFn(entry.QName, entry.QType, entry.QClass)
+				}()
 			}
 		}
 	}

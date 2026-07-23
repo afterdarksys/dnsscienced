@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,15 @@ type liveTestServer struct {
 	NoopSrvAdapter
 	cache   *cache.ShardedCache
 	handler func(context.Context, *dns.Msg, net.Addr) (*dns.Msg, error)
+}
+
+type prefetchTestServer struct {
+	*liveTestServer
+	prefetch func(context.Context, string, uint16, uint16) error
+}
+
+func (s *prefetchTestServer) Prefetch(ctx context.Context, name string, qtype, qclass uint16) error {
+	return s.prefetch(ctx, name, qtype, qclass)
 }
 
 func (s *liveTestServer) GetShardedCache() *cache.ShardedCache { return s.cache }
@@ -85,7 +95,38 @@ func TestUnsupportedAdminOperationsReturnUnimplemented(t *testing.T) {
 	if _, err := newLiveControlMgr(srv, "test").Reload(context.Background(), []string{"zones"}); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("Reload status = %v, want Unimplemented", status.Code(err))
 	}
-	if _, err := newLiveCacheMgr(srv).Prefetch(context.Background(), []string{"example."}, []string{"A"}, 1); status.Code(err) != codes.Unimplemented {
-		t.Fatalf("Prefetch status = %v, want Unimplemented", status.Code(err))
+}
+
+func TestLiveCachePrefetchWarmsResolver(t *testing.T) {
+	var questions []dns.Question
+	var mu sync.Mutex
+	srv := &prefetchTestServer{liveTestServer: &liveTestServer{}, prefetch: func(_ context.Context, name string, qtype, qclass uint16) error {
+		mu.Lock()
+		questions = append(questions, dns.Question{Name: name, Qtype: qtype, Qclass: qclass})
+		mu.Unlock()
+		return nil
+	}}
+
+	outcome, err := newLiveCacheMgr(srv).Prefetch(
+		context.Background(),
+		[]string{"one.example", "two.example"},
+		[]string{"A", "INVALID"},
+		2,
+	)
+	if err != nil {
+		t.Fatalf("Prefetch: %v", err)
+	}
+	if outcome.Queued != 2 || len(outcome.Errors) != 2 {
+		t.Fatalf("Prefetch outcome = %#v, want 2 queued and 2 validation errors", outcome)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(questions) != 2 {
+		t.Fatalf("resolver questions = %v, want 2", questions)
+	}
+	for _, question := range questions {
+		if question.Qtype != dns.TypeA || question.Qclass != dns.ClassINET {
+			t.Fatalf("unexpected prefetch question: %#v", question)
+		}
 	}
 }

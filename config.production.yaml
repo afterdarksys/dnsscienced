@@ -30,12 +30,11 @@ server:
 
   # Recursive resolver configuration
   recursive:
-    upstreams:
-      - "8.8.8.8:53"
-      - "8.8.4.4:53"
-      - "1.1.1.1:53"
-    timeout: 2s
-    retries: 2
+    # Direct iterative resolution from root hints bypasses host/ISP resolvers.
+    workers: 100
+    worker_queue_size: 1000
+    query_timeout: 2s
+    max_iterations: 20
     enable_0x20: true
     enable_scrubbing: true
     qname_minimization: true     # QNAME minimization (RFC 7816 / RFC 9156)
@@ -57,6 +56,14 @@ server:
 
 # Zone file directory
 zones_dir: /opt/dnsscienced/zones
+
+# Recursive cache limits and proactive refresh
+cache:
+  max_entries: 100000
+  shard_count: 256
+  max_memory_mb: 512
+  prefetch: true
+  prefetch_min_ttl_pct: 0.1
 
 # Admin API
 admin:

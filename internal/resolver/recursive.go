@@ -18,6 +18,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/worker"
 	"github.com/miekg/dns"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -50,6 +51,10 @@ type Config struct {
 
 	// Worker pool for concurrent queries
 	Workers int `yaml:"workers"`
+
+	// WorkerQueueSize bounds distinct cache-miss lookups waiting for a worker.
+	// Requests are rejected with SERVFAIL when the queue is full.
+	WorkerQueueSize int `yaml:"worker_queue_size"`
 
 	// Query timeout
 	QueryTimeout time.Duration `yaml:"query_timeout"`
@@ -103,6 +108,9 @@ type Recursive struct {
 	cookies    *cookie.Manager
 	rrl        *rrl.Limiter
 	validator  *dnssec.Validator
+	lookups    singleflight.Group
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	cfg Config
 
@@ -157,6 +165,15 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.Workers == 0 {
 		cfg.Workers = 100
 	}
+	if cfg.Workers < 1 || cfg.Workers > 65536 {
+		return nil, fmt.Errorf("workers must be between 1 and 65536 (got %d)", cfg.Workers)
+	}
+	if cfg.WorkerQueueSize == 0 {
+		cfg.WorkerQueueSize = cfg.Workers * 10
+	}
+	if cfg.WorkerQueueSize < 1 || cfg.WorkerQueueSize > 1_000_000 {
+		return nil, fmt.Errorf("worker_queue_size must be between 1 and 1000000 (got %d)", cfg.WorkerQueueSize)
+	}
 
 	// Wire resolver feature flags into cache config (D-11: avoid duplication).
 	if cfg.ServeStale {
@@ -171,19 +188,28 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 		cfg.CacheConfig.AggressiveNSEC = true
 	}
 
+	resolverCtx, resolverCancel := context.WithCancel(context.Background())
 	r := &Recursive{
 		cache: cache.NewShardedCache(cfg.CacheConfig),
 		workerPool: worker.NewPool(worker.Config{
 			Workers:   cfg.Workers,
-			QueueSize: cfg.Workers * 10,
+			QueueSize: cfg.WorkerQueueSize,
 		}),
 		client: &dns.Client{
 			Timeout: cfg.QueryTimeout,
 			Net:     "udp",
 		},
-		cfg:   cfg,
-		roots: append([]string(nil), rootServers...),
+		cfg:    cfg,
+		roots:  append([]string(nil), rootServers...),
+		ctx:    resolverCtx,
+		cancel: resolverCancel,
 	}
+	initialized := false
+	defer func() {
+		if !initialized {
+			_ = r.Close()
+		}
+	}()
 
 	// Initialize cookies if enabled
 	if cfg.EnableCookies {
@@ -221,13 +247,14 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	// Register prefetch callback when prefetch is enabled.
 	if cfg.CacheConfig.Prefetch {
 		r.cache.SetPrefetchFunc(func(qname string, qtype, qclass uint16) {
-			msg := new(dns.Msg)
-			msg.SetQuestion(qname, qtype)
-			// Best-effort background refresh; errors are silently discarded.
-			_, _ = r.Resolve(context.Background(), msg, nil)
+			question := dns.Question{Name: dns.Fqdn(qname), Qtype: qtype, Qclass: qclass}
+			// Best-effort background refresh bypasses the still-live cache entry.
+			// The lookup group coalesces it with any concurrent miss or refresh.
+			_, _ = r.resolveCoalesced(context.Background(), question)
 		})
 	}
 
+	initialized = true
 	return r, nil
 }
 
@@ -237,6 +264,18 @@ func (r *Recursive) Query(ctx context.Context, name string, qtype uint16) (*dns.
 	msg := new(dns.Msg)
 	msg.SetQuestion(name, qtype)
 	return r.Resolve(ctx, msg, nil)
+}
+
+// Prefetch refreshes one question from the network even when a live cache entry
+// exists. Concurrent refreshes and ordinary misses for the same question share
+// one upstream lookup.
+func (r *Recursive) Prefetch(ctx context.Context, name string, qtype, qclass uint16) error {
+	_, err := r.resolveCoalesced(ctx, dns.Question{
+		Name:   dns.Fqdn(name),
+		Qtype:  qtype,
+		Qclass: qclass,
+	})
+	return err
 }
 
 // Resolve performs recursive resolution for a query
@@ -286,8 +325,9 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 		}
 	}
 
-	// 3. Cache miss — perform iterative resolution.
-	resp, err := r.resolveIterative(ctx, question.Name, question.Qtype, question.Qclass)
+	// 3. Cache miss — perform one shared iterative lookup per question. Each
+	// caller receives its own copy so request-specific IDs and flags never race.
+	resp, err := r.resolveCoalesced(ctx, question)
 	if err != nil {
 		// Upstream failure: attempt stale cache lookup before SERVFAIL (RFC 8767, D-07 bug 2).
 		if r.cfg.ServeStale {
@@ -318,10 +358,56 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 		return nil, err
 	}
 
-	resp.Id = q.Id
-	resp.Question = append(resp.Question[:0], q.Question...)
-	resp.RecursionDesired = q.RecursionDesired
-	resp.CheckingDisabled = q.CheckingDisabled
+	resp = resp.Copy()
+	applyRequestMetadata(resp, q)
+	return resp, nil
+}
+
+func (r *Recursive) resolveCoalesced(ctx context.Context, question dns.Question) (*dns.Msg, error) {
+	key := fmt.Sprintf("%s/%d/%d",
+		strings.ToLower(dns.Fqdn(question.Name)),
+		question.Qtype,
+		question.Qclass,
+	)
+	result := r.lookups.DoChan(key, func() (any, error) {
+		var response *dns.Msg
+		err := r.workerPool.TrySubmit(r.ctx, worker.JobFunc(func(jobCtx context.Context) error {
+			var resolveErr error
+			response, resolveErr = r.resolveFresh(jobCtx, question)
+			return resolveErr
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return response, nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case completed := <-result:
+		if completed.Err != nil {
+			return nil, completed.Err
+		}
+		response, ok := completed.Val.(*dns.Msg)
+		if !ok || response == nil {
+			return nil, errors.New("resolver worker returned no response")
+		}
+		return response, nil
+	}
+}
+
+func (r *Recursive) resolveFresh(ctx context.Context, question dns.Question) (*dns.Msg, error) {
+	resp, err := r.resolveIterative(ctx, question.Name, question.Qtype, question.Qclass)
+	if err != nil {
+		return nil, err
+	}
+
+	baseQuery := new(dns.Msg)
+	baseQuery.Question = []dns.Question{question}
+	cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)
+	resp.Id = 0
+	resp.Question = append(resp.Question[:0], question)
 	resp.RecursionAvailable = true
 
 	// RFC 1034 section 4.3.2: a recursive answer includes the alias chain and
@@ -330,17 +416,15 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	if err != nil {
 		return nil, err
 	}
-	resp.Id = q.Id
-	resp.Question = append(resp.Question[:0], q.Question...)
-	resp.RecursionDesired = q.RecursionDesired
-	resp.CheckingDisabled = q.CheckingDisabled
+	resp.Id = 0
+	resp.Question = append(resp.Question[:0], question)
 	resp.RecursionAvailable = true
 
 	// 4. DNS rebinding check: discard responses that map a public name to a
 	// private IP (Unbound private-address). Never cache or serve such responses.
 	if !r.cache.IsSafeResponse(resp, question.Name) {
 		m := new(dns.Msg)
-		m.SetRcode(q, dns.RcodeServerFailure)
+		m.SetRcode(baseQuery, dns.RcodeServerFailure)
 		return m, nil
 	}
 
@@ -353,7 +437,7 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 			// return SERVFAIL rather than serving the response as if it were valid.
 			// This prevents a transient validator failure from allowing bogus data through.
 			m := new(dns.Msg)
-			m.SetRcode(q, dns.RcodeServerFailure)
+			m.SetRcode(baseQuery, dns.RcodeServerFailure)
 			return m, nil
 		}
 		if result != nil {
@@ -399,6 +483,14 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	}
 
 	return resp, nil
+}
+
+func applyRequestMetadata(resp, q *dns.Msg) {
+	resp.Id = q.Id
+	resp.Question = append(resp.Question[:0], q.Question...)
+	resp.RecursionDesired = q.RecursionDesired
+	resp.CheckingDisabled = q.CheckingDisabled
+	resp.RecursionAvailable = true
 }
 
 // extractZoneFromResponse returns the zone name from the authority section of
@@ -793,6 +885,7 @@ func (r *Recursive) GetCache() *cache.ShardedCache {
 
 // Close stops the resolver
 func (r *Recursive) Close() error {
+	r.cancel()
 	r.cache.Close()
 	r.workerPool.Close()
 	if r.rrl != nil {

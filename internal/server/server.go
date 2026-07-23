@@ -577,6 +577,14 @@ func (s *Server) GetCache() *cache.ShardedCache {
 	return s.recursive.GetCache()
 }
 
+// Prefetch forces a recursive cache refresh for an admin-requested question.
+func (s *Server) Prefetch(ctx context.Context, name string, qtype, qclass uint16) error {
+	if s.recursive == nil {
+		return fmt.Errorf("recursive resolver is disabled")
+	}
+	return s.recursive.Prefetch(ctx, name, qtype, qclass)
+}
+
 // tsigSecretMap returns the TsigSecret map for dns.Server, or nil if no keys configured.
 func (s *Server) tsigSecretMap() map[string]string {
 	if s.tsigKeyRing == nil {

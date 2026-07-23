@@ -1,9 +1,55 @@
 package cache
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestPrefetchCoalescesConcurrentHits(t *testing.T) {
+	c := NewShardedCache(Config{
+		ShardCount:        1,
+		MaxEntries:        10,
+		Prefetch:          true,
+		PrefetchMinTTLPct: 0.1,
+	})
+	defer c.Close()
+
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c.SetPrefetchFunc(func(string, uint16, uint16) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+	})
+
+	const key = uint64(42)
+	c.Set(key, &Entry{
+		ExpiresAt: time.Now().Add(time.Second),
+		OrigTTL:   100,
+		QName:     "popular.example.",
+		QType:     1,
+		QClass:    1,
+	})
+
+	for range 100 {
+		if _, ok := c.Get(key); !ok {
+			t.Fatal("expected cache hit")
+		}
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("prefetch callback did not start")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("prefetch callbacks = %d, want 1 while refresh is in flight", got)
+	}
+	close(release)
+}
 
 func TestValidationModes(t *testing.T) {
 	// 1. Test Pass Mode

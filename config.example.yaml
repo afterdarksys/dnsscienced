@@ -13,14 +13,12 @@ server:
 
   # Recursive resolver configuration
   recursive:
-    # Upstream resolvers (fallback chain)
-    upstreams:
-      - "8.8.8.8:53"             # Google DNS primary
-      - "8.8.4.4:53"             # Google DNS secondary
-      - "1.1.1.1:53"             # Cloudflare DNS
-
-    timeout: 2s                  # Query timeout per upstream
-    retries: 2                   # Retries per upstream
+    # The current resolver is fully iterative from root hints; it does not use
+    # the host/ISP recursive resolver. Explicit forwarding modes are planned.
+    workers: 100                 # Maximum concurrent distinct cache-miss lookups
+    worker_queue_size: 1000      # Bounded waiting lookups; excess receives SERVFAIL
+    query_timeout: 2s            # Timeout for each authoritative nameserver query
+    max_iterations: 20           # Bound iterative/referral processing
 
     # Security features (cache poisoning resistance)
     enable_0x20: true            # 0x20 encoding (case randomization)
@@ -29,7 +27,6 @@ server:
     aggressive_nsec: true        # Aggressive NSEC caching (RFC 8198)
     serve_stale: true            # Serve stale on upstream failure (RFC 8767)
     stale_max_ttl: 24h           # Max stale record age (struct tag: stale_max_ttl, NOT stale_ttl)
-    validate_dnssec: true        # DNSSEC validation (requires defensive.dnssec.validation)
 
   # DNS Cookies (RFC 7873) - Off-path attack protection
   enable_cookies: true
@@ -559,7 +556,10 @@ experimental:
 # Cache Configuration
 cache:
   max_entries: 10000
+  shard_count: 256
   max_memory_mb: 256
+  prefetch: true
+  prefetch_min_ttl_pct: 0.1
   min_ttl: 0s
   max_ttl: 24h
   min_negative_ttl: 0s

@@ -9,7 +9,10 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/ports"
@@ -321,8 +324,88 @@ func (c *liveCacheMgr) Flush(_ context.Context, scope, domain, rtype string, inc
 	return &ports.FlushResult{Removed: int32(len(removals)), BytesFreed: bytesFreed, FlushedAtUnix: time.Now().Unix()}, nil
 }
 
-func (c *liveCacheMgr) Prefetch(_ context.Context, _, _ []string, _ int32) (*ports.PrefetchOutcome, error) {
-	return nil, status.Error(codes.Unimplemented, "cache prefetch is not wired to the live resolver")
+func (c *liveCacheMgr) Prefetch(ctx context.Context, names, types []string, priority int32) (*ports.PrefetchOutcome, error) {
+	prefetcher, ok := c.srv.(interface {
+		Prefetch(context.Context, string, uint16, uint16) error
+	})
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "live resolver does not support cache prefetch")
+	}
+	if len(names) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one name is required")
+	}
+	if len(types) == 0 {
+		types = []string{"A", "AAAA"}
+	}
+
+	concurrency := 8
+	switch priority {
+	case 0:
+		concurrency = 2
+	case 1:
+	case 2:
+		concurrency = 16
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "priority must be 0, 1, or 2 (got %d)", priority)
+	}
+
+	type task struct {
+		name  string
+		qtype uint16
+	}
+	tasks := make([]task, 0, len(names)*len(types))
+	outcome := &ports.PrefetchOutcome{}
+	for _, name := range names {
+		fqdn := dns.Fqdn(strings.TrimSpace(name))
+		if name == "" {
+			outcome.Errors = append(outcome.Errors, "empty DNS name")
+			continue
+		}
+		if _, ok := dns.IsDomainName(fqdn); !ok {
+			outcome.Errors = append(outcome.Errors, fmt.Sprintf("invalid DNS name %q", name))
+			continue
+		}
+		for _, typeName := range types {
+			typeCode, ok := dns.StringToType[strings.ToUpper(typeName)]
+			if !ok {
+				outcome.Errors = append(outcome.Errors, fmt.Sprintf("%s: unknown DNS type %q", fqdn, typeName))
+				continue
+			}
+			tasks = append(tasks, task{name: fqdn, qtype: typeCode})
+		}
+	}
+
+	var queued atomic.Int32
+	var wg sync.WaitGroup
+	var errorsMu sync.Mutex
+	sem := make(chan struct{}, concurrency)
+taskLoop:
+	for _, item := range tasks {
+		select {
+		case <-ctx.Done():
+			errorsMu.Lock()
+			outcome.Errors = append(outcome.Errors, ctx.Err().Error())
+			errorsMu.Unlock()
+			break taskLoop
+		case sem <- struct{}{}:
+			queued.Add(1)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				err := prefetcher.Prefetch(ctx, item.name, item.qtype, dns.ClassINET)
+				if err != nil {
+					errorsMu.Lock()
+					outcome.Errors = append(outcome.Errors, fmt.Sprintf("%s/%s: %v", item.name, dns.TypeToString[item.qtype], err))
+					errorsMu.Unlock()
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	outcome.Queued = queued.Load()
+	sort.Strings(outcome.Errors)
+	return outcome, nil
 }
 
 func (c *liveCacheMgr) Subscribe() chan *pb.CacheEvent {

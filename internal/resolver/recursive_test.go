@@ -10,6 +10,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/dnsscience/dnsscienced/internal/packet"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/miekg/dns"
 )
@@ -79,6 +80,20 @@ func TestNewRecursive_WithDefaults(t *testing.T) {
 	}
 	if r.cfg.Workers != 100 {
 		t.Errorf("Workers = %d, want 100", r.cfg.Workers)
+	}
+	if r.cfg.WorkerQueueSize != 1000 {
+		t.Errorf("WorkerQueueSize = %d, want 1000", r.cfg.WorkerQueueSize)
+	}
+}
+
+func TestNewRecursiveRejectsInvalidWorkerLimits(t *testing.T) {
+	for _, cfg := range []Config{
+		{Workers: -1},
+		{Workers: 1, WorkerQueueSize: -1},
+	} {
+		if _, err := NewRecursive(cfg); err == nil {
+			t.Fatalf("NewRecursive(%+v) succeeded, want validation error", cfg)
+		}
 	}
 }
 
@@ -444,14 +459,7 @@ func TestResolve_ContextCancellation(t *testing.T) {
 
 // Helper function that matches the one in recursive.go
 func hashQuery(name string, qtype, qclass uint16) uint64 {
-	// Simple hash for testing - matches packet.HashQuery
-	hash := uint64(0)
-	for _, c := range name {
-		hash = hash*31 + uint64(c)
-	}
-	hash = hash*31 + uint64(qtype)
-	hash = hash*31 + uint64(qclass)
-	return hash
+	return packet.HashQuery(name, qtype, qclass)
 }
 
 // Benchmark recursive resolver (end-to-end)
