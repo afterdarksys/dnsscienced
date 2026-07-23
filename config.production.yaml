@@ -8,6 +8,10 @@ server:
   # Enable modes
   enable_authoritative: true
   enable_recursive: true
+  # Never expose recursion publicly unless that is a deliberate service.
+  recursion_allowed_cidrs:
+    - "127.0.0.0/8"
+    - "::1/128"
 
   # Recursive resolver configuration
   recursive:
@@ -41,7 +45,9 @@ zones_dir: /opt/dnsscienced/zones
 
 # Admin API
 admin:
-  enabled: true
+  # Fail closed until tls_cert_file, tls_key_file, tls_client_cas, and at
+  # least one named api_key are provisioned by the deployment environment.
+  enabled: false
   listen: "0.0.0.0:9091"
 
 # Defensive DNS features

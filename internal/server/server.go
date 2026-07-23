@@ -15,6 +15,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
@@ -39,8 +40,9 @@ type Config struct {
 	UDPListeners int `yaml:"udp_listeners"`
 
 	// Enable recursive resolver
-	EnableRecursive bool            `yaml:"enable_recursive"`
-	RecursiveConfig resolver.Config `yaml:"recursive"`
+	EnableRecursive       bool            `yaml:"enable_recursive"`
+	RecursionAllowedCIDRs []string        `yaml:"recursion_allowed_cidrs"`
+	RecursiveConfig       resolver.Config `yaml:"recursive"`
 
 	// Enable authoritative server
 	EnableAuthoritative bool                  `yaml:"enable_authoritative"`
@@ -135,8 +137,11 @@ func DefaultConfig() Config {
 		TCPAddr:      ":53",
 		UDPListeners: runtime.NumCPU(),
 
-		EnableRecursive: true,
-		RecursiveConfig: rcfg,
+		// Recursion is opt-in. When enabled without an explicit ACL, New limits it
+		// to loopback clients so a default deployment cannot become an open resolver.
+		EnableRecursive:       false,
+		RecursionAllowedCIDRs: []string{"127.0.0.0/8", "::1/128"},
+		RecursiveConfig:       rcfg,
 
 		EnableAuthoritative: false,
 		Zones:               make(map[string]*zone.Zone),
@@ -170,12 +175,13 @@ type Server struct {
 	zonesMu sync.RWMutex
 
 	// Components
-	recursive    *resolver.Recursive
-	cookies      *cookie.Manager
-	rrl          *rrl.Limiter
-	defensive    *defensive.Manager
-	protective   *protective.Engine
-	firewall     *firewalld.Firewall
+	recursive        *resolver.Recursive
+	recursionACL     *engine.ACL
+	cookies          *cookie.Manager
+	rrl              *rrl.Limiter
+	defensive        *defensive.Manager
+	protective       *protective.Engine
+	firewall         *firewalld.Firewall
 	tsigKeyRing      *tsig.KeyRing
 	dsyncHandler     *dsync.Handler
 	dsyncNotifier    *dsync.DSYNCNotifier
@@ -218,6 +224,18 @@ func New(cfg Config) (*Server, error) {
 
 	// Initialize recursive resolver if enabled
 	if cfg.EnableRecursive {
+		allowedCIDRs := cfg.RecursionAllowedCIDRs
+		if len(allowedCIDRs) == 0 {
+			allowedCIDRs = []string{"127.0.0.0/8", "::1/128"}
+		}
+		s.recursionACL = engine.NewACL(false)
+		for _, cidr := range allowedCIDRs {
+			if err := s.recursionACL.AllowNet(cidr); err != nil {
+				cancel()
+				return nil, fmt.Errorf("recursion_allowed_cidrs %q: %w", cidr, err)
+			}
+		}
+
 		var err error
 		s.recursive, err = resolver.NewRecursive(cfg.RecursiveConfig)
 		if err != nil {
@@ -684,7 +702,8 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	defer pool.PutMessage(m)
 
 	m.SetReply(r)
-	m.RecursionAvailable = s.cfg.EnableRecursive
+	recursionAllowed := s.cfg.EnableRecursive && s.recursionACL != nil && clientIP != nil && s.recursionACL.IsAllowed(clientIP)
+	m.RecursionAvailable = recursionAllowed
 
 	// Apply compression controls
 	if s.defensive != nil {
@@ -893,6 +912,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Try recursive
 	if s.cfg.EnableRecursive && s.recursive != nil {
+		// RFC 1034 section 4.3.1: recursion is performed only when RD is set.
+		// Recursion is additionally restricted to the configured client ACL so
+		// binding :53 on a public interface cannot create an open resolver.
+		if !r.RecursionDesired || !recursionAllowed {
+			m.Rcode = dns.RcodeRefused
+			s.errors.Add(1)
+			emitQuery(m.Rcode, "")
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
 		resp, err := s.recursive.Resolve(s.ctx, r, clientIP)
 		if err != nil {
 			m.Rcode = dns.RcodeServerFailure

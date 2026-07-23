@@ -23,8 +23,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
 	"github.com/dnsscience/dnsscienced/internal/config"
@@ -101,6 +101,16 @@ func TestNew_NoAPIKeys(t *testing.T) {
 	if err == nil {
 		t.Fatal("New: expected error when APIKeys is empty, got nil")
 	}
+}
+
+func TestNew_ClientCAWithoutServerCertificateFailsClosed(t *testing.T) {
+	_, _, _, _, err := New(Config{
+		ListenAddr:   ":0",
+		TLSClientCAs: "/some/ca.pem",
+		APIKeys:      []config.APIKey{{ID: "k1", Secret: "s1"}},
+	}, Deps{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tls_cert_file")
 }
 
 // TestMTLS_NoCert verifies mTLS rejection when the client does not present a certificate.

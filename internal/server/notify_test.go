@@ -11,9 +11,10 @@ import (
 // It copies the message on WriteMsg so that the pool.PutMessage defer in handleDNS
 // does not reset the captured Rcode after the handler returns.
 type testResponseWriter struct {
-	rcode      int
-	written    bool
-	remoteAddr net.Addr
+	rcode              int
+	written            bool
+	recursionAvailable bool
+	remoteAddr         net.Addr
 }
 
 func newTestResponseWriter(ip string) *testResponseWriter {
@@ -22,9 +23,14 @@ func newTestResponseWriter(ip string) *testResponseWriter {
 	}
 }
 
-func (t *testResponseWriter) LocalAddr() net.Addr         { return &net.UDPAddr{} }
-func (t *testResponseWriter) RemoteAddr() net.Addr        { return t.remoteAddr }
-func (t *testResponseWriter) WriteMsg(m *dns.Msg) error   { t.rcode = m.Rcode; t.written = true; return nil }
+func (t *testResponseWriter) LocalAddr() net.Addr  { return &net.UDPAddr{} }
+func (t *testResponseWriter) RemoteAddr() net.Addr { return t.remoteAddr }
+func (t *testResponseWriter) WriteMsg(m *dns.Msg) error {
+	t.rcode = m.Rcode
+	t.recursionAvailable = m.RecursionAvailable
+	t.written = true
+	return nil
+}
 func (t *testResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (t *testResponseWriter) Close() error                { return nil }
 func (t *testResponseWriter) TsigStatus() error           { return nil }

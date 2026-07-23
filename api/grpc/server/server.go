@@ -21,11 +21,11 @@ import (
 )
 
 type Config struct {
-	ListenAddr   string           // e.g. ":8443"
+	ListenAddr   string // e.g. ":8443"
 	TLSCertFile  string
 	TLSKeyFile   string
-	TLSClientCAs string           // path to PEM CA bundle for mTLS; enables client cert verification
-	APIKeys      []config.APIKey  // named API keys per D-04; empty + no TLSClientCAs -> startup error
+	TLSClientCAs string          // path to PEM CA bundle for mTLS; enables client cert verification
+	APIKeys      []config.APIKey // named API keys per D-04; empty + no TLSClientCAs -> startup error
 }
 
 // buildCreds constructs gRPC transport credentials from cfg.
@@ -204,6 +204,9 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, *Con
 	if len(cfg.APIKeys) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("admin server requires at least one named API key in api_keys (D-01: both mTLS and key required)")
 	}
+	if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
+		return nil, nil, nil, nil, fmt.Errorf("admin server requires both tls_cert_file and tls_key_file when mTLS is enabled")
+	}
 
 	// Create connection registry and wire as stats handler (Plan 04).
 	registry := NewConnRegistry()
@@ -212,14 +215,12 @@ func New(cfg Config, deps Deps) (*grpc.Server, net.Listener, *ConnRegistry, *Con
 	var builtCreds credentials.TransportCredentials
 
 	// TLS config via buildCreds (mTLS-capable; supports RequireAndVerifyClientCert when TLSClientCAs is set)
-	if cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" {
-		creds, err := buildCreds(cfg)
-		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("tls: %w", err)
-		}
-		builtCreds = creds
-		opts = append(opts, grpc.Creds(creds))
+	creds, err := buildCreds(cfg)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("tls: %w", err)
 	}
+	builtCreds = creds
+	opts = append(opts, grpc.Creds(creds))
 
 	// Wire ConnRegistry as gRPC stats handler to track all admin connections.
 	opts = append(opts, grpc.StatsHandler(registry))

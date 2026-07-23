@@ -19,62 +19,88 @@ import (
 )
 
 func main() {
-cfgPath := flag.String("config", "", "Path to YAML config file")
-listen := flag.String("listen", "", "gRPC listen address (overrides config)")
-metricsListen := flag.String("metrics-listen", "", "Prometheus metrics listen address (overrides config)")
-apiKeys := flag.String("api-keys", "", "Comma-separated API keys (overrides config)")
-cert := flag.String("tls-cert", "", "TLS certificate file (overrides config)")
-key := flag.String("tls-key", "", "TLS private key file (overrides config)")
-flag.Parse()
+	cfgPath := flag.String("config", "", "Path to YAML config file")
+	listen := flag.String("listen", "", "gRPC listen address (overrides config)")
+	metricsListen := flag.String("metrics-listen", "", "Prometheus metrics listen address (overrides config)")
+	apiKeys := flag.String("api-keys", "", "Comma-separated API keys (overrides config)")
+	cert := flag.String("tls-cert", "", "TLS certificate file (overrides config)")
+	key := flag.String("tls-key", "", "TLS private key file (overrides config)")
+	clientCAs := flag.String("tls-client-cas", "", "Client CA bundle for mandatory mTLS (overrides config)")
+	flag.Parse()
 
-// Load config file if provided
-var fileCfg *ConfigFile
-if *cfgPath != "" {
-	c, err := LoadConfig(*cfgPath)
-	if err != nil { log.Fatalf("load config: %v", err) }
-	fileCfg = c
-}
-
-// Resolve effective settings (flags override config, then defaults)
-eListen := ":8443"
-eMetrics := ":9090"
-eAPIKeys := []config.APIKey{}
-eCert := ""
-eKey := ""
-if fileCfg != nil {
-	if fileCfg.Listen != "" { eListen = fileCfg.Listen }
-	if fileCfg.MetricsListen != "" { eMetrics = fileCfg.MetricsListen }
-	// ConfigFile.APIKeys are plain secrets; synthesize IDs as "key-N" for backwards compat
-	for i, secret := range fileCfg.APIKeys {
-		eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("key-%d", i+1), Secret: secret})
+	// Load config file if provided
+	var fileCfg *ConfigFile
+	if *cfgPath != "" {
+		c, err := LoadConfig(*cfgPath)
+		if err != nil {
+			log.Fatalf("load config: %v", err)
+		}
+		fileCfg = c
 	}
-	if fileCfg.TLSCert != "" { eCert = fileCfg.TLSCert }
-	if fileCfg.TLSKey != "" { eKey = fileCfg.TLSKey }
-}
-if *listen != "" { eListen = *listen }
-if *metricsListen != "" { eMetrics = *metricsListen }
-// Command-line api-keys flag: plain comma-separated secrets; synthesize IDs
-if *apiKeys != "" {
-	for i, secret := range strings.Split(*apiKeys, ",") {
-		if secret = strings.TrimSpace(secret); secret != "" {
-			eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("cli-%d", i+1), Secret: secret})
+
+	// Resolve effective settings (flags override config, then defaults)
+	eListen := ":8443"
+	eMetrics := ":9090"
+	eAPIKeys := []config.APIKey{}
+	eCert := ""
+	eKey := ""
+	eClientCAs := ""
+	if fileCfg != nil {
+		if fileCfg.Listen != "" {
+			eListen = fileCfg.Listen
+		}
+		if fileCfg.MetricsListen != "" {
+			eMetrics = fileCfg.MetricsListen
+		}
+		// ConfigFile.APIKeys are plain secrets; synthesize IDs as "key-N" for backwards compat
+		for i, secret := range fileCfg.APIKeys {
+			eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("key-%d", i+1), Secret: secret})
+		}
+		if fileCfg.TLSCert != "" {
+			eCert = fileCfg.TLSCert
+		}
+		if fileCfg.TLSKey != "" {
+			eKey = fileCfg.TLSKey
+		}
+		if fileCfg.TLSClientCAs != "" {
+			eClientCAs = fileCfg.TLSClientCAs
 		}
 	}
-}
-if *cert != "" { eCert = *cert }
-if *key != "" { eKey = *key }
+	if *listen != "" {
+		eListen = *listen
+	}
+	if *metricsListen != "" {
+		eMetrics = *metricsListen
+	}
+	// Command-line api-keys flag: plain comma-separated secrets; synthesize IDs
+	if *apiKeys != "" {
+		for i, secret := range strings.Split(*apiKeys, ",") {
+			if secret = strings.TrimSpace(secret); secret != "" {
+				eAPIKeys = append(eAPIKeys, config.APIKey{ID: fmt.Sprintf("cli-%d", i+1), Secret: secret})
+			}
+		}
+	}
+	if *cert != "" {
+		eCert = *cert
+	}
+	if *key != "" {
+		eKey = *key
+	}
+	if *clientCAs != "" {
+		eClientCAs = *clientCAs
+	}
 
 	// Start metrics HTTP server
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
-log.Printf("metrics listening on %s", eMetrics)
-if err := http.ListenAndServe(eMetrics, mux); err != nil {
+		log.Printf("metrics listening on %s", eMetrics)
+		if err := http.ListenAndServe(eMetrics, mux); err != nil {
 			log.Printf("metrics server error: %v", err)
 		}
 	}()
 
-cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, APIKeys: eAPIKeys}
+	cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, TLSClientCAs: eClientCAs, APIKeys: eAPIKeys}
 	deps := server.Deps{
 		Register: func(s *grpc.Server) {},
 		Unary:    []grpc.UnaryServerInterceptor{middleware.UnaryLoggingMetrics()},
@@ -90,7 +116,11 @@ cfg := server.Config{ListenAddr: eListen, TLSCertFile: eCert, TLSKeyFile: eKey, 
 	}
 
 	gs, ln, _, _, err := server.New(cfg, deps)
-	if err != nil { log.Fatalf("server: %v", err) }
+	if err != nil {
+		log.Fatalf("server: %v", err)
+	}
 	log.Printf("gRPC listening on %s", ln.Addr())
-	if err := gs.Serve(ln); err != nil { log.Fatalf("serve: %v", err) }
+	if err := gs.Serve(ln); err != nil {
+		log.Fatalf("serve: %v", err)
+	}
 }
