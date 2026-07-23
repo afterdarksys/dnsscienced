@@ -25,6 +25,24 @@ server:
     dnssec_cost: 4
     long_name_cost: 5
     edns_option_cost: 1
+  client_reputation:
+    enabled: true
+    base_qps: 500                 # Clean-client admission rate per source prefix
+    minimum_qps: 25               # Floor reached as reputation worsens
+    burst: 1000
+    max_entries: 65536            # Fixed upper bound; O(1) ring eviction
+    max_score: 100
+    decay_per_second: 1
+    protocol_penalty: 20
+    complexity_penalty: 40
+    policy_penalty: 2
+    rate_limit_penalty: 5
+    ipv4_prefix_len: 32
+    ipv6_prefix_len: 64
+    action: "drop"                # drop (recommended) or refused
+    exempt_cidrs:
+      - "127.0.0.0/8"
+      - "::1/128"
 
   # Enable modes
   enable_authoritative: true     # Enable authoritative server

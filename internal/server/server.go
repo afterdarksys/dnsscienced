@@ -23,6 +23,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/pool"
 	"github.com/dnsscience/dnsscienced/internal/primarynotify"
 	"github.com/dnsscience/dnsscienced/internal/protective"
+	"github.com/dnsscience/dnsscienced/internal/reputation"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/dnsscience/dnsscienced/internal/transport"
@@ -73,6 +74,10 @@ type Config struct {
 	// QueryComplexity rejects unusually expensive query combinations before
 	// authoritative, policy, or recursive work.
 	QueryComplexity QueryComplexityConfig `yaml:"query_complexity"`
+
+	// ClientReputation progressively reduces the admission rate for clients
+	// that send suspicious or policy-blocked traffic.
+	ClientReputation reputation.Config `yaml:"client_reputation"`
 
 	// Experimental IETF draft protocols
 	Experimental experimental.Config `yaml:"experimental"`
@@ -175,8 +180,9 @@ func DefaultConfig() Config {
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
 
-		Experimental:    experimental.DefaultConfig(),
-		QueryComplexity: defaultQueryComplexityConfig(),
+		Experimental:     experimental.DefaultConfig(),
+		QueryComplexity:  defaultQueryComplexityConfig(),
+		ClientReputation: reputation.DefaultConfig(),
 
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -202,6 +208,7 @@ type Server struct {
 	cookies          *cookie.Manager
 	rrl              *rrl.Limiter
 	defensive        *defensive.Manager
+	reputation       *reputation.Limiter
 	protective       *protective.Engine
 	firewall         *firewalld.Firewall
 	rpz              atomic.Pointer[engine.RPZAggregate]
@@ -257,6 +264,10 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	cfg.QueryComplexity = complexityConfig
+	clientReputation, err := reputation.New(cfg.ClientReputation)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -265,6 +276,7 @@ func New(cfg Config) (*Server, error) {
 		ctx:         ctx,
 		cancel:      cancel,
 		ixfrJournal: zone.NewJournal(100),
+		reputation:  clientReputation,
 	}
 
 	// Initialize recursive resolver if enabled
@@ -993,6 +1005,22 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	// Apply adaptive admission before allocating a pooled response or running
+	// policy/authoritative/recursive work. Control-plane opcodes are dispatched
+	// above and retain their dedicated authentication and rate limits.
+	if s.reputation != nil && !s.reputation.Allow(clientIP, time.Now()) {
+		if s.reputation.Action() == "refused" {
+			m := pool.GetMessage()
+			defer pool.PutMessage(m)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			s.errors.Add(1)
+			emitQuery(m.Rcode, "")
+			writeMsg(w, m) //nolint:errcheck
+		}
+		return
+	}
+
 	// Create response message
 	m := pool.GetMessage()
 	defer pool.PutMessage(m)
@@ -1010,6 +1038,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Validate query
 	if len(r.Question) != 1 {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeFormatError
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1017,6 +1046,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	if r.Opcode != dns.OpcodeQuery {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeNotImplemented
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1024,6 +1054,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	if r.Question[0].Qclass != dns.ClassINET {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeRefused
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
@@ -1036,6 +1067,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// with RCODE BADVERS and an OPT RR advertising our supported version (0),
 	// with no answer/authority/additional data beyond that OPT.
 	if reqOpt := r.IsEdns0(); reqOpt != nil && reqOpt.Version() > 0 {
+		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeBadVers
 		respOpt := &dns.OPT{
 			Hdr: dns.RR_Header{
@@ -1055,6 +1087,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	question := r.Question[0]
 	if s.cfg.QueryComplexity.Enabled &&
 		queryComplexityScore(r, s.cfg.QueryComplexity) > s.cfg.QueryComplexity.MaxScore {
+		s.observeClient(clientIP, reputation.SignalComplexity)
 		m.Rcode = dns.RcodeRefused
 		s.errors.Add(1)
 		s.complexityRejected.Add(1)
@@ -1073,6 +1106,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if s.protective != nil {
 		result, err := s.protective.CheckQuery(question.Name, clientIP)
 		if err == nil && result.Blocked {
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			// Domain is blocked - rewrite response
 			blockedResp := s.protective.RewriteResponse(r, result)
 
@@ -1098,8 +1132,10 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		d := s.firewall.Check(r, clientIP)
 		switch d.Verdict {
 		case firewalld.VerdictDrop:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			return
 		case firewalld.VerdictNXDomain, firewalld.VerdictRewrite:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			resp := s.firewall.Apply(r, d)
 			if resp != nil {
 				if s.shouldRateLimit(resp, clientIP) {
@@ -1114,6 +1150,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 		case firewalld.VerdictRedirect:
+			s.observeClient(clientIP, reputation.SignalPolicy)
 			resp := s.firewall.Redirect(r, d)
 			if s.shouldRateLimit(resp, clientIP) {
 				return
@@ -1129,6 +1166,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if matched, drop, rule := s.applyRPZ(r, m); matched {
+		s.observeClient(clientIP, reputation.SignalPolicy)
 		if drop {
 			return
 		}
@@ -1437,9 +1475,11 @@ func (s *Server) shouldRateLimit(m *dns.Msg, clientIP net.IP) bool {
 
 	switch action {
 	case rrl.ActionDrop:
+		s.observeClient(clientIP, reputation.SignalRateLimited)
 		return true // Drop response
 
 	case rrl.ActionSlip:
+		s.observeClient(clientIP, reputation.SignalRateLimited)
 		// Send truncated response (TC bit set)
 		m.Truncated = true
 		m.Answer = nil
@@ -1449,6 +1489,12 @@ func (s *Server) shouldRateLimit(m *dns.Msg, clientIP net.IP) bool {
 
 	default:
 		return false // Allow
+	}
+}
+
+func (s *Server) observeClient(clientIP net.IP, signal reputation.Signal) {
+	if s.reputation != nil {
+		s.reputation.Observe(clientIP, signal, time.Now())
 	}
 }
 
@@ -1463,6 +1509,8 @@ type Stats struct {
 	UDPQueries         uint64
 	TCPQueries         uint64
 	ComplexityRejected uint64
+
+	ClientReputation reputation.Stats
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1479,6 +1527,9 @@ func (s *Server) GetStats() Stats {
 		UDPQueries:         s.udpQueries.Load(),
 		TCPQueries:         s.tcpQueries.Load(),
 		ComplexityRejected: s.complexityRejected.Load(),
+	}
+	if s.reputation != nil {
+		stats.ClientReputation = s.reputation.Stats()
 	}
 
 	if s.recursive != nil {
