@@ -41,7 +41,7 @@ server:
   enable_rrl: true
   rrl:
     enabled: true
-    window: 1s
+    window: 1                   # seconds
     responses_per_second: 10
     errors_per_second: 5
     nxdomains_per_second: 5
@@ -97,7 +97,7 @@ zones:
 
     # DNSSEC signing for this zone
     dnssec_signing:
-      enabled: true
+      enabled: false            # Authoritative signing is not implemented yet
       algorithm: "ECDSAP256SHA256"
       ksk_lifetime: 8760h      # 1 year
       zsk_lifetime: 2160h      # 90 days
@@ -111,37 +111,15 @@ zones:
     allow_transfer:
       - "192.0.2.0/24"         # Allow AXFR from this network
       - "2001:db8::/32"
-    also_notify:
-      - "192.0.2.53:53"        # Send NOTIFY to these servers
+    # also_notify is reserved for future secondary notification support.
 
     # Security overrides (per-zone)
     enable_0x20: true          # Enable 0x20 for this zone
     enable_dnssec: true        # Enable DNSSEC validation
     enable_scrubbing: true     # Enable response scrubbing
 
-  # Secondary zone example
-  - name: "slave.example.com"
-    type: "secondary"
-    masters: internal-primaries  # Reference to masters{} block above
-    # Or inline masters:
-    # masters:
-    #   - "10.0.1.10:53"
-    #   - "10.0.1.11:53"
-    transfer_source: "10.0.0.5"  # Source IP for AXFR
-    refresh_interval: 3600s      # Override SOA refresh
-
-  # Forward zone example
-  - name: "partner.example.net"
-    type: "forward"
-    forwarders:
-      - "203.0.113.53:53"
-    forward_mode: "only"         # "only" or "first"
-
-  # Stub zone example
-  - name: "delegated.example.org"
-    type: "stub"
-    masters:
-      - "198.51.100.53:53"
+  # Secondary, forward, and stub zone roles are intentionally rejected at
+  # startup until their transfer/forwarding engines are implemented.
 
 # Defensive DNS Configuration
 # These features help handle broken clients, firewalls, and edge cases
@@ -580,14 +558,18 @@ experimental:
 
 # Cache Configuration
 cache:
-  enabled: true
-  max_size: 10000
-  ttl: 300
+  max_entries: 10000
+  max_memory_mb: 256
+  min_ttl: 0s
+  max_ttl: 24h
+  min_negative_ttl: 0s
+  max_negative_ttl: 1h
 
 # Logging
 logging:
   level: info
-  file: /opt/dnsscienced/logs/dnsscienced.log
+  format: json
+  output_path: /opt/dnsscienced/logs/dnsscienced.log
 
 # DNS Cookie Configuration (server.Config level)
 # Note: Additional cookie policies can be set in defensive.cookies above

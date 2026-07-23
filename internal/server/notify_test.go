@@ -114,6 +114,20 @@ func TestHandleDNSNotifyOpcode_Disabled(t *testing.T) {
 	}
 }
 
+func TestOrdinarySOANotifyIsNotAcceptedAsDSYNC(t *testing.T) {
+	cfg := Config{DSYNC: DSYNCConfig{Enabled: true, RateLimitPerMin: 300, Burst: 10}}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	w := newTestResponseWriter("1.2.3.4")
+	s.handleDNS(w, makeNotifyRequest(dns.TypeSOA))
+	if !w.written || w.rcode != dns.RcodeNotImplemented {
+		t.Fatalf("written=%v rcode=%d, want NOTIMPL", w.written, w.rcode)
+	}
+}
+
 // TestHandleDNSQuery_Unaffected verifies that a normal A query still goes through
 // the normal query processing path (opcode branch does not intercept OpcodeQuery=0).
 // With no recursive or authoritative configured, the server returns REFUSED.

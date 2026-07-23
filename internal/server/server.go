@@ -682,6 +682,23 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// RFC 9859: dispatch NOTIFY opcode before query processing.
 	// This must be FIRST — before pool.GetMessage, before defensive checks.
 	if r.Opcode == dns.OpcodeNotify {
+		if len(r.Question) != 1 {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeFormatError
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+		// RFC 9859 DSYNC notifications use CDS or CSYNC. Ordinary RFC 1996
+		// SOA NOTIFY belongs to secondary-zone refresh, which is not yet
+		// implemented; never route it through the DSYNC acceptance path.
+		if r.Question[0].Qtype != dns.TypeCDS && r.Question[0].Qtype != dns.TypeCSYNC {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeNotImplemented
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
 		// Guard against unknown transport types that leave clientIP nil.
 		// An unknown address type cannot be rate-limited or ACL-checked safely.
 		if clientIP == nil {

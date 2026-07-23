@@ -156,10 +156,7 @@ func main() {
 			cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(loadedCfg.Zones))
 			for _, zc := range loadedCfg.Zones {
 				// Ensure zone name is FQDN (trailing dot)
-				zoneName := zc.Name
-				if !strings.HasSuffix(zoneName, ".") {
-					zoneName += "."
-				}
+				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
 				cfg.ZoneTransferCIDRs[zoneName] = zc.AllowTransfer
 				allowFallback := true
 				if zc.AllowAXFRFallback != nil {
@@ -175,10 +172,7 @@ func main() {
 		if len(loadedCfg.Zones) > 0 {
 			cfg.ZoneUpdateCIDRs = make(map[string][]string, len(loadedCfg.Zones))
 			for _, zc := range loadedCfg.Zones {
-				zoneName := zc.Name
-				if !strings.HasSuffix(zoneName, ".") {
-					zoneName += "."
-				}
+				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
 				cfg.ZoneUpdateCIDRs[zoneName] = zc.AllowUpdate
 			}
 		}
@@ -189,10 +183,7 @@ func main() {
 			persistPaths := make(map[string]string)
 			for _, zc := range loadedCfg.Zones {
 				if zc.PersistUpdates != nil && *zc.PersistUpdates && zc.File != "" {
-					zoneName := zc.Name
-					if !strings.HasSuffix(zoneName, ".") {
-						zoneName += "."
-					}
+					zoneName := strings.ToLower(dns.Fqdn(zc.Name))
 					persistPaths[zoneName] = zc.File
 				}
 			}
@@ -282,6 +273,20 @@ func main() {
 		fmt.Println()
 	}
 
+	// Load explicit primary zone stanzas. Unsupported zone roles fail startup
+	// rather than being silently ignored while the daemon appears healthy.
+	if loadedCfg != nil && len(loadedCfg.Zones) > 0 {
+		zonesLoaded, err := loadConfiguredZones(srv, loadedCfg.Zones)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading configured zones: %v\n", err)
+			os.Exit(1)
+		}
+		if zonesLoaded > 0 {
+			srv.EnableAuthoritative()
+			fmt.Printf("Loaded %d configured primary zone(s)\n\n", zonesLoaded)
+		}
+	}
+
 	// Load zones from zones_dir if specified in config
 	if loadedCfg != nil && loadedCfg.ZonesDir != "" {
 		fmt.Printf("Loading zones from directory: %s\n", loadedCfg.ZonesDir)
@@ -328,7 +333,11 @@ func main() {
 		}
 
 		// Build a logger for admin middleware audit entries.
-		adminLogger, err := logging.NewLogger(logging.Config{Level: "info"})
+		logCfg := logging.DefaultConfig()
+		if loadedCfg != nil {
+			logCfg = loadedCfg.Logging
+		}
+		adminLogger, err := logging.NewLogger(logCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating admin logger: %v\n", err)
 			os.Exit(1)
@@ -424,8 +433,48 @@ sigloop:
 	}
 }
 
-// loadZonesFromDir scans a directory and loads all .dzc (compiled) zone files
-// Falls back to .dnszone (YAML) files if .dzc loading fails
+func loadConfiguredZones(srv *server.Server, zones []config.ZoneConfig) (int, error) {
+	loaded := 0
+	for _, zc := range zones {
+		kind := strings.ToLower(strings.TrimSpace(zc.Type))
+		if kind == "" {
+			kind = "primary"
+		}
+		if kind != "primary" {
+			return loaded, fmt.Errorf("zone %s: type %q is not implemented", zc.Name, kind)
+		}
+		if zc.File == "" {
+			return loaded, fmt.Errorf("zone %s: primary zone requires file", zc.Name)
+		}
+		if zc.DNSSECSigning != nil && zc.DNSSECSigning.Enabled {
+			return loaded, fmt.Errorf("zone %s: authoritative DNSSEC signing is not implemented", zc.Name)
+		}
+		if len(zc.AlsoNotify) > 0 {
+			return loaded, fmt.Errorf("zone %s: also_notify is not implemented", zc.Name)
+		}
+		z, err := zone.ParseZoneFile(zc.File, zone.DefaultConfig())
+		if err != nil {
+			return loaded, fmt.Errorf("zone %s: parse %s: %w", zc.Name, zc.File, err)
+		}
+		configuredOrigin := strings.ToLower(dns.Fqdn(zc.Name))
+		if strings.ToLower(z.Origin) != configuredOrigin {
+			return loaded, fmt.Errorf("zone %s: file declares origin %s", configuredOrigin, z.Origin)
+		}
+		if zc.VerifyZONEMD {
+			if err := zone.VerifyZONEMD(z); err != nil {
+				return loaded, fmt.Errorf("zone %s: %w", configuredOrigin, err)
+			}
+		}
+		if err := srv.AddZone(z); err != nil {
+			return loaded, fmt.Errorf("zone %s: %w", configuredOrigin, err)
+		}
+		loaded++
+	}
+	return loaded, nil
+}
+
+// loadZonesFromDir scans a directory for source and compiled zone files. A
+// source file is parsed even when no precompiled .dzc sibling exists.
 func loadZonesFromDir(srv *server.Server, dir string) (int, int) {
 	loaded := 0
 	failed := 0
@@ -437,49 +486,57 @@ func loadZonesFromDir(srv *server.Server, dir string) (int, int) {
 		return 0, 0
 	}
 
-	// Process all .dzc files
+	processed := make(map[string]bool)
+	// Prefer source files: ParseZoneFile automatically selects an up-to-date
+	// compiled sibling and otherwise parses the source.
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-
 		filename := entry.Name()
-		if !strings.HasSuffix(filename, ".dzc") {
+		ext := strings.ToLower(filepath.Ext(filename))
+		if ext != ".dnszone" && ext != ".zone" && ext != ".bind" {
 			continue
 		}
-
-		zonePath := filepath.Join(dir, filename)
-		zoneName := strings.TrimSuffix(filename, ".dzc")
-
-		// Try loading compiled zone
-		z, err := zone.LoadCompiledZone(zonePath)
-		if err != nil {
-			fmt.Printf("  Warning: Failed to load compiled zone %s: %v\n", filename, err)
-
-			// Try YAML failback
-			yamlPath := filepath.Join(dir, zoneName+".dnszone")
-			if _, statErr := os.Stat(yamlPath); statErr == nil {
-				fmt.Printf("  Attempting YAML failback for %s...\n", zoneName)
-				z, err = zone.ParseDNSZone(yamlPath, zone.DefaultConfig())
-				if err != nil {
-					fmt.Printf("  Error: YAML failback also failed for %s: %v\n", zoneName, err)
-					failed++
-					continue
-				}
-				fmt.Printf("  Success: Loaded %s from YAML failback\n", zoneName)
-			} else {
-				failed++
-				continue
-			}
+		base := strings.TrimSuffix(filename, filepath.Ext(filename))
+		if processed[base] {
+			continue
 		}
-
-		// Add zone to server
-		if err := srv.AddZone(z); err != nil {
-			fmt.Printf("  Error: Failed to add zone %s: %v\n", zoneName, err)
+		processed[base] = true
+		z, err := zone.ParseZoneFile(filepath.Join(dir, filename), zone.DefaultConfig())
+		if err != nil {
+			fmt.Printf("  Error: Failed to load zone %s: %v\n", filename, err)
 			failed++
 			continue
 		}
+		if err := srv.AddZone(z); err != nil {
+			fmt.Printf("  Error: Failed to add zone %s: %v\n", filename, err)
+			failed++
+			continue
+		}
+		loaded++
+	}
 
+	// Load compiled-only zones that had no source sibling.
+	for _, entry := range entries {
+		if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".dzc" {
+			continue
+		}
+		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		if processed[base] {
+			continue
+		}
+		z, err := zone.LoadCompiledZone(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			fmt.Printf("  Error: Failed to load compiled zone %s: %v\n", entry.Name(), err)
+			failed++
+			continue
+		}
+		if err := srv.AddZone(z); err != nil {
+			fmt.Printf("  Error: Failed to add zone %s: %v\n", entry.Name(), err)
+			failed++
+			continue
+		}
 		loaded++
 	}
 

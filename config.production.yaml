@@ -77,9 +77,6 @@ defensive:
   compression:
     enabled: true
 
-# ThreatScript Policy - Force AA bit for broken proxies (Bluecoat, etc.)
-policy_file: "/opt/dnsscienced/policies/force_aa.star"
-
 # Experimental features (all disabled by default)
 experimental:
   enabled: false

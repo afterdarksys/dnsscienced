@@ -6,7 +6,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
+	"github.com/dnsscience/dnsscienced/internal/experimental"
+	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	"github.com/dnsscience/dnsscienced/internal/logging"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"gopkg.in/yaml.v3"
@@ -16,6 +20,12 @@ import (
 type Config struct {
 	Server   server.Config   `yaml:"server"`
 	Resolver resolver.Config `yaml:"resolver"`
+	// Backward-compatible top-level aliases used by config.example.yaml. Load
+	// overlays these onto the corresponding live server configuration.
+	Cache        cache.Config        `yaml:"cache"`
+	Firewall     firewalld.Config    `yaml:"firewall"`
+	Experimental experimental.Config `yaml:"experimental"`
+	Logging      logging.Config      `yaml:"logging"`
 
 	// Zone loading configuration
 	ZonesDir string `yaml:"zones_dir"`
@@ -65,7 +75,7 @@ type APIKey struct {
 type AdminConfig struct {
 	Enabled      bool     `yaml:"enabled"`
 	Listen       string   `yaml:"listen"`
-	APIKeys      []APIKey `yaml:"api_keys"`    // named key structs per D-04
+	APIKeys      []APIKey `yaml:"api_keys"` // named key structs per D-04
 	TLSCertFile  string   `yaml:"tls_cert_file"`
 	TLSKeyFile   string   `yaml:"tls_key_file"`
 	TLSClientCAs string   `yaml:"tls_client_cas"` // path to PEM CA bundle for mTLS client verification
@@ -140,16 +150,16 @@ type ZoneConfig struct {
 // ZoneDNSSECConfig holds DNSSEC signing configuration for a zone
 type ZoneDNSSECConfig struct {
 	Enabled           bool          `yaml:"enabled"`
-	Algorithm         string        `yaml:"algorithm"`           // "ECDSAP256SHA256", "ECDSAP384SHA384", "RSASHA256", etc.
-	KSKSize           int           `yaml:"ksk_size,omitempty"`  // Key size for KSK (RSA only)
-	ZSKSize           int           `yaml:"zsk_size,omitempty"`  // Key size for ZSK (RSA only)
-	KSKLifetime       time.Duration `yaml:"ksk_lifetime"`        // KSK rotation interval
-	ZSKLifetime       time.Duration `yaml:"zsk_lifetime"`        // ZSK rotation interval
-	SignatureValidity time.Duration `yaml:"signature_validity"`  // How long signatures are valid
-	SignatureRefresh  time.Duration `yaml:"signature_refresh"`   // Re-sign before expiry
-	NSEC3             bool          `yaml:"nsec3"`               // Use NSEC3 instead of NSEC
-	NSEC3Iterations   uint16        `yaml:"nsec3_iterations"`    // NSEC3 iterations
-	NSEC3SaltLength   uint8         `yaml:"nsec3_salt_length"`   // NSEC3 salt length in bytes
+	Algorithm         string        `yaml:"algorithm"`          // "ECDSAP256SHA256", "ECDSAP384SHA384", "RSASHA256", etc.
+	KSKSize           int           `yaml:"ksk_size,omitempty"` // Key size for KSK (RSA only)
+	ZSKSize           int           `yaml:"zsk_size,omitempty"` // Key size for ZSK (RSA only)
+	KSKLifetime       time.Duration `yaml:"ksk_lifetime"`       // KSK rotation interval
+	ZSKLifetime       time.Duration `yaml:"zsk_lifetime"`       // ZSK rotation interval
+	SignatureValidity time.Duration `yaml:"signature_validity"` // How long signatures are valid
+	SignatureRefresh  time.Duration `yaml:"signature_refresh"`  // Re-sign before expiry
+	NSEC3             bool          `yaml:"nsec3"`              // Use NSEC3 instead of NSEC
+	NSEC3Iterations   uint16        `yaml:"nsec3_iterations"`   // NSEC3 iterations
+	NSEC3SaltLength   uint8         `yaml:"nsec3_salt_length"`  // NSEC3 salt length in bytes
 }
 
 // ZoneDSYNCConfig controls RFC 9859 generalized notifications for a zone.
@@ -322,7 +332,8 @@ func Load(filename string) (*Config, error) {
 	// Or we can populate defaults first.
 
 	cfg := &Config{
-		Server: server.DefaultConfig(),
+		Server:  server.DefaultConfig(),
+		Logging: logging.DefaultConfig(),
 		// resolver config doesn't have a global default func, usually part of server config.
 		// But in our structure, server.Config contains RecursiveConfig.
 		// Wait, server.Config ALREADY contains RecursiveConfig, CookieConfig, and RRLConfig.
@@ -344,6 +355,27 @@ func Load(filename string) (*Config, error) {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 
+	// Historical examples placed these sections at the top level while the
+	// daemon only read their nested server equivalents. Decode each present
+	// section onto the already-defaulted live configuration so omitted values
+	// retain secure defaults.
+	if err := overlayTopLevel(data, "resolver", &cfg.Server.RecursiveConfig); err != nil {
+		return nil, fmt.Errorf("parse resolver config: %w", err)
+	}
+	if err := overlayTopLevel(data, "cache", &cfg.Server.RecursiveConfig.CacheConfig); err != nil {
+		return nil, fmt.Errorf("parse cache config: %w", err)
+	}
+	cfg.Resolver = cfg.Server.RecursiveConfig
+	cfg.Cache = cfg.Server.RecursiveConfig.CacheConfig
+	if err := overlayTopLevel(data, "firewall", &cfg.Server.Firewall); err != nil {
+		return nil, fmt.Errorf("parse firewall config: %w", err)
+	}
+	cfg.Firewall = cfg.Server.Firewall
+	if err := overlayTopLevel(data, "experimental", &cfg.Server.Experimental); err != nil {
+		return nil, fmt.Errorf("parse experimental config: %w", err)
+	}
+	cfg.Experimental = cfg.Server.Experimental
+
 	// Post-processing
 	// 1. Parse RRL ExemptCIDRs into ExemptPrefixes
 	if len(cfg.Server.RRLConfig.ExemptCIDRs) > 0 {
@@ -357,4 +389,21 @@ func Load(filename string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func overlayTopLevel(data []byte, key string, target any) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	if len(document.Content) == 0 || len(document.Content[0].Content) == 0 {
+		return nil
+	}
+	mapping := document.Content[0]
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1].Decode(target)
+		}
+	}
+	return nil
 }

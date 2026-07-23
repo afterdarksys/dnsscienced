@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -363,4 +364,53 @@ func TestZoneConfigPointerFields(t *testing.T) {
 
 	// Zone 3: nil (use global)
 	assert.Nil(t, zones[2].Enable0x20)
+}
+
+func TestTopLevelRuntimeSectionsAreAppliedToServer(t *testing.T) {
+	yamlContent := `
+resolver:
+  enable_0x20: false
+  query_timeout: 3s
+cache:
+  max_entries: 42
+firewall:
+  enabled: true
+experimental:
+  enabled: true
+  doq:
+    enabled: true
+`
+	path := writeConfigForTest(t, yamlContent)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.Server.RecursiveConfig.Enable0x20)
+	assert.Equal(t, 3*time.Second, cfg.Server.RecursiveConfig.QueryTimeout)
+	assert.Equal(t, 42, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
+	assert.NotZero(t, cfg.Server.RecursiveConfig.CacheConfig.MaxTTL, "overlay must retain resolver defaults")
+	assert.True(t, cfg.Server.Firewall.Enabled)
+	assert.True(t, cfg.Server.Experimental.Enabled)
+	assert.True(t, cfg.Server.Experimental.DoQ.Enabled)
+}
+
+func writeConfigForTest(t *testing.T, content string) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "config-*.yaml")
+	require.NoError(t, err)
+	_, err = f.WriteString(content)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	return f.Name()
+}
+
+func TestDistributedExampleConfigsParse(t *testing.T) {
+	for _, name := range []string{"config.example.yaml", "config.production.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(filepath.Join("..", "..", name))
+			require.NoError(t, err)
+			if name == "config.example.yaml" {
+				assert.Equal(t, 10000, cfg.Server.RecursiveConfig.CacheConfig.MaxEntries)
+				assert.Equal(t, "json", cfg.Logging.Format)
+			}
+		})
+	}
 }
