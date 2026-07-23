@@ -91,7 +91,31 @@ to a destination catalog that is not configured remain inert until an operator
 configures that catalog and a complete acyclic ownership handoff is present.
 
 State is written atomically with mode `0600` and includes last-valid catalog
-records, member-zone records, and catalog ownership. Startup restores those
-zones before attempting refresh, so a temporary primary outage does not empty
-the authoritative service. Operator-configured primary and secondary names
-are reserved: a catalog clash is reported internally and cannot replace them.
+records, member-zone records, catalog ownership, and each catalog's last
+successful reconciliation timestamp. Startup restores those zones before
+attempting refresh, so a temporary primary outage does not empty the
+authoritative service. Operator-configured primary and secondary names are
+reserved: a catalog clash is reported internally and cannot replace them.
+
+## Observability
+
+The existing admin `GetServerStatus` RPC includes one
+`catalog:<catalog-name>` component per configured source. Its message reports
+the last accepted serial, member count, freshness, and the last transfer,
+validation, or reconciliation error. A catalog error makes that component and
+the aggregate server status unhealthy while the last-valid fleet remains
+served.
+
+Prometheus exports bounded-label catalog metrics:
+
+- `dnsscienced_catalog_serial`
+- `dnsscienced_catalog_members`
+- `dnsscienced_catalog_last_success_timestamp_seconds`
+- `dnsscienced_catalog_transfers_total{outcome}`
+- `dnsscienced_catalog_reconciles_total{outcome}`
+- `dnsscienced_catalog_reconcile_actions_total{action}`
+- `dnsscienced_catalog_reconcile_duration_seconds{outcome}`
+
+The `catalog` label is bounded by the configured 128-source limit. Outcome and
+action labels are fixed enums, so malformed input cannot create metric
+cardinality.

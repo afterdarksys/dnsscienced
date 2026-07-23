@@ -55,6 +55,12 @@ type ZoneStore interface {
 	GetZone(string) *zone.Zone
 }
 
+// TransferObserver is an optional ZoneStore capability used for operational
+// visibility. Transfer publication semantics do not depend on the observer.
+type TransferObserver interface {
+	ObserveTransfer(name string, err error)
+}
+
 // BatchChange describes one prepared secondary worker mutation.
 type BatchChange struct {
 	Name       string
@@ -210,6 +216,7 @@ func (m *Manager) Upsert(ctx context.Context, cfg Config, resetState bool) error
 		current = nil
 	}
 	replacement, err := m.fetcher.Fetch(ctx, candidate.cfg, current)
+	m.observeTransfer(candidate.cfg.Name, err)
 	if err != nil {
 		if !(candidate.cfg.RetainOnError && current != nil) {
 			return fmt.Errorf("secondary %s: transfer failed: %w", candidate.cfg.Name, err)
@@ -323,6 +330,7 @@ func (m *Manager) ApplyBatch(ctx context.Context, changes []BatchChange, publish
 			fetchCurrent = nil
 		}
 		replacement, err := m.fetcher.Fetch(ctx, item.candidate.cfg, fetchCurrent)
+		m.observeTransfer(item.candidate.cfg.Name, err)
 		if err != nil {
 			if !(item.candidate.cfg.RetainOnError && current != nil) {
 				return fmt.Errorf("secondary %s: transfer failed: %w", item.name, err)
@@ -472,10 +480,17 @@ func (m *Manager) refresh(ctx context.Context, managed *managedZone) error {
 	defer managed.opMu.Unlock()
 	current := m.store.GetZone(managed.cfg.Name)
 	replacement, err := m.fetcher.Fetch(ctx, managed.cfg, current)
+	m.observeTransfer(managed.cfg.Name, err)
 	if err != nil {
 		return fmt.Errorf("secondary %s: transfer failed: %w", managed.cfg.Name, err)
 	}
 	return m.publish(managed.cfg, replacement, false)
+}
+
+func (m *Manager) observeTransfer(name string, err error) {
+	if observer, ok := m.store.(TransferObserver); ok {
+		observer.ObserveTransfer(name, err)
+	}
 }
 
 func (m *Manager) publish(cfg Config, replacement *zone.Zone, force bool) error {

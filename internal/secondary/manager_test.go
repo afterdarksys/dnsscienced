@@ -13,8 +13,14 @@ import (
 )
 
 type memoryStore struct {
-	mu    sync.RWMutex
-	zones map[string]*zone.Zone
+	mu           sync.RWMutex
+	zones        map[string]*zone.Zone
+	observations []transferObservation
+}
+
+type transferObservation struct {
+	name string
+	err  error
 }
 
 func newMemoryStore() *memoryStore {
@@ -35,6 +41,12 @@ func (s *memoryStore) GetZone(name string) *zone.Zone {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.zones[name]
+}
+
+func (s *memoryStore) ObserveTransfer(name string, err error) {
+	s.mu.Lock()
+	s.observations = append(s.observations, transferObservation{name: name, err: err})
+	s.mu.Unlock()
 }
 
 type fakeFetcher struct {
@@ -337,6 +349,16 @@ func TestManagerApplyBatchPrepareFailureLeavesWorkersAndStoreUnchanged(t *testin
 	manager.mu.RUnlock()
 	if managedCount != 0 {
 		t.Fatalf("prepare failure activated %d workers", managedCount)
+	}
+	store.mu.RLock()
+	observations := append([]transferObservation(nil), store.observations...)
+	store.mu.RUnlock()
+	if len(observations) != 2 ||
+		observations[0].name != "alpha.test." ||
+		observations[0].err != nil ||
+		observations[1].name != "beta.test." ||
+		observations[1].err == nil {
+		t.Fatalf("transfer observations = %+v", observations)
 	}
 }
 

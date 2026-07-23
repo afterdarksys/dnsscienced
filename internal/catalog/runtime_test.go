@@ -11,7 +11,129 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/secondary"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+func TestRuntimeStatusAndMetricsRetainLastSuccessAfterFailure(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, _ := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	runtime.now = func() time.Time { return now }
+
+	successBefore := testutil.ToFloat64(
+		catalogReconcilesTotal.WithLabelValues("catalog.example.", "success"),
+	)
+	failureBefore := testutil.ToFloat64(
+		catalogReconcilesTotal.WithLabelValues("catalog.example.", "failure"),
+	)
+	addBefore := testutil.ToFloat64(
+		catalogReconcileActionsTotal.WithLabelValues("catalog.example.", string(ActionAdd)),
+	)
+
+	accepted := catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)
+	if err := runtime.AddZone(accepted); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+	statuses := runtime.Statuses()
+	if len(statuses) != 1 ||
+		statuses[0].Serial != accepted.SOA.Serial ||
+		statuses[0].Members != 1 ||
+		!statuses[0].LastSuccess.Equal(now) ||
+		statuses[0].LastError != "" {
+		t.Fatalf("status after success = %+v", statuses)
+	}
+	if got := testutil.ToFloat64(catalogSerial.WithLabelValues("catalog.example.")); got != float64(accepted.SOA.Serial) {
+		t.Fatalf("serial metric = %v", got)
+	}
+	if got := testutil.ToFloat64(catalogMembers.WithLabelValues("catalog.example.")); got != 1 {
+		t.Fatalf("member metric = %v", got)
+	}
+	if got := testutil.ToFloat64(catalogReconcilesTotal.WithLabelValues("catalog.example.", "success")); got != successBefore+1 {
+		t.Fatalf("success counter = %v, want %v", got, successBefore+1)
+	}
+	if got := testutil.ToFloat64(catalogReconcileActionsTotal.WithLabelValues("catalog.example.", string(ActionAdd))); got != addBefore+1 {
+		t.Fatalf("add action counter = %v, want %v", got, addBefore+1)
+	}
+
+	now = now.Add(time.Minute)
+	if err := runtime.AddZone(accepted); err == nil {
+		t.Fatal("stale catalog serial was accepted")
+	}
+	statuses = runtime.Statuses()
+	if statuses[0].Serial != accepted.SOA.Serial ||
+		statuses[0].Members != 1 ||
+		!statuses[0].LastSuccess.Equal(now.Add(-time.Minute)) ||
+		statuses[0].LastAttempt != now ||
+		statuses[0].LastError == "" {
+		t.Fatalf("status after failure = %+v", statuses[0])
+	}
+	if got := testutil.ToFloat64(catalogReconcilesTotal.WithLabelValues("catalog.example.", "failure")); got != failureBefore+1 {
+		t.Fatalf("failure counter = %v, want %v", got, failureBefore+1)
+	}
+}
+
+func TestRuntimeRestoresCatalogFreshness(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "catalog-state.json")
+	store := newRuntimeStore()
+	first, _ := newTestRuntime(t, store, statePath)
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	first.now = func() time.Time { return now }
+	if err := first.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+	)); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+
+	restored, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		statePath,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	statuses := restored.Statuses()
+	if len(statuses) != 1 || !statuses[0].LastSuccess.Equal(now) {
+		t.Fatalf("restored status = %+v", statuses)
+	}
+}
+
+func TestRuntimeObservesConfiguredCatalogTransferFailure(t *testing.T) {
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{runtimeSource("catalog.example.")},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	runtime.now = func() time.Time { return now }
+	before := testutil.ToFloat64(
+		catalogTransfersTotal.WithLabelValues("catalog.example.", "failure"),
+	)
+
+	runtime.ObserveTransfer("ordinary-secondary.example.", errors.New("ignored"))
+	runtime.ObserveTransfer("catalog.example.", errors.New("master timeout"))
+
+	statuses := runtime.Statuses()
+	if len(statuses) != 1 ||
+		statuses[0].LastAttempt != now ||
+		statuses[0].LastError != "catalog transfer: master timeout" {
+		t.Fatalf("status = %+v", statuses)
+	}
+	if got := testutil.ToFloat64(catalogTransfersTotal.WithLabelValues("catalog.example.", "failure")); got != before+1 {
+		t.Fatalf("transfer failure counter = %v, want %v", got, before+1)
+	}
+}
 
 type runtimeStore struct {
 	mu         sync.RWMutex

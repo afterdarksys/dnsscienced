@@ -75,8 +75,20 @@ type Runtime struct {
 	catalogZone map[string]*zone.Zone
 	ownership   map[string]Ownership
 	memberZone  map[string]*zone.Zone
+	acceptedAt  map[string]time.Time
 	budgets     map[string]*reconcileBudget
+	status      map[string]Status
 	now         func() time.Time
+}
+
+// Status is an immutable operator view of one configured catalog.
+type Status struct {
+	Name        string
+	Serial      uint32
+	Members     int
+	LastAttempt time.Time
+	LastSuccess time.Time
+	LastError   string
 }
 
 type reconcileBudget struct {
@@ -92,8 +104,9 @@ type diskState struct {
 }
 
 type persistedZone struct {
-	Origin  string   `json:"origin"`
-	Records []string `json:"records"`
+	Origin     string    `json:"origin"`
+	Records    []string  `json:"records"`
+	AcceptedAt time.Time `json:"accepted_at,omitempty"`
 }
 
 // NewRuntime loads and validates persisted state before restoring any member
@@ -121,7 +134,9 @@ func NewRuntime(
 		catalogZone: make(map[string]*zone.Zone),
 		ownership:   make(map[string]Ownership),
 		memberZone:  make(map[string]*zone.Zone),
+		acceptedAt:  make(map[string]time.Time),
 		budgets:     make(map[string]*reconcileBudget, len(sources)),
+		status:      make(map[string]Status, len(sources)),
 		now:         time.Now,
 	}
 	for _, source := range sources {
@@ -188,6 +203,10 @@ func NewRuntime(
 			tokens:     float64(source.ReconcileActionBurst),
 			lastRefill: r.now(),
 		}
+		r.status[source.Name] = Status{Name: source.Name}
+		catalogSerial.WithLabelValues(source.Name).Set(0)
+		catalogMembers.WithLabelValues(source.Name).Set(0)
+		catalogLastSuccessTimestamp.WithLabelValues(source.Name).Set(0)
 		r.order = append(r.order, source.Name)
 	}
 	r.reserved = normalizeNames(append(append([]string(nil), store.GetZoneNames()...), reservedZones...))
@@ -198,6 +217,18 @@ func NewRuntime(
 	for catalogName, accepted := range r.catalogs {
 		if err := r.validateMemberScope(catalogName, accepted); err != nil {
 			return nil, fmt.Errorf("catalog: persisted snapshot violates current limits: %w", err)
+		}
+		currentStatus := r.status[catalogName]
+		currentStatus.Serial = accepted.Serial
+		currentStatus.Members = len(accepted.Members)
+		currentStatus.LastSuccess = r.acceptedAt[catalogName]
+		r.status[catalogName] = currentStatus
+		catalogSerial.WithLabelValues(catalogName).Set(float64(accepted.Serial))
+		catalogMembers.WithLabelValues(catalogName).Set(float64(len(accepted.Members)))
+		if !currentStatus.LastSuccess.IsZero() {
+			catalogLastSuccessTimestamp.WithLabelValues(catalogName).Set(
+				float64(currentStatus.LastSuccess.Unix()),
+			)
 		}
 	}
 	if err := r.validateCatalogGraph(r.catalogs); err != nil {
@@ -310,11 +341,52 @@ func (r *Runtime) AddZone(z *zone.Zone) error {
 		return err
 	}
 
+	started := r.recordAttempt(name)
 	parsed, err := Parse(z)
 	if err != nil {
+		r.recordFailure(name, started, err)
 		return fmt.Errorf("catalog %s rejected; retaining last valid state: %w", name, err)
 	}
-	return r.reconcile(name, parsed, z)
+	actions, err := r.reconcile(name, parsed, z)
+	if err != nil {
+		r.recordFailure(name, started, err)
+		return err
+	}
+	r.recordSuccess(name, started, parsed, actions)
+	return nil
+}
+
+// Statuses returns a stable snapshot ordered by configured catalog precedence.
+func (r *Runtime) Statuses() []Status {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]Status, 0, len(r.order))
+	for _, name := range r.order {
+		result = append(result, r.status[name])
+	}
+	return result
+}
+
+// ObserveTransfer implements secondary.TransferObserver. Only configured
+// catalog-zone transfers are attributed here; member transfers are reflected in
+// their enclosing reconciliation outcome.
+func (r *Runtime) ObserveTransfer(name string, err error) {
+	name = normalizeName(name)
+	if _, configured := r.sources[name]; !configured {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+		now := r.now()
+		r.mu.Lock()
+		status := r.status[name]
+		status.LastAttempt = now
+		status.LastError = "catalog transfer: " + err.Error()
+		r.status[name] = status
+		r.mu.Unlock()
+	}
+	catalogTransfersTotal.WithLabelValues(name, outcome).Inc()
 }
 
 // GetZone implements secondary.ZoneStore without exposing catalog zones to the
@@ -330,14 +402,14 @@ func (r *Runtime) GetZone(name string) *zone.Zone {
 	return r.store.GetZone(name)
 }
 
-func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) error {
+func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) ([]Action, error) {
 	r.reconcileMu.Lock()
 	defer r.reconcileMu.Unlock()
 	if r.controller == nil {
-		return fmt.Errorf("catalog: secondary controller is not attached")
+		return nil, fmt.Errorf("catalog: secondary controller is not attached")
 	}
 	if err := r.validateMemberScope(name, accepted); err != nil {
-		return err
+		return nil, err
 	}
 
 	r.mu.RLock()
@@ -347,7 +419,7 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	ownership := cloneOwnership(r.ownership)
 	r.mu.RUnlock()
 	if current != nil && !zone.SerialGreater(accepted.Serial, current.Serial) {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"catalog %s serial %d does not advance last-valid serial %d",
 			name,
 			accepted.Serial,
@@ -356,15 +428,15 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	}
 	next[name] = accepted
 	if err := r.validateCatalogGraph(next); err != nil {
-		return err
+		return nil, err
 	}
 
 	actions, err := Plan(previous, next, ownership, r.order, r.reserved)
 	if err != nil {
-		return fmt.Errorf("catalog %s plan: %w", name, err)
+		return nil, fmt.Errorf("catalog %s plan: %w", name, err)
 	}
 	if len(actions) > r.sources[name].MaxReconcileActions {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"catalog %s reconciliation has %d actions; max_reconcile_actions is %d",
 			name,
 			len(actions),
@@ -379,7 +451,7 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 	}
 	if !r.takeReconcileBudget(name, actionCount) {
 		source := r.sources[name]
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"catalog %s reconciliation needs %d action tokens; budget is %d/minute with burst %d",
 			name,
 			actionCount,
@@ -404,11 +476,11 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 		switch action.Kind {
 		case ActionAdd, ActionReconfigure, ActionRecreate:
 			if !memberExists {
-				return fmt.Errorf("catalog: action %s has no member %s", action.Kind, action.Zone)
+				return nil, fmt.Errorf("catalog: action %s has no member %s", action.Kind, action.Zone)
 			}
 			cfg, err := r.memberConfig(action.Catalog, member)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			changes = append(changes, secondary.BatchChange{
 				Config:     cfg,
@@ -417,11 +489,11 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			finalOwnership[action.Zone] = Ownership{Catalog: action.Catalog, Label: action.Label}
 		case ActionTransferOwnership:
 			if !memberExists {
-				return fmt.Errorf("catalog: ownership transfer has no destination member %s", action.Zone)
+				return nil, fmt.Errorf("catalog: ownership transfer has no destination member %s", action.Zone)
 			}
 			cfg, err := r.memberConfig(action.Catalog, member)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			changes = append(changes, secondary.BatchChange{
 				Config:     cfg,
@@ -432,7 +504,7 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 			changes = append(changes, secondary.BatchChange{Name: action.Zone, Remove: true})
 			delete(finalOwnership, action.Zone)
 		default:
-			return fmt.Errorf("catalog: unsupported reconciliation action %q", action.Kind)
+			return nil, fmt.Errorf("catalog: unsupported reconciliation action %q", action.Kind)
 		}
 	}
 
@@ -444,10 +516,51 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("catalog %s reconciliation: %w", name, err)
+		return nil, fmt.Errorf("catalog %s reconciliation: %w", name, err)
 	}
 	committed = true
-	return nil
+	return actions, nil
+}
+
+func (r *Runtime) recordAttempt(name string) time.Time {
+	now := r.now()
+	r.mu.Lock()
+	status := r.status[name]
+	status.LastAttempt = now
+	r.status[name] = status
+	r.mu.Unlock()
+	return now
+}
+
+func (r *Runtime) recordFailure(name string, started time.Time, err error) {
+	r.mu.Lock()
+	status := r.status[name]
+	status.LastError = err.Error()
+	r.status[name] = status
+	r.mu.Unlock()
+	catalogReconcilesTotal.WithLabelValues(name, "failure").Inc()
+	catalogReconcileDuration.WithLabelValues(name, "failure").Observe(r.now().Sub(started).Seconds())
+}
+
+func (r *Runtime) recordSuccess(name string, started time.Time, accepted *Catalog, actions []Action) {
+	completed := r.now()
+	r.mu.Lock()
+	status := r.status[name]
+	status.Serial = accepted.Serial
+	status.Members = len(accepted.Members)
+	status.LastSuccess = completed
+	status.LastError = ""
+	r.status[name] = status
+	r.mu.Unlock()
+
+	catalogReconcilesTotal.WithLabelValues(name, "success").Inc()
+	catalogReconcileDuration.WithLabelValues(name, "success").Observe(completed.Sub(started).Seconds())
+	catalogSerial.WithLabelValues(name).Set(float64(accepted.Serial))
+	catalogMembers.WithLabelValues(name).Set(float64(len(accepted.Members)))
+	catalogLastSuccessTimestamp.WithLabelValues(name).Set(float64(completed.Unix()))
+	for _, action := range actions {
+		catalogReconcileActionsTotal.WithLabelValues(name, string(action.Kind)).Inc()
+	}
 }
 
 func (r *Runtime) takeReconcileBudget(name string, actions int) bool {
@@ -494,9 +607,12 @@ func (r *Runtime) commitReconciliation(
 	previousCatalogZones := r.catalogZone
 	previousOwnership := r.ownership
 	previousMembers := r.memberZone
+	previousAcceptedAt := r.acceptedAt
 
 	nextCatalogZones := cloneZoneMap(previousCatalogZones)
 	nextCatalogZones[name] = raw.Clone()
+	nextAcceptedAt := cloneTimes(previousAcceptedAt)
+	nextAcceptedAt[name] = r.now().UTC()
 	nextMembers := cloneZoneMap(previousMembers)
 	for _, member := range upserts {
 		if member == nil {
@@ -519,11 +635,13 @@ func (r *Runtime) commitReconciliation(
 	r.catalogZone = nextCatalogZones
 	r.ownership = cloneOwnership(finalOwnership)
 	r.memberZone = nextMembers
+	r.acceptedAt = nextAcceptedAt
 	if err := r.persistLocked(); err != nil {
 		r.catalogs = previousCatalogs
 		r.catalogZone = previousCatalogZones
 		r.ownership = previousOwnership
 		r.memberZone = previousMembers
+		r.acceptedAt = previousAcceptedAt
 		r.mu.Unlock()
 		return err
 	}
@@ -535,6 +653,7 @@ func (r *Runtime) commitReconciliation(
 		r.catalogZone = previousCatalogZones
 		r.ownership = previousOwnership
 		r.memberZone = previousMembers
+		r.acceptedAt = previousAcceptedAt
 		rollbackErr := r.persistLocked()
 		r.mu.Unlock()
 		if rollbackErr != nil {
@@ -675,6 +794,7 @@ func (r *Runtime) load() error {
 		if _, configured := r.sources[name]; configured {
 			r.catalogs[name] = parsed
 			r.catalogZone[name] = z
+			r.acceptedAt[name] = persisted.AcceptedAt
 		}
 	}
 	for name, owner := range state.Ownership {
@@ -710,7 +830,9 @@ func (r *Runtime) persistLocked() error {
 		Members:   make(map[string]persistedZone, len(r.memberZone)),
 	}
 	for name, z := range r.catalogZone {
-		state.Catalogs[name] = persistZone(z)
+		persisted := persistZone(z)
+		persisted.AcceptedAt = r.acceptedAt[name]
+		state.Catalogs[name] = persisted
 	}
 	for name, z := range r.memberZone {
 		if _, owned := r.ownership[name]; owned {
@@ -770,6 +892,14 @@ func persistZone(z *zone.Zone) persistedZone {
 		result.Records = append(result.Records, rr.String())
 	}
 	sort.Strings(result.Records)
+	return result
+}
+
+func cloneTimes(input map[string]time.Time) map[string]time.Time {
+	result := make(map[string]time.Time, len(input))
+	for name, value := range input {
+		result[name] = value
+	}
 	return result
 }
 

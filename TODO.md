@@ -214,7 +214,7 @@ fleet-scale policy, operations, interoperability, and producer support.
 - [ ] Provide dry-run and approval modes for mass deletion or replacement.
 - [ ] Add structured audit events for catalog receipt, validation, reconciliation,
   conflicts, migrations, and state resets.
-- [ ] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
+- [x] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
   members, reconcile outcomes, and transfer failures.
 - [ ] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.
