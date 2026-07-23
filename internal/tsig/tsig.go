@@ -69,6 +69,19 @@ func (kr *KeyRing) Generate(msg []byte, t *dns.TSIG) ([]byte, error) {
 }
 
 // Verify implements dns.TsigProvider with constant-time MAC comparison.
+//
+// Threats: an attacker submitting forged TSIG-signed queries/updates without
+// knowing the shared secret. The truncation-length policy check MUST run
+// before the MAC content comparison: RFC 8945 error codes (BADSIG vs
+// BADTRUNC) are distinguishable on the wire, so comparing content first would
+// let an attacker probe short (sub-minimum) guessed MACs and use the
+// BADSIG/BADTRUNC response difference as a byte-by-byte oracle — learning
+// each correct MAC byte in ~256 queries without ever needing the secret,
+// eventually forging a minimally-truncated MAC that passes verification.
+// Rejecting on length first means every sub-minimum guess gets the identical
+// ErrBadTruncation regardless of content, so no signal leaks below the
+// policy floor; only a guess that is already correct for the full minimum
+// length (>= 80 bits) reaches content comparison at all.
 func (kr *KeyRing) Verify(msg []byte, t *dns.TSIG) error {
 	want, err := kr.Generate(msg, t)
 	if err != nil {
@@ -81,15 +94,15 @@ func (kr *KeyRing) Verify(msg []byte, t *dns.TSIG) error {
 	if len(got) > len(want) {
 		return ErrMalformedMAC
 	}
-	if !hmac.Equal(want[:len(got)], got) {
-		return dns.ErrSig
-	}
 	minimum := len(want) / 2
 	if minimum < 10 {
 		minimum = 10
 	}
 	if len(got) < minimum {
 		return ErrBadTruncation
+	}
+	if !hmac.Equal(want[:len(got)], got) {
+		return dns.ErrSig
 	}
 	return nil
 }

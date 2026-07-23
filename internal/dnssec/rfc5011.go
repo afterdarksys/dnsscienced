@@ -234,17 +234,26 @@ func (m *rfc5011Manager) process(keys []dns.DNSKEY, signatures []dns.RRSIG) erro
 			revoked = true
 		}
 	}
-	// Revocation is immediate. Remove the key from the live validator before
-	// any state-file I/O or unrelated add-pending transition can fail.
+	// Threats: a process crash between the live anchor update and the disk
+	// write could silently revert a revocation on restart, re-trusting a
+	// key that was just proven revoked/compromised. Persisting first closes
+	// that crash window in the common case (persist succeeds, so any crash
+	// afterward reloads state that already reflects the revocation).
+	// Revocation must still take live effect even if persist fails — a
+	// revoked/compromised key must stop being trusted regardless of
+	// state-file I/O outcome — so publishAnchors runs unconditionally and
+	// any persist error is only surfaced afterward, never used to withhold
+	// the revocation itself.
 	if revoked {
+		persistErr := m.persist()
 		m.publishAnchors()
+		if persistErr != nil {
+			return persistErr
+		}
 	}
 	if len(validators) == 0 {
 		if !revoked {
 			return fmt.Errorf("DNSKEY RRset was not authenticated by a current trust anchor")
-		}
-		if err := m.persist(); err != nil {
-			return err
 		}
 		return nil
 	}

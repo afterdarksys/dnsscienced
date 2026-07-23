@@ -46,6 +46,69 @@ func TestKeyRingVerifyAcceptsRFC8945TruncationAndRejectsInvalidLengths(t *testin
 	}
 }
 
+// Threats: an attacker forging TSIG-signed queries/updates without knowing
+// the shared secret, by exploiting distinguishable BADSIG-vs-BADTRUNC
+// responses as a byte-by-byte oracle to learn a valid truncated MAC prefix.
+// This proves that submitting a MAC shorter than the RFC 8945 minimum
+// truncation length returns the identical error regardless of whether the
+// attacker's guessed bytes happen to be correct or wrong — no signal below
+// the policy floor, so the byte-by-byte forgery oracle described in
+// Verify's doc comment cannot be mounted.
+func TestKeyRingVerifyClosesSubMinimumTruncationOracle(t *testing.T) {
+	kr, err := NewKeyRing([]KeyConfig{{
+		Name:      "oracle.example.",
+		Algorithm: "hmac-sha256",
+		Secret:    generateTestSecret(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := []byte("authenticated DNS message")
+	record := &dns.TSIG{
+		Hdr:       dns.RR_Header{Name: "oracle.example."},
+		Algorithm: dns.HmacSHA256,
+	}
+	fullMAC, err := kr.Generate(message, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A correct-content guess below the minimum truncation length (15 bytes,
+	// one short of the 16-byte SHA-256 floor) must still be rejected as
+	// ErrBadTruncation, never accepted and never distinguished from a
+	// wrong-content guess by returning dns.ErrSig instead.
+	record.MAC = hex.EncodeToString(fullMAC[:15])
+	errCorrectPrefix := kr.Verify(message, record)
+	if !errors.Is(errCorrectPrefix, ErrBadTruncation) {
+		t.Fatalf("correct-prefix sub-minimum MAC error = %v, want ErrBadTruncation (oracle not closed)", errCorrectPrefix)
+	}
+
+	// A wrong-content guess of the same length must produce the exact same
+	// error — proving no distinguishable signal leaks below the policy
+	// floor regardless of whether the guessed bytes were right or wrong.
+	wrongPrefix := append([]byte(nil), fullMAC[:15]...)
+	wrongPrefix[14] ^= 0xFF
+	record.MAC = hex.EncodeToString(wrongPrefix)
+	errWrongPrefix := kr.Verify(message, record)
+	if !errors.Is(errWrongPrefix, ErrBadTruncation) {
+		t.Fatalf("wrong-prefix sub-minimum MAC error = %v, want ErrBadTruncation", errWrongPrefix)
+	}
+	if !errors.Is(errCorrectPrefix, errWrongPrefix) {
+		t.Fatalf("correct-prefix and wrong-prefix sub-minimum guesses returned different errors (%v vs %v) — oracle present", errCorrectPrefix, errWrongPrefix)
+	}
+
+	// A single guessed byte (far below minimum) must behave identically:
+	// always ErrBadTruncation, never leaking whether that byte was right.
+	record.MAC = hex.EncodeToString(fullMAC[:1])
+	if err := kr.Verify(message, record); !errors.Is(err, ErrBadTruncation) {
+		t.Fatalf("1-byte correct-prefix MAC error = %v, want ErrBadTruncation", err)
+	}
+	record.MAC = hex.EncodeToString([]byte{fullMAC[0] ^ 0xFF})
+	if err := kr.Verify(message, record); !errors.Is(err, ErrBadTruncation) {
+		t.Fatalf("1-byte wrong-prefix MAC error = %v, want ErrBadTruncation", err)
+	}
+}
+
 func generateTestSecret() string {
 	// 32 bytes for HMAC-SHA256
 	raw := []byte("0123456789abcdef0123456789abcdef")
