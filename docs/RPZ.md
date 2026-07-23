@@ -50,4 +50,7 @@ Supported actions are `nxdomain`, `nodata`, `passthru`, `drop`, and `rewrite`;
 `rewrite` also requires `target`.
 
 Current support is limited to QNAME triggers. Response-IP, client-IP,
-nameserver-name, and nameserver-IP triggers are not yet enforced.
+nameserver-name, and nameserver-IP triggers are not yet enforced. A policy file
+containing one of those recognized-but-unsupported trigger namespaces is
+rejected as a whole so operators cannot mistake a partially loaded policy for
+complete enforcement.

@@ -40,7 +40,6 @@ type RPZRegexRuleConfig struct {
 func (s *Server) ReloadRPZ(cfg RPZConfig) error {
 	if !cfg.Enabled {
 		s.rpz.Store(nil)
-		s.cfg.RPZ = cfg
 		return nil
 	}
 	if len(cfg.Zones) == 0 {
@@ -101,7 +100,6 @@ func (s *Server) ReloadRPZ(cfg RPZConfig) error {
 	}
 
 	s.rpz.Store(aggregate)
-	s.cfg.RPZ = cfg
 	return nil
 }
 
@@ -165,7 +163,7 @@ func (s *Server) applyRPZ(req, resp *dns.Msg) (matched bool, drop bool, rule *en
 		})
 	}
 	if req.IsEdns0() != nil {
-		ede.NewEDE(ede.InfoCodeFiltered, "Filtered by RPZ "+rule.Zone).AddToMessage(resp)
+		ede.EDEFiltered.AddToMessage(resp)
 	}
 	return true, false, rule
 }

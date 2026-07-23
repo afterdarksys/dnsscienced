@@ -1119,7 +1119,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			s.nxdomain.Add(1)
 		}
 		emitQuery(m.Rcode, rule.Zone)
-		w.WriteMsg(m) //nolint:errcheck
+		writeMsg(w, m) //nolint:errcheck
 		return
 	}
 

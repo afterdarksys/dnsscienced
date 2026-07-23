@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/dnsscience/dnsscienced/internal/ede"
@@ -32,6 +33,9 @@ func TestServerEnforcesAndReloadsRPZ(t *testing.T) {
 	edes := ede.GetEDEFromMessage(resp)
 	if len(edes) != 1 || edes[0].InfoCode != ede.InfoCodeFiltered {
 		t.Fatalf("EDEs = %+v, want one Filtered EDE", edes)
+	}
+	if edes[0].ExtraText != ede.EDEFiltered.ExtraText {
+		t.Fatalf("EDE text = %q, want privacy-safe generic text %q", edes[0].ExtraText, ede.EDEFiltered.ExtraText)
 	}
 
 	badConfig := RPZConfig{
@@ -116,6 +120,45 @@ func TestServerEnforcesRegexRPZ(t *testing.T) {
 	if stats := srv.GetRPZStats(); len(stats) != 1 || stats[0].RegexRules != 1 {
 		t.Fatalf("RPZ stats = %+v, want one regex rule", stats)
 	}
+}
+
+func TestRPZReloadConcurrentQueries(t *testing.T) {
+	blockPolicy := writeServerRPZFile(t, "blocked.example IN CNAME .")
+	allowPolicy := writeServerRPZFile(t, "other.example IN CNAME .")
+	srv, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Stop() //nolint:errcheck
+
+	configs := []RPZConfig{
+		{Enabled: true, Zones: []RPZZoneConfig{{Name: "block", File: blockPolicy}}},
+		{Enabled: true, Zones: []RPZZoneConfig{{Name: "allow", File: allowPolicy}}},
+		{},
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		req := new(dns.Msg)
+		req.SetQuestion("blocked.example.", dns.TypeA)
+		for range 200 {
+			resp := new(dns.Msg)
+			resp.SetReply(req)
+			srv.applyRPZ(req, resp)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := range 60 {
+			if err := srv.ReloadRPZ(configs[i%len(configs)]); err != nil {
+				t.Errorf("ReloadRPZ: %v", err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }
 
 func queryServer(t *testing.T, srv *Server, name string) *dns.Msg {

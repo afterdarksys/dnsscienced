@@ -26,6 +26,7 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 
 	rpz := NewRPZ(name)
 	ruleCount := 0
+	owners := make(map[string]struct{})
 	origin := strings.ToLower(dns.Fqdn(parsed.Origin))
 	for _, rr := range parsed.GetAllRecords() {
 		cname, ok := rr.(*dns.CNAME)
@@ -39,9 +40,16 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 		}
 		relative := strings.TrimSuffix(owner, origin)
 		relative = strings.TrimSuffix(relative, ".")
-		if relative == "" || isUnsupportedRPZTrigger(relative) {
+		if relative == "" {
 			continue
 		}
+		if isUnsupportedRPZTrigger(relative) {
+			return nil, fmt.Errorf("unsupported RPZ trigger %q", owner)
+		}
+		if _, duplicate := owners[owner]; duplicate {
+			return nil, fmt.Errorf("multiple CNAME policies for RPZ owner %q", owner)
+		}
+		owners[owner] = struct{}{}
 
 		wildcard := strings.HasPrefix(relative, "*.")
 		trigger := strings.TrimPrefix(relative, "*.")
@@ -63,7 +71,7 @@ func LoadRPZFile(name, filename, reason string) (*RPZ, error) {
 			rewriteTarget = target
 		}
 
-		rpz.addRule(trigger, action, rewriteTarget, reason, filename, wildcard)
+		rpz.addRule(trigger, action, rewriteTarget, reason, filename, wildcard, wildcard)
 		ruleCount++
 	}
 

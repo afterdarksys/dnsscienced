@@ -66,6 +66,41 @@ $TTL 60
 	}
 }
 
+func TestLoadRPZFileWildcardDoesNotMatchApex(t *testing.T) {
+	policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+$TTL 60
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+*.tracking.example.com IN CNAME .
+`)
+
+	policy, err := LoadRPZFile("security", policyFile, "")
+	if err != nil {
+		t.Fatalf("LoadRPZFile: %v", err)
+	}
+	if rule, action := policy.Check("tracking.example.com."); rule != nil || action != RPZActionNone {
+		t.Fatalf("wildcard matched apex: rule=%+v action=%v", rule, action)
+	}
+	if rule, action := policy.Check("host.tracking.example.com."); rule == nil || action != RPZActionNXDomain {
+		t.Fatalf("wildcard did not match descendant: rule=%+v action=%v", rule, action)
+	}
+}
+
+func TestLoadRPZFileRejectsUnsupportedTrigger(t *testing.T) {
+	policyFile := writeRPZFile(t, `
+$ORIGIN rpz.example.
+$TTL 60
+@ IN SOA localhost. hostmaster.localhost. 1 60 60 60 60
+@ IN NS localhost.
+24.0.2.0.192.rpz-ip IN CNAME .
+`)
+
+	if _, err := LoadRPZFile("security", policyFile, ""); err == nil {
+		t.Fatal("expected unsupported response-IP trigger to fail closed")
+	}
+}
+
 func writeRPZFile(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "rpz.example.bind")
