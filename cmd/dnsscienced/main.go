@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/server"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/miekg/dns"
 	"google.golang.org/grpc"
 )
 
@@ -37,6 +39,10 @@ type serverSrvAdapter struct {
 	s *server.Server
 }
 
+func (a *serverSrvAdapter) Live() bool { return true }
+func (a *serverSrvAdapter) HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error) {
+	return a.s.HandleDNS(ctx, req, remoteAddr)
+}
 func (a *serverSrvAdapter) GetZone(origin string) *zone.Zone { return a.s.GetZone(origin) }
 func (a *serverSrvAdapter) AddZone(z *zone.Zone) error       { return a.s.AddZone(z) }
 func (a *serverSrvAdapter) RemoveZone(origin string)         { a.s.RemoveZone(origin) }

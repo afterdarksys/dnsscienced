@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/dnsscience/dnsscienced/api/grpc/ports"
 	"github.com/dnsscience/dnsscienced/internal/zone"
@@ -317,8 +319,8 @@ func (m *LiveZoneManager) ReloadZone(_ context.Context, name string, _ bool) (*p
 
 // Notify and Transfer are not implemented for the live manager.
 func (m *LiveZoneManager) Notify(_ context.Context, name string, _ []string) (*ports.NotifyOutcome, error) {
-	return &ports.NotifyOutcome{Zone: name}, nil
+	return nil, status.Errorf(codes.Unimplemented, "secondary notification is not implemented for zone %s", name)
 }
 func (m *LiveZoneManager) Transfer(_ context.Context, name, _, _ string) (*ports.TransferOutcome, error) {
-	return &ports.TransferOutcome{Zone: name, Success: false, Error: "not implemented"}, nil
+	return nil, status.Errorf(codes.Unimplemented, "outbound zone transfer is not implemented for zone %s", name)
 }
