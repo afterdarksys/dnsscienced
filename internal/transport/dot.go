@@ -2,6 +2,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -16,14 +17,14 @@ import (
 // Handler is the interface for handling DNS messages.
 type Handler interface {
 	// HandleDNS processes a DNS query and returns a response.
-	HandleDNS(ctx context.Context, req *dns.Msg) (*dns.Msg, error)
+	HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error)
 }
 
 // HandlerFunc is an adapter to allow ordinary functions as DNS handlers.
-type HandlerFunc func(ctx context.Context, req *dns.Msg) (*dns.Msg, error)
+type HandlerFunc func(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error)
 
-func (f HandlerFunc) HandleDNS(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
-	return f(ctx, req)
+func (f HandlerFunc) HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error) {
+	return f(ctx, req, remoteAddr)
 }
 
 // DoTListener implements a DNS-over-TLS listener per RFC 7858.
@@ -33,21 +34,26 @@ type DoTListener struct {
 	config   *tls.Config
 	listener net.Listener
 	handler  Handler
+	timeout  time.Duration
 	running  bool
 	wg       sync.WaitGroup
 }
 
 // DoTConfig holds configuration for the DoT listener.
 type DoTConfig struct {
-	Address   string        // Listen address (default ":853")
+	Enabled   bool          `yaml:"enabled"`
+	Address   string        `yaml:"address"` // Listen address (default ":853")
 	TLSConfig *tls.Config   // TLS configuration
-	CertFile  string        // Path to TLS certificate (if TLSConfig not provided)
-	KeyFile   string        // Path to TLS private key (if TLSConfig not provided)
-	Timeout   time.Duration // Connection timeout
+	CertFile  string        `yaml:"cert_file"` // Path to TLS certificate (if TLSConfig not provided)
+	KeyFile   string        `yaml:"key_file"`  // Path to TLS private key (if TLSConfig not provided)
+	Timeout   time.Duration `yaml:"timeout"`   // Connection timeout
 }
 
 // NewDoTListener creates a new DNS-over-TLS listener.
 func NewDoTListener(cfg DoTConfig, handler Handler) (*DoTListener, error) {
+	if handler == nil {
+		return nil, fmt.Errorf("DNS handler is required")
+	}
 	if cfg.Address == "" {
 		cfg.Address = ":853"
 	}
@@ -70,11 +76,16 @@ func NewDoTListener(cfg DoTConfig, handler Handler) (*DoTListener, error) {
 	} else {
 		return nil, fmt.Errorf("TLS configuration required: provide TLSConfig or CertFile/KeyFile")
 	}
+	tlsConfig = tlsConfig.Clone()
+	if tlsConfig.MinVersion < tls.VersionTLS12 {
+		tlsConfig.MinVersion = tls.VersionTLS12
+	}
 
 	return &DoTListener{
 		addr:    cfg.Address,
 		config:  tlsConfig,
 		handler: handler,
+		timeout: cfg.Timeout,
 	}, nil
 }
 
@@ -149,7 +160,9 @@ func (l *DoTListener) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	// Set read deadline for the initial query
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(l.timeout)); err != nil {
+		return
+	}
 
 	for {
 		// Read DNS message length (2-byte prefix per RFC 7858)
@@ -176,8 +189,9 @@ func (l *DoTListener) handleConnection(conn net.Conn) {
 		}
 
 		// Handle the query
-		ctx := context.Background()
-		resp, err := l.handler.HandleDNS(ctx, req)
+		ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+		resp, err := l.handler.HandleDNS(ctx, req, conn.RemoteAddr())
+		cancel()
 		if err != nil {
 			// Send SERVFAIL
 			resp = new(dns.Msg)
@@ -193,10 +207,19 @@ func (l *DoTListener) handleConnection(conn net.Conn) {
 		// Write length prefix
 		respLen := len(respBytes)
 		header := []byte{byte(respLen >> 8), byte(respLen)}
-		conn.Write(header)
-		conn.Write(respBytes)
+		if err := conn.SetWriteDeadline(time.Now().Add(l.timeout)); err != nil {
+			return
+		}
+		if _, err := io.Copy(conn, io.MultiReader(
+			bytes.NewReader(header),
+			bytes.NewReader(respBytes),
+		)); err != nil {
+			return
+		}
 
 		// Reset deadline for next query
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(l.timeout)); err != nil {
+			return
+		}
 	}
 }

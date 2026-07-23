@@ -180,6 +180,39 @@ func TestGetRecords_Wildcard(t *testing.T) {
 	}
 }
 
+func TestGetRecords_WildcardDoesNotOverrideExistingName(t *testing.T) {
+	z := New("example.com.")
+	_ = z.AddRecord(&dns.A{Hdr: dns.RR_Header{Name: "*.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.ParseIP("192.0.2.1")})
+	_ = z.AddRecord(&dns.TXT{Hdr: dns.RR_Header{Name: "host.example.com.", Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 300}, Txt: []string{"exists"}})
+
+	if got := z.GetRecords("host.example.com.", dns.TypeA); len(got) != 0 {
+		t.Fatalf("wildcard synthesized at existing owner: %v", got)
+	}
+}
+
+func TestGetRecords_UsesOnlyClosestEncloserWildcard(t *testing.T) {
+	z := New("example.com.")
+	_ = z.AddRecord(&dns.A{Hdr: dns.RR_Header{Name: "*.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.ParseIP("192.0.2.1")})
+	_ = z.AddRecord(&dns.TXT{Hdr: dns.RR_Header{Name: "leaf.block.example.com.", Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 300}, Txt: []string{"creates empty non-terminal"}})
+
+	if got := z.GetRecords("x.block.example.com.", dns.TypeA); len(got) != 0 {
+		t.Fatalf("higher wildcard crossed closest encloser: %v", got)
+	}
+	if !z.HasName("block.example.com.") {
+		t.Fatal("empty non-terminal should exist")
+	}
+}
+
+func TestGetRecords_ANYReturnsAllExactRRSets(t *testing.T) {
+	z := New("example.com.")
+	_ = z.AddRecord(&dns.A{Hdr: dns.RR_Header{Name: "host.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.ParseIP("192.0.2.1")})
+	_ = z.AddRecord(&dns.TXT{Hdr: dns.RR_Header{Name: "host.example.com.", Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 300}, Txt: []string{"value"}})
+
+	if got := z.GetRecords("host.example.com.", dns.TypeANY); len(got) != 2 {
+		t.Fatalf("ANY record count=%d, want 2", len(got))
+	}
+}
+
 func TestGetRecords_AutoFQDN(t *testing.T) {
 	z := New("example.com")
 

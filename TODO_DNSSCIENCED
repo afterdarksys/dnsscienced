@@ -16,7 +16,7 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
 ## Phase 1: Basic Integration
 
 ### dnsscienced Side
-- [ ] Extend CacheEntry message in `api/grpc/proto/common.proto` with threat metadata:
+- [x] Extend CacheEntry message in `api/grpc/proto/common.proto` with threat metadata:
   - `int32 threat_score` (0-100)
   - `repeated string categories` (malware, phishing, c2, botnet, etc.)
   - `string reputation` (benign, suspicious, malicious, unknown)
@@ -24,14 +24,14 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
   - `google.protobuf.Timestamp last_seen`
   - `string threat_source` (feed name/provider)
 
-- [ ] Regenerate protobuf code: `make proto` or `protoc --go_out=. --go-grpc_out=. api/grpc/proto/*.proto`
+- [x] Regenerate protobuf code: `make proto` or `protoc --go_out=. --go-grpc_out=. api/grpc/proto/*.proto`
 
-- [ ] Create `internal/cache/enrichment.go` for threat scoring logic
+- [x] Create `internal/cache/enrichment.go` for threat scoring logic
   - Simple reputation lookup from threat feeds
   - Domain categorization (match against known malware/phishing lists)
   - IP reputation checks
 
-- [ ] Update cache manager to populate threat metadata when storing entries
+- [x] Update cache manager to populate threat metadata when storing entries
   - Hook into `Store()` method in cache implementation
   - Query threat intelligence sources during cache population
 
@@ -59,14 +59,15 @@ Client → ads-httpproxy → dnsscienced gRPC CacheService → Decision
 ## Phase 2: Streaming Intelligence
 
 ### dnsscienced Side
-- [ ] Implement `WatchCache()` RPC in `api/grpc/services/cache.go:48`
-  - Create event channel for cache operations (STORE, EVICT, HIT, MISS)
-  - Filter events by domain pattern and event types
-  - Stream CacheEvent messages to subscribers
+- [ ] Complete `WatchCache()` RPC in `api/grpc/services/cache.go`
+  - [x] Create the subscription channel and streaming lifecycle
+  - [x] Filter events by requested event type
+  - [ ] Filter events by the requested domain pattern
+  - [ ] Emit HIT, MISS, and EVICT events in addition to STORE
 
-- [ ] Add cache event publisher to cache manager
-  - Publish events on cache mutations
-  - Include threat metadata in STORE events
+- [ ] Complete the cache event publisher integration
+  - [x] Publish STORE events with threat metadata
+  - [ ] Publish the remaining cache mutation/access events
 
 ### ads-httpproxy Side
 - [ ] Subscribe to `WatchCache()` stream for real-time threat updates

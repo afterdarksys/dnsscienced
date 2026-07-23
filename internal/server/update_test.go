@@ -76,6 +76,73 @@ func makeAddRR(owner, ip string) dns.RR {
 	}
 }
 
+func TestHandleUpdate_PrereqValueRequiresExactRRSet(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithUpdate: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	add := []dns.RR{
+		makeAddRR("multi.example.com.", "198.51.100.1"),
+		makeAddRR("multi.example.com.", "198.51.100.2"),
+	}
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, makeUpdateMsg("example.com.", nil, add), net.ParseIP("192.0.2.1"))
+
+	prereq := makeAddRR("multi.example.com.", "198.51.100.1")
+	prereq.Header().Ttl = 0
+	w2 := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w2, makeUpdateMsg("example.com.", []dns.RR{prereq}, nil), net.ParseIP("192.0.2.1"))
+	if len(w2.msgs) == 0 || w2.msgs[0].Rcode != dns.RcodeNXRrset {
+		t.Fatalf("response=%v, want NXRRSET for subset prerequisite", w2.msgs)
+	}
+}
+
+func TestHandleUpdate_DuplicateAdditionIsIgnored(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithUpdate: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+
+	rr := makeAddRR("duplicate.example.com.", "198.51.100.3")
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, makeUpdateMsg("example.com.", nil, []dns.RR{rr, dns.Copy(rr)}), net.ParseIP("192.0.2.1"))
+	got := s.cfg.Zones["example.com."].ExactRecords("duplicate.example.com.", dns.TypeA)
+	if len(got) != 1 {
+		t.Fatalf("duplicate RR count=%d, want 1", len(got))
+	}
+}
+
+func TestHandleUpdate_RejectsMalformedZoneSection(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithUpdate: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+	r := makeUpdateMsg("example.com.", nil, nil)
+	r.Question[0].Qtype = dns.TypeA
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, r, net.ParseIP("192.0.2.1"))
+	if len(w.msgs) == 0 || w.msgs[0].Rcode != dns.RcodeFormatError {
+		t.Fatalf("response=%v, want FORMERR", w.msgs)
+	}
+}
+
+func TestHandleUpdate_ResponseCarriesTSIG(t *testing.T) {
+	s, err := testServerWithUpdate([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("testServerWithUpdate: %v", err)
+	}
+	defer s.Stop() //nolint:errcheck
+	w := newAXFRTestWriter("192.0.2.1")
+	s.handleUpdate(w, makeUpdateMsg("example.com.", nil, nil), net.ParseIP("192.0.2.1"))
+	if len(w.msgs) == 0 || w.msgs[0].IsTsig() == nil {
+		t.Fatalf("response=%v, want TSIG-authenticated response", w.msgs)
+	}
+}
+
 // makeDeleteRR creates an RR for the Update section to delete a specific record (ClassNONE).
 func makeDeleteRR(owner, ip string) dns.RR {
 	return &dns.A{
@@ -740,7 +807,7 @@ func TestHandleUpdate_Prereq_RRSetExistsValue_Pass(t *testing.T) {
 			Name:   "www.example.com.",
 			Rrtype: dns.TypeA,
 			Class:  dns.ClassINET, // zone class = value-match prereq
-			Ttl:    300,
+			Ttl:    0,
 		},
 		A: net.ParseIP("198.51.100.1"),
 	}

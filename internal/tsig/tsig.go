@@ -3,8 +3,13 @@
 package tsig
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"strings"
 	"sync"
 
@@ -16,6 +21,54 @@ var supportedAlgorithms = map[string]bool{
 	dns.HmacSHA256: true,
 	dns.HmacSHA384: true,
 	dns.HmacSHA512: true,
+}
+
+// Generate implements dns.TsigProvider. The key lookup and copy occur under
+// the ring's read lock, so runtime key rotation cannot race request signing.
+func (kr *KeyRing) Generate(msg []byte, t *dns.TSIG) ([]byte, error) {
+	if kr == nil {
+		return nil, dns.ErrSecret
+	}
+	name := dns.Fqdn(strings.ToLower(t.Hdr.Name))
+	kr.mu.RLock()
+	entry, ok := kr.keys[name]
+	kr.mu.RUnlock()
+	if !ok {
+		return nil, dns.ErrSecret
+	}
+	rawSecret, err := base64.StdEncoding.DecodeString(entry.secret)
+	if err != nil {
+		return nil, err
+	}
+	var mac hash.Hash
+	switch dns.CanonicalName(t.Algorithm) {
+	case dns.HmacSHA256:
+		mac = hmac.New(sha256.New, rawSecret)
+	case dns.HmacSHA384:
+		mac = hmac.New(sha512.New384, rawSecret)
+	case dns.HmacSHA512:
+		mac = hmac.New(sha512.New, rawSecret)
+	default:
+		return nil, dns.ErrKeyAlg
+	}
+	_, _ = mac.Write(msg)
+	return mac.Sum(nil), nil
+}
+
+// Verify implements dns.TsigProvider with constant-time MAC comparison.
+func (kr *KeyRing) Verify(msg []byte, t *dns.TSIG) error {
+	want, err := kr.Generate(msg, t)
+	if err != nil {
+		return err
+	}
+	got, err := hex.DecodeString(t.MAC)
+	if err != nil {
+		return err
+	}
+	if !hmac.Equal(want, got) {
+		return dns.ErrSig
+	}
+	return nil
 }
 
 // KeyConfig holds configuration for a single TSIG key.
@@ -92,14 +145,19 @@ func (kr *KeyRing) Algorithm(name string) (string, bool) {
 	return e.algorithm, true
 }
 
-// TsigSecretMap returns the internal secrets map. This is the SAME map reference
-// that should be assigned to dns.Server.TsigSecret — mutations via Add/Remove
-// are visible to the dns.Server on the next request.
+// TsigSecretMap returns a snapshot for legacy callers. Live DNS servers should
+// use KeyRing directly as dns.TsigProvider so runtime mutation remains synchronized.
 func (kr *KeyRing) TsigSecretMap() map[string]string {
 	if kr == nil {
 		return nil
 	}
-	return kr.secrets
+	kr.mu.RLock()
+	defer kr.mu.RUnlock()
+	result := make(map[string]string, len(kr.secrets))
+	for name, secret := range kr.secrets {
+		result[name] = secret
+	}
+	return result
 }
 
 // Names returns all key names in the ring.
@@ -128,7 +186,7 @@ func (kr *KeyRing) Len() int {
 
 // Add inserts a new TSIG key into the ring at runtime.
 // Returns an error if the key name already exists, algorithm is invalid, or secret is malformed.
-// The change is immediately visible to dns.Server via the shared secrets map.
+// The change is immediately visible to dns.Server through KeyRing's TsigProvider implementation.
 func (kr *KeyRing) Add(cfg KeyConfig) error {
 	if err := ValidateAlgorithm(cfg.Algorithm); err != nil {
 		return err

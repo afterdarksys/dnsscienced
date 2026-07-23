@@ -5,9 +5,28 @@ server:
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4
 
+  # Encrypted DNS listeners are opt-in and require a certificate/key pair.
+  doh:
+    enabled: false
+    address: "0.0.0.0:443"
+    path: "/dns-query"
+    cert_file: "/run/secrets/dns_tls_cert.pem"
+    key_file: "/run/secrets/dns_tls_key.pem"
+    timeout: 5s
+  dot:
+    enabled: false
+    address: "0.0.0.0:853"
+    cert_file: "/run/secrets/dns_tls_cert.pem"
+    key_file: "/run/secrets/dns_tls_key.pem"
+    timeout: 5s
+
   # Enable modes
   enable_authoritative: true
   enable_recursive: true
+  # Never expose recursion publicly unless that is a deliberate service.
+  recursion_allowed_cidrs:
+    - "127.0.0.0/8"
+    - "::1/128"
 
   # Recursive resolver configuration
   recursive:
@@ -41,7 +60,9 @@ zones_dir: /opt/dnsscienced/zones
 
 # Admin API
 admin:
-  enabled: true
+  # Fail closed until tls_cert_file, tls_key_file, tls_client_cas, and at
+  # least one named api_key are provisioned by the deployment environment.
+  enabled: false
   listen: "0.0.0.0:9091"
 
 # Defensive DNS features
@@ -55,9 +76,6 @@ defensive:
 
   compression:
     enabled: true
-
-# ThreatScript Policy - Force AA bit for broken proxies (Bluecoat, etc.)
-policy_file: "/opt/dnsscienced/policies/force_aa.star"
 
 # Experimental features (all disabled by default)
 experimental:

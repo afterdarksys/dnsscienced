@@ -11,9 +11,11 @@ import (
 // It copies the message on WriteMsg so that the pool.PutMessage defer in handleDNS
 // does not reset the captured Rcode after the handler returns.
 type testResponseWriter struct {
-	rcode      int
-	written    bool
-	remoteAddr net.Addr
+	rcode              int
+	written            bool
+	recursionAvailable bool
+	msg                *dns.Msg
+	remoteAddr         net.Addr
 }
 
 func newTestResponseWriter(ip string) *testResponseWriter {
@@ -22,9 +24,15 @@ func newTestResponseWriter(ip string) *testResponseWriter {
 	}
 }
 
-func (t *testResponseWriter) LocalAddr() net.Addr         { return &net.UDPAddr{} }
-func (t *testResponseWriter) RemoteAddr() net.Addr        { return t.remoteAddr }
-func (t *testResponseWriter) WriteMsg(m *dns.Msg) error   { t.rcode = m.Rcode; t.written = true; return nil }
+func (t *testResponseWriter) LocalAddr() net.Addr  { return &net.UDPAddr{} }
+func (t *testResponseWriter) RemoteAddr() net.Addr { return t.remoteAddr }
+func (t *testResponseWriter) WriteMsg(m *dns.Msg) error {
+	t.rcode = m.Rcode
+	t.recursionAvailable = m.RecursionAvailable
+	t.msg = m.Copy()
+	t.written = true
+	return nil
+}
 func (t *testResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (t *testResponseWriter) Close() error                { return nil }
 func (t *testResponseWriter) TsigStatus() error           { return nil }
@@ -103,6 +111,20 @@ func TestHandleDNSNotifyOpcode_Disabled(t *testing.T) {
 	}
 	if w.rcode != dns.RcodeNotImplemented {
 		t.Errorf("Rcode = %d, want %d (NOTIMPL)", w.rcode, dns.RcodeNotImplemented)
+	}
+}
+
+func TestOrdinarySOANotifyIsNotAcceptedAsDSYNC(t *testing.T) {
+	cfg := Config{DSYNC: DSYNCConfig{Enabled: true, RateLimitPerMin: 300, Burst: 10}}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop() //nolint:errcheck
+	w := newTestResponseWriter("1.2.3.4")
+	s.handleDNS(w, makeNotifyRequest(dns.TypeSOA))
+	if !w.written || w.rcode != dns.RcodeNotImplemented {
+		t.Fatalf("written=%v rcode=%d, want NOTIMPL", w.written, w.rcode)
 	}
 }
 

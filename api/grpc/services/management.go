@@ -27,6 +27,8 @@ import (
 // SrvAdapter is the minimal interface ManagementService needs from the DNS server.
 // Defined here to avoid importing internal/server (which would create an import cycle).
 type SrvAdapter interface {
+	Live() bool
+	HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error)
 	GetZone(origin string) *zone.Zone
 	AddZone(z *zone.Zone) error
 	RemoveZone(origin string)
@@ -349,10 +351,10 @@ func (s *ManagementService) ReloadZones(ctx context.Context, req *mgmt.ReloadZon
 
 	errMsg := strings.Join(errs, "; ")
 	return &mgmt.ReloadZonesResponse{
-		Success:      len(errs) == 0,
+		Success:       len(errs) == 0,
 		ZonesReloaded: reloaded,
-		Message:      fmt.Sprintf("reloaded %d zones", reloaded),
-		Error:        errMsg,
+		Message:       fmt.Sprintf("reloaded %d zones", reloaded),
+		Error:         errMsg,
 	}, nil
 }
 
@@ -856,9 +858,9 @@ func zoneToPB(z *zone.Zone) *mgmt.Zone {
 	zoneID := domain
 
 	pb := &mgmt.Zone{
-		Domain:  domain,
-		ZoneId:  zoneID,
-		Status:  "active",
+		Domain: domain,
+		ZoneId: zoneID,
+		Status: "active",
 	}
 
 	if z.SOA != nil {
@@ -1045,4 +1047,3 @@ func rrContent(rr dns.RR) string {
 		return rr.String()
 	}
 }
-

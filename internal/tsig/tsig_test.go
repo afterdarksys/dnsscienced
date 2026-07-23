@@ -2,7 +2,9 @@ package tsig
 
 import (
 	"encoding/base64"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -11,6 +13,54 @@ func generateTestSecret() string {
 	// 32 bytes for HMAC-SHA256
 	raw := []byte("0123456789abcdef0123456789abcdef")
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func TestTSIG_KeyRingProviderRoundTrip(t *testing.T) {
+	secret := generateTestSecret()
+	kr, err := NewKeyRing([]KeyConfig{{Name: "provider.example.", Algorithm: "hmac-sha256", Secret: secret}})
+	if err != nil {
+		t.Fatalf("NewKeyRing: %v", err)
+	}
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	m.SetTsig("provider.example.", dns.HmacSHA256, 300, time.Now().Unix())
+	wire, _, err := dns.TsigGenerateWithProvider(m, kr, "", false)
+	if err != nil {
+		t.Fatalf("TsigGenerateWithProvider: %v", err)
+	}
+	if err := dns.TsigVerifyWithProvider(wire, kr, "", false); err != nil {
+		t.Fatalf("TsigVerifyWithProvider: %v", err)
+	}
+}
+
+func TestTSIG_ProviderConcurrentKeyRotation(t *testing.T) {
+	secret := generateTestSecret()
+	kr, err := NewKeyRing([]KeyConfig{{Name: "stable.example.", Algorithm: "hmac-sha256", Secret: secret}})
+	if err != nil {
+		t.Fatalf("NewKeyRing: %v", err)
+	}
+	tsigRR := &dns.TSIG{Hdr: dns.RR_Header{Name: "stable.example."}, Algorithm: dns.HmacSHA256}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				if _, err := kr.Generate([]byte("message"), tsigRR); err != nil {
+					t.Errorf("Generate: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 100; i++ {
+		name := "rotating.example."
+		_ = kr.Remove(name)
+		if err := kr.Add(KeyConfig{Name: name, Algorithm: "hmac-sha256", Secret: secret}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+	}
+	wg.Wait()
 }
 
 func TestTSIG_NewKeyRing_Valid(t *testing.T) {
@@ -220,21 +270,17 @@ func TestTSIG_KeyRing_Remove(t *testing.T) {
 	}
 }
 
-func TestTSIG_KeyRing_SharedMap(t *testing.T) {
+func TestTSIG_KeyRing_SecretMapIsSnapshot(t *testing.T) {
 	kr, _ := NewKeyRing(nil)
-	sharedMap := kr.TsigSecretMap()
+	snapshot := kr.TsigSecretMap()
 
-	// Add a key — should appear in the shared map
+	// Mutating the ring must not mutate a map already handed to another goroutine.
 	secret := generateTestSecret()
 	_ = kr.Add(KeyConfig{Name: "live.example.com.", Algorithm: "hmac-sha256", Secret: secret})
-
-	if sharedMap["live.example.com."] != secret {
-		t.Error("shared map did not reflect Add")
+	if _, exists := snapshot["live.example.com."]; exists {
+		t.Error("snapshot changed after Add")
 	}
-
-	// Remove — should disappear from shared map
-	kr.Remove("live.example.com.")
-	if _, exists := sharedMap["live.example.com."]; exists {
-		t.Error("shared map did not reflect Remove")
+	if fresh := kr.TsigSecretMap(); fresh["live.example.com."] != secret {
+		t.Error("fresh snapshot did not include Add")
 	}
 }

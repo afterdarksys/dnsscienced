@@ -29,4 +29,4 @@ RUN mkdir -p /zones
 EXPOSE 53/udp 53/tcp 9090/tcp
 
 ENTRYPOINT ["./dnsscienced"]
-CMD ["-authoritative", "-grpc", ":9090"]
+CMD ["-authoritative"]

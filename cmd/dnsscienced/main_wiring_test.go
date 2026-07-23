@@ -1,8 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/dnsscience/dnsscienced/internal/server"
 )
 
 // TestMainWiring_SIGHUPInSource verifies the SIGHUP full config reload
@@ -25,4 +30,57 @@ func TestMainWiring_ConfigHolderDeclared(t *testing.T) {
 	// 4-return grpcserver.New() call, the package won't compile.
 	// GREEN: main.go updated to 5-return with configHolder captured.
 	t.Log("main.go compiles with 5-return grpcserver.New() — wiring is present")
+}
+
+const minimalZone = `
+zone:
+  name: example.test
+  ttl: 1h
+  class: IN
+soa:
+  primary_ns: ns1.example.test
+  contact: admin@example.test
+  serial: "1"
+  refresh: 1h
+  retry: 10m
+  expire: 1w
+  negative_ttl: 5m
+records:
+  "@":
+    NS: ns1.example.test
+  ns1:
+    A: 192.0.2.53
+`
+
+func TestLoadZonesFromDirLoadsStandaloneDNSZone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "example.test.dnszone")
+	if err := os.WriteFile(path, []byte(minimalZone), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := server.DefaultConfig()
+	cfg.UDPListeners = 1
+	srv, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	loaded, failed := loadZonesFromDir(srv, dir)
+	if loaded != 1 || failed != 0 || srv.GetZone("example.test.") == nil {
+		t.Fatalf("loaded=%d failed=%d zone=%v", loaded, failed, srv.GetZone("example.test."))
+	}
+}
+
+func TestConfiguredZonesRejectUnsupportedRoles(t *testing.T) {
+	cfg := server.DefaultConfig()
+	cfg.UDPListeners = 1
+	srv, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	_, err = loadConfiguredZones(srv, []config.ZoneConfig{{Name: "secondary.test", Type: "secondary", Masters: []string{"192.0.2.1"}}})
+	if err == nil || !strings.Contains(err.Error(), "not implemented") {
+		t.Fatalf("error = %v, want explicit unsupported-role failure", err)
+	}
 }

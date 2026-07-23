@@ -1,8 +1,12 @@
 package dnssec
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -62,6 +66,7 @@ type Validator struct {
 
 // ValidatorConfig holds DNSSEC validator configuration
 type ValidatorConfig struct {
+	TrustAnchorFile string `yaml:"trust_anchor_file"`
 	// Chain validation settings
 	MaxChainDepth int  // Maximum chain depth (default: 20)
 	DSLookup      bool // Query parent zones for DS records
@@ -91,6 +96,8 @@ type ValidatorConfig struct {
 type DNSResolver interface {
 	Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error)
 }
+
+var errInsecureDelegation = errors.New("insecure DNSSEC delegation")
 
 // DefaultValidatorConfig returns secure default configuration
 func DefaultValidatorConfig() ValidatorConfig {
@@ -136,6 +143,11 @@ func NewValidator(config ValidatorConfig, resolver DNSResolver) (*Validator, err
 		resolver:             resolver,
 		cache:                NewValidationCache(config.CacheTTL),
 	}
+	if config.TrustAnchorFile != "" {
+		if err := v.LoadTrustAnchorsFromFile(config.TrustAnchorFile); err != nil {
+			return nil, fmt.Errorf("load trust anchors: %w", err)
+		}
+	}
 
 	return v, nil
 }
@@ -152,10 +164,38 @@ func (v *Validator) AddNegativeTrustAnchor(domain string) {
 
 // LoadTrustAnchorsFromFile loads trust anchors from a file (RFC 5011 format)
 func (v *Validator) LoadTrustAnchorsFromFile(filename string) error {
-	// Parse trust anchor file
-	// Format: ". IN DNSKEY 257 3 8 AwEAAa..."
-	// This is a simplified implementation - production should handle RFC 5011 format
-	return fmt.Errorf("LoadTrustAnchorsFromFile not yet implemented")
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var anchors []dns.DNSKEY
+	scanner := bufio.NewScanner(f)
+	for line := 1; scanner.Scan(); line++ {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" || strings.HasPrefix(text, ";") || strings.HasPrefix(text, "#") {
+			continue
+		}
+		rr, err := dns.NewRR(text)
+		if err != nil {
+			return fmt.Errorf("line %d: %w", line, err)
+		}
+		key, ok := rr.(*dns.DNSKEY)
+		if !ok {
+			return fmt.Errorf("line %d: trust anchor must be DNSKEY, got %s", line, dns.TypeToString[rr.Header().Rrtype])
+		}
+		key.Hdr.Name = strings.ToLower(dns.Fqdn(key.Hdr.Name))
+		anchors = append(anchors, *key)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if len(anchors) == 0 {
+		return fmt.Errorf("trust anchor file contains no DNSKEY records")
+	}
+	v.trustAnchors = append(v.trustAnchors, anchors...)
+	return nil
 }
 
 // Validate performs DNSSEC validation on a DNS response
@@ -232,9 +272,13 @@ func (v *Validator) validateResponse(ctx context.Context, msg *dns.Msg, qname st
 	result := &ValidationResult{
 		TrustChain: make([]TrustAnchor, 0),
 	}
+	negative := msg.Rcode == dns.RcodeNameError || (msg.Rcode == dns.RcodeSuccess && !hasAnswerData(msg))
 
 	// Extract RRSIGs from response
 	rrsigs := extractRRSIGs(msg, qname, qtype)
+	if negative {
+		rrsigs = extractAuthorityRRSIGs(msg)
+	}
 	if len(rrsigs) == 0 {
 		result.Bogus = true
 		result.ErrorMessage = "No RRSIG records found"
@@ -245,18 +289,30 @@ func (v *Validator) validateResponse(ctx context.Context, msg *dns.Msg, qname st
 
 	// Build and validate chain of trust
 	if err := v.buildTrustChain(ctx, qname, result); err != nil {
+		if errors.Is(err, errInsecureDelegation) {
+			result.Insecure = true
+			result.ErrorMessage = err.Error()
+			return result, nil
+		}
 		result.Bogus = true
 		result.Error = err
 		result.ErrorMessage = fmt.Sprintf("Trust chain validation failed: %v", err)
 		return result, err
 	}
 
-	// Verify signatures
-	if err := v.verifySignatures(msg, qname, qtype, result); err != nil {
+	// Verify signatures and, for negative responses, the authenticated
+	// denial-of-existence proof (RFC 4035 sections 5.4 and 5.5).
+	var verifyErr error
+	if negative {
+		verifyErr = v.verifyNegativeResponse(msg, qname, qtype, result)
+	} else {
+		verifyErr = v.verifySignatures(msg, qname, qtype, result)
+	}
+	if verifyErr != nil {
 		result.Bogus = true
-		result.Error = err
-		result.ErrorMessage = fmt.Sprintf("Signature verification failed: %v", err)
-		return result, err
+		result.Error = verifyErr
+		result.ErrorMessage = fmt.Sprintf("Signature verification failed: %v", verifyErr)
+		return result, verifyErr
 	}
 
 	// Validation successful
@@ -264,50 +320,317 @@ func (v *Validator) validateResponse(ctx context.Context, msg *dns.Msg, qname st
 	return result, nil
 }
 
+func hasAnswerData(msg *dns.Msg) bool {
+	for _, rr := range msg.Answer {
+		if rr.Header().Rrtype != dns.TypeRRSIG {
+			return true
+		}
+	}
+	return false
+}
+
+func extractAuthorityRRSIGs(msg *dns.Msg) []dns.RRSIG {
+	sigs := make([]dns.RRSIG, 0)
+	for _, rr := range msg.Ns {
+		if sig, ok := rr.(*dns.RRSIG); ok {
+			sigs = append(sigs, *sig)
+		}
+	}
+	return sigs
+}
+
+func (v *Validator) verifyNegativeResponse(msg *dns.Msg, qname string, qtype uint16, result *ValidationResult) error {
+	// Every authority RRset carried in an authenticated negative response must
+	// itself be signed. This includes SOA as well as NSEC/NSEC3.
+	type rrsetKey struct {
+		name     string
+		typeCode uint16
+	}
+	sets := make(map[rrsetKey][]dns.RR)
+	for _, rr := range msg.Ns {
+		if rr.Header().Rrtype == dns.TypeRRSIG || rr.Header().Rrtype == dns.TypeOPT {
+			continue
+		}
+		key := rrsetKey{strings.ToLower(rr.Header().Name), rr.Header().Rrtype}
+		sets[key] = append(sets[key], rr)
+	}
+	if len(sets) == 0 {
+		return fmt.Errorf("negative response contains no signed authority RRsets")
+	}
+	for key, rrset := range sets {
+		sigs := extractSignaturesFor(msg, key.name, key.typeCode)
+		if err := verifyRRSetWithKeys(rrset, sigs, result.DNSKEYs, v.config.DisabledAlgorithms); err != nil {
+			return fmt.Errorf("authenticate %s/%s denial RRset: %w", key.name, dns.TypeToString[key.typeCode], err)
+		}
+	}
+	if err := validateDenialProof(msg, qname, qtype); err != nil {
+		return fmt.Errorf("invalid denial-of-existence proof: %w", err)
+	}
+	return nil
+}
+
+func validateDenialProof(msg *dns.Msg, qname string, qtype uint16) error {
+	var nsecs []*dns.NSEC
+	var nsec3s []*dns.NSEC3
+	for _, rr := range msg.Ns {
+		switch value := rr.(type) {
+		case *dns.NSEC:
+			nsecs = append(nsecs, value)
+		case *dns.NSEC3:
+			nsec3s = append(nsec3s, value)
+		}
+	}
+	if len(nsecs) > 0 && len(nsec3s) > 0 {
+		return fmt.Errorf("mixed NSEC and NSEC3 proofs")
+	}
+	if len(nsecs) > 0 {
+		return validateNSECProof(msg.Rcode, nsecs, qname, qtype)
+	}
+	if len(nsec3s) > 0 {
+		return validateNSEC3Proof(msg.Rcode, nsec3s, qname, qtype)
+	}
+	return fmt.Errorf("missing NSEC or NSEC3 proof")
+}
+
+func validateNSECProof(rcode int, records []*dns.NSEC, qname string, qtype uint16) error {
+	qname = strings.ToLower(dns.Fqdn(qname))
+	if rcode == dns.RcodeSuccess {
+		for _, nsec := range records {
+			if strings.EqualFold(nsec.Hdr.Name, qname) && !typePresent(nsec.TypeBitMap, qtype) && !typePresent(nsec.TypeBitMap, dns.TypeCNAME) {
+				return nil
+			}
+		}
+		return fmt.Errorf("NSEC does not prove NODATA for %s/%s", qname, dns.TypeToString[qtype])
+	}
+	if rcode != dns.RcodeNameError {
+		return fmt.Errorf("denial proof used with rcode %d", rcode)
+	}
+	if !anyNSECCovers(records, qname) {
+		return fmt.Errorf("NSEC does not cover nonexistent name %s", qname)
+	}
+	closest := closestNSECEncloser(records, qname)
+	if closest == "" {
+		return fmt.Errorf("NSEC proof has no closest encloser for %s", qname)
+	}
+	wildcard := "*." + closest
+	if !anyNSECCovers(records, wildcard) {
+		return fmt.Errorf("NSEC does not deny wildcard %s", wildcard)
+	}
+	return nil
+}
+
+func validateNSEC3Proof(rcode int, records []*dns.NSEC3, qname string, qtype uint16) error {
+	qname = strings.ToLower(dns.Fqdn(qname))
+	if rcode == dns.RcodeSuccess {
+		for _, nsec3 := range records {
+			if nsec3.Match(qname) && !typePresent(nsec3.TypeBitMap, qtype) && !typePresent(nsec3.TypeBitMap, dns.TypeCNAME) {
+				return nil
+			}
+		}
+		return fmt.Errorf("NSEC3 does not prove NODATA for %s/%s", qname, dns.TypeToString[qtype])
+	}
+	if rcode != dns.RcodeNameError {
+		return fmt.Errorf("denial proof used with rcode %d", rcode)
+	}
+	closest := closestNSEC3Encloser(records, qname)
+	if closest == "" {
+		return fmt.Errorf("NSEC3 proof has no closest encloser for %s", qname)
+	}
+	nextCloser := nextCloserName(qname, closest)
+	if nextCloser == "" || !anyNSEC3Covers(records, nextCloser) {
+		return fmt.Errorf("NSEC3 does not cover next-closer name %s", nextCloser)
+	}
+	wildcard := "*." + closest
+	if !anyNSEC3Covers(records, wildcard) {
+		return fmt.Errorf("NSEC3 does not deny wildcard %s", wildcard)
+	}
+	return nil
+}
+
+func typePresent(bitmap []uint16, qtype uint16) bool {
+	for _, value := range bitmap {
+		if value == qtype {
+			return true
+		}
+	}
+	return false
+}
+
+func anyNSECCovers(records []*dns.NSEC, name string) bool {
+	for _, nsec := range records {
+		if nsecCovers(nsec, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func nsecCovers(nsec *dns.NSEC, name string) bool {
+	owner := strings.ToLower(dns.Fqdn(nsec.Hdr.Name))
+	next := strings.ToLower(dns.Fqdn(nsec.NextDomain))
+	name = strings.ToLower(dns.Fqdn(name))
+	if name == owner || name == next {
+		return false
+	}
+	ownerToName := canonicalNameCompare(owner, name)
+	nameToNext := canonicalNameCompare(name, next)
+	if canonicalNameCompare(owner, next) < 0 {
+		return ownerToName < 0 && nameToNext < 0
+	}
+	return ownerToName < 0 || nameToNext < 0 // interval wraps at the root
+}
+
+func canonicalNameCompare(a, b string) int {
+	la, errA := canonicalLabels(a)
+	lb, errB := canonicalLabels(b)
+	if errA != nil || errB != nil {
+		return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+	}
+	for ia, ib := len(la)-1, len(lb)-1; ia >= 0 && ib >= 0; ia, ib = ia-1, ib-1 {
+		if compared := bytes.Compare(la[ia], lb[ib]); compared != 0 {
+			return compared
+		}
+	}
+	if len(la) < len(lb) {
+		return -1
+	}
+	if len(la) > len(lb) {
+		return 1
+	}
+	return 0
+}
+
+func canonicalLabels(name string) ([][]byte, error) {
+	wire := make([]byte, 255)
+	off, err := dns.PackDomainName(strings.ToLower(dns.Fqdn(name)), wire, 0, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	wire = wire[:off]
+	labels := make([][]byte, 0)
+	for pos := 0; pos < len(wire); {
+		length := int(wire[pos])
+		pos++
+		if length == 0 {
+			return labels, nil
+		}
+		if pos+length > len(wire) {
+			return nil, fmt.Errorf("invalid packed domain name")
+		}
+		labels = append(labels, wire[pos:pos+length])
+		pos += length
+	}
+	return nil, fmt.Errorf("unterminated packed domain name")
+}
+
+func closestNSECEncloser(records []*dns.NSEC, qname string) string {
+	for _, suffix := range nameSuffixes(qname) {
+		for _, nsec := range records {
+			if strings.EqualFold(nsec.Hdr.Name, suffix) {
+				return suffix
+			}
+		}
+	}
+	return ""
+}
+
+func closestNSEC3Encloser(records []*dns.NSEC3, qname string) string {
+	for _, suffix := range nameSuffixes(qname) {
+		for _, nsec3 := range records {
+			if nsec3.Match(suffix) {
+				return suffix
+			}
+		}
+	}
+	return ""
+}
+
+func nameSuffixes(name string) []string {
+	labels := dns.SplitDomainName(name)
+	out := make([]string, 0, len(labels)+1)
+	for i := 0; i < len(labels); i++ {
+		out = append(out, dns.Fqdn(strings.Join(labels[i:], ".")))
+	}
+	return append(out, ".")
+}
+
+func nextCloserName(qname, closest string) string {
+	qLabels, cLabels := dns.SplitDomainName(qname), dns.SplitDomainName(closest)
+	if len(qLabels) <= len(cLabels) {
+		return ""
+	}
+	return dns.Fqdn(strings.Join(qLabels[len(qLabels)-len(cLabels)-1:], "."))
+}
+
+func anyNSEC3Covers(records []*dns.NSEC3, name string) bool {
+	for _, nsec3 := range records {
+		if nsec3.Cover(name) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildTrustChain builds the DNSSEC chain of trust from root to target zone
 func (v *Validator) buildTrustChain(ctx context.Context, qname string, result *ValidationResult) error {
-	labels := dns.SplitDomainName(qname)
+	signerZone := dns.Fqdn(strings.ToLower(result.Signatures[0].SignerName))
+	rootMsg, err := v.resolver.Query(ctx, ".", dns.TypeDNSKEY)
+	if err != nil {
+		return fmt.Errorf("root DNSKEY lookup: %w", err)
+	}
+	currentKeys := extractDNSKEYs(rootMsg, ".", v.config.DisabledAlgorithms)
+	rootRRset := dnskeysToRRs(currentKeys)
+	rootSigs := extractSignaturesFor(rootMsg, ".", dns.TypeDNSKEY)
+	anchor := matchingTrustAnchor(v.trustAnchors, currentKeys)
+	if anchor == nil {
+		return fmt.Errorf("root DNSKEY RRset does not contain a configured trust anchor")
+	}
+	if err := verifyRRSetWithKeys(rootRRset, rootSigs, []dns.DNSKEY{*anchor}, v.config.DisabledAlgorithms); err != nil {
+		return fmt.Errorf("authenticate root DNSKEY RRset: %w", err)
+	}
+	result.DNSKEYs = append(result.DNSKEYs, currentKeys...)
+	result.TrustChain = append(result.TrustChain, TrustAnchor{Name: ".", DNSKEY: *anchor, Validated: true})
+	result.ChainDepth = 1
+	if signerZone == "." {
+		return nil
+	}
 
-	// Start from root
-	currentZone := "."
-
-	// Walk down the chain
+	labels := dns.SplitDomainName(signerZone)
 	for i := len(labels) - 1; i >= 0; i-- {
-		nextZone := dns.Fqdn(strings.Join(labels[i:], "."))
-
-		// Check chain depth
+		child := dns.Fqdn(strings.Join(labels[i:], "."))
 		if result.ChainDepth >= v.config.MaxChainDepth {
 			return fmt.Errorf("max chain depth exceeded")
 		}
-
-		// Query for DS record at parent zone
-		if v.config.DSLookup && currentZone != nextZone {
-			dsRecords, err := v.queryDS(ctx, nextZone, currentZone)
-			if err != nil {
-				return fmt.Errorf("DS lookup failed for %s: %w", nextZone, err)
-			}
-
-			if len(dsRecords) > 0 {
-				result.DSRecords = append(result.DSRecords, dsRecords...)
-			}
-		}
-
-		// Query for DNSKEY at target zone
-		dnskeys, err := v.queryDNSKEY(ctx, nextZone)
+		dsMsg, err := v.resolver.Query(ctx, child, dns.TypeDS)
 		if err != nil {
-			return fmt.Errorf("DNSKEY lookup failed for %s: %w", nextZone, err)
+			return fmt.Errorf("DS lookup failed for %s: %w", child, err)
+		}
+		dsRecords := extractDSRecords(dsMsg, child)
+		if len(dsRecords) == 0 {
+			return fmt.Errorf("%w at %s", errInsecureDelegation, child)
+		}
+		if err := verifyRRSetWithKeys(dsToRRs(dsRecords), extractSignaturesFor(dsMsg, child, dns.TypeDS), currentKeys, v.config.DisabledAlgorithms); err != nil {
+			return fmt.Errorf("authenticate DS RRset for %s: %w", child, err)
 		}
 
-		// Validate DNSKEYs against DS records
-		// (Simplified - full implementation would validate each key)
-		if len(dnskeys) > 0 {
-			result.DNSKEYs = append(result.DNSKEYs, dnskeys...)
+		keyMsg, err := v.resolver.Query(ctx, child, dns.TypeDNSKEY)
+		if err != nil {
+			return fmt.Errorf("DNSKEY lookup failed for %s: %w", child, err)
 		}
-
+		childKeys := extractDNSKEYs(keyMsg, child, v.config.DisabledAlgorithms)
+		matchedKeys := matchDSKeys(dsRecords, childKeys)
+		if len(matchedKeys) == 0 {
+			return fmt.Errorf("no DNSKEY at %s matches authenticated DS", child)
+		}
+		if err := verifyRRSetWithKeys(dnskeysToRRs(childKeys), extractSignaturesFor(keyMsg, child, dns.TypeDNSKEY), matchedKeys, v.config.DisabledAlgorithms); err != nil {
+			return fmt.Errorf("authenticate DNSKEY RRset for %s: %w", child, err)
+		}
+		result.DSRecords = append(result.DSRecords, dsRecords...)
+		result.DNSKEYs = append(result.DNSKEYs, childKeys...)
+		result.TrustChain = append(result.TrustChain, TrustAnchor{Name: child, DNSKEY: matchedKeys[0], DS: &dsRecords[0], Validated: true})
 		result.ChainDepth++
-		currentZone = nextZone
+		currentKeys = childKeys
 	}
-
 	return nil
 }
 
@@ -482,4 +805,120 @@ func findDNSKEY(dnskeys []dns.DNSKEY, signerName string, keyTag uint16) *dns.DNS
 		}
 	}
 	return nil
+}
+
+func extractDNSKEYs(msg *dns.Msg, owner string, disabled map[uint8]bool) []dns.DNSKEY {
+	owner = dns.Fqdn(strings.ToLower(owner))
+	var keys []dns.DNSKEY
+	for _, rr := range msg.Answer {
+		key, ok := rr.(*dns.DNSKEY)
+		if ok && strings.EqualFold(key.Hdr.Name, owner) && !disabled[key.Algorithm] {
+			keys = append(keys, *key)
+		}
+	}
+	return keys
+}
+
+func extractDSRecords(msg *dns.Msg, owner string) []dns.DS {
+	owner = dns.Fqdn(strings.ToLower(owner))
+	var records []dns.DS
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns} {
+		for _, rr := range section {
+			ds, ok := rr.(*dns.DS)
+			if ok && strings.EqualFold(ds.Hdr.Name, owner) {
+				records = append(records, *ds)
+			}
+		}
+	}
+	return records
+}
+
+func extractSignaturesFor(msg *dns.Msg, owner string, covered uint16) []dns.RRSIG {
+	owner = dns.Fqdn(strings.ToLower(owner))
+	var signatures []dns.RRSIG
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns} {
+		for _, rr := range section {
+			sig, ok := rr.(*dns.RRSIG)
+			if ok && sig.TypeCovered == covered && strings.EqualFold(sig.Hdr.Name, owner) {
+				signatures = append(signatures, *sig)
+			}
+		}
+	}
+	return signatures
+}
+
+func matchingTrustAnchor(anchors, keys []dns.DNSKEY) *dns.DNSKEY {
+	for i := range anchors {
+		for j := range keys {
+			if strings.EqualFold(anchors[i].Hdr.Name, keys[j].Hdr.Name) &&
+				anchors[i].KeyTag() == keys[j].KeyTag() && anchors[i].Algorithm == keys[j].Algorithm &&
+				anchors[i].PublicKey == keys[j].PublicKey {
+				return &keys[j]
+			}
+		}
+	}
+	return nil
+}
+
+func matchDSKeys(dsRecords []dns.DS, keys []dns.DNSKEY) []dns.DNSKEY {
+	seen := make(map[uint16]bool)
+	var matched []dns.DNSKEY
+	for _, key := range keys {
+		for _, ds := range dsRecords {
+			if ds.KeyTag != key.KeyTag() || ds.Algorithm != key.Algorithm {
+				continue
+			}
+			computed := key.ToDS(ds.DigestType)
+			if computed != nil && strings.EqualFold(computed.Digest, ds.Digest) && !seen[key.KeyTag()] {
+				matched = append(matched, key)
+				seen[key.KeyTag()] = true
+			}
+		}
+	}
+	return matched
+}
+
+func verifyRRSetWithKeys(rrset []dns.RR, signatures []dns.RRSIG, keys []dns.DNSKEY, disabled map[uint8]bool) error {
+	if len(rrset) == 0 || len(signatures) == 0 || len(keys) == 0 {
+		return fmt.Errorf("missing RRset, signature, or key")
+	}
+	now := time.Now()
+	var lastErr error
+	for i := range signatures {
+		sig := &signatures[i]
+		if disabled[sig.Algorithm] || now.Before(time.Unix(int64(sig.Inception), 0)) || now.After(time.Unix(int64(sig.Expiration), 0)) {
+			continue
+		}
+		for j := range keys {
+			key := &keys[j]
+			if key.KeyTag() != sig.KeyTag || key.Algorithm != sig.Algorithm || !strings.EqualFold(key.Hdr.Name, sig.SignerName) {
+				continue
+			}
+			if err := sig.Verify(key, rrset); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no valid signature from an authenticated key")
+}
+
+func dnskeysToRRs(keys []dns.DNSKEY) []dns.RR {
+	records := make([]dns.RR, len(keys))
+	for i := range keys {
+		records[i] = &keys[i]
+	}
+	return records
+}
+
+func dsToRRs(dsRecords []dns.DS) []dns.RR {
+	records := make([]dns.RR, len(dsRecords))
+	for i := range dsRecords {
+		records[i] = &dsRecords[i]
+	}
+	return records
 }

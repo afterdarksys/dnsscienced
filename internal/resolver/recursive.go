@@ -108,6 +108,15 @@ type Recursive struct {
 
 	// UDP client with randomized source port
 	client *dns.Client
+	roots  []string
+}
+
+type validationResolver struct{ recursive *Recursive }
+
+func (v validationResolver) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
+	// DNSKEY/DS lookups must bypass Recursive.Resolve's validation stage or the
+	// validator recursively invokes itself while constructing its own chain.
+	return v.recursive.resolveIterative(ctx, dns.Fqdn(name), qtype, dns.ClassINET)
 }
 
 // DefaultConfig returns an RFC-compliant default configuration with all three
@@ -172,7 +181,8 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 			Timeout: cfg.QueryTimeout,
 			Net:     "udp",
 		},
-		cfg: cfg,
+		cfg:   cfg,
+		roots: append([]string(nil), rootServers...),
 	}
 
 	// Initialize cookies if enabled
@@ -194,9 +204,14 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 	if cfg.EnableDNSSEC {
 		vcfg := cfg.DNSSECConfig
 		if vcfg.MaxChainDepth == 0 {
-			vcfg = dnssec.DefaultValidatorConfig()
+			defaults := dnssec.DefaultValidatorConfig()
+			defaults.TrustAnchorFile = vcfg.TrustAnchorFile
+			vcfg = defaults
 		}
-		v, err := dnssec.NewValidator(vcfg, r)
+		if vcfg.TrustAnchorFile == "" {
+			return nil, fmt.Errorf("init dnssec validator: trust_anchor_file is required when enable_dnssec is true")
+		}
+		v, err := dnssec.NewValidator(vcfg, validationResolver{recursive: r})
 		if err != nil {
 			return nil, fmt.Errorf("init dnssec validator: %w", err)
 		}
@@ -247,24 +262,16 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 		defer pool.PutMessage(resp)
 		if err := resp.Unpack(entry.Data); err == nil {
 			resp.Id = q.Id
+			resp.Question = append(resp.Question[:0], q.Question...)
+			resp.RecursionDesired = q.RecursionDesired
+			resp.CheckingDisabled = q.CheckingDisabled
+			resp.RecursionAvailable = true
 			if entry.DNSSECValidated {
 				resp.AuthenticatedData = true
 			}
 			// RFC 8767 section 5: stale entries must be served with TTL=0 so
 			// clients know the record is past its original expiry (D-08).
-			if entry.IsExpired() {
-				for _, rr := range resp.Answer {
-					rr.Header().Ttl = 0
-				}
-				for _, rr := range resp.Ns {
-					rr.Header().Ttl = 0
-				}
-				for _, rr := range resp.Extra {
-					if rr.Header().Rrtype != dns.TypeOPT {
-						rr.Header().Ttl = 0
-					}
-				}
-			}
+			ageCachedTTLs(resp, entry.ExpiresAt)
 			return resp.Copy(), nil
 		}
 	}
@@ -312,6 +319,21 @@ func (r *Recursive) Resolve(ctx context.Context, q *dns.Msg, clientIP net.IP) (*
 	}
 
 	resp.Id = q.Id
+	resp.Question = append(resp.Question[:0], q.Question...)
+	resp.RecursionDesired = q.RecursionDesired
+	resp.CheckingDisabled = q.CheckingDisabled
+	resp.RecursionAvailable = true
+
+	// RFC 1034 section 4.3.2: a recursive answer includes the alias chain and
+	// continues resolving until it reaches the requested RR type or an error.
+	resp, err = r.followAliases(ctx, resp, question.Name, question.Qtype, question.Qclass)
+	if err != nil {
+		return nil, err
+	}
+	resp.Id = q.Id
+	resp.Question = append(resp.Question[:0], q.Question...)
+	resp.RecursionDesired = q.RecursionDesired
+	resp.CheckingDisabled = q.CheckingDisabled
 	resp.RecursionAvailable = true
 
 	// 4. DNS rebinding check: discard responses that map a public name to a
@@ -396,13 +418,107 @@ func extractZoneFromResponse(resp *dns.Msg) string {
 	return "."
 }
 
+const maxAliasChain = 16
+
+// followAliases completes CNAME and DNAME chains while preserving the alias
+// records already returned. The bound and seen set prevent loops and query
+// amplification from malicious alias graphs.
+func (r *Recursive) followAliases(ctx context.Context, initial *dns.Msg, qname string, qtype, qclass uint16) (*dns.Msg, error) {
+	if qtype == dns.TypeCNAME || qtype == dns.TypeDNAME {
+		return initial, nil
+	}
+
+	combined := initial.Copy()
+	current := dns.Fqdn(strings.ToLower(qname))
+	seen := map[string]struct{}{current: {}}
+	for depth := 0; depth < maxAliasChain; depth++ {
+		target, synthesized := aliasTarget(combined.Answer, current)
+		if target == "" {
+			return combined, nil
+		}
+		if synthesized != nil {
+			combined.Answer = append(combined.Answer, synthesized)
+		}
+		target = dns.Fqdn(strings.ToLower(target))
+		if _, exists := seen[target]; exists {
+			return nil, fmt.Errorf("alias loop detected at %s", target)
+		}
+		seen[target] = struct{}{}
+
+		next, err := r.resolveIterative(ctx, target, qtype, qclass)
+		if err != nil {
+			return nil, err
+		}
+		combined.Answer = append(combined.Answer, next.Answer...)
+		combined.Ns = next.Ns
+		combined.Extra = next.Extra
+		combined.Rcode = next.Rcode
+		current = target
+	}
+	return nil, fmt.Errorf("alias chain exceeds %d links", maxAliasChain)
+}
+
+func aliasTarget(answer []dns.RR, current string) (string, dns.RR) {
+	for _, rr := range answer {
+		if cname, ok := rr.(*dns.CNAME); ok && strings.EqualFold(cname.Hdr.Name, current) {
+			return cname.Target, nil
+		}
+	}
+
+	var best *dns.DNAME
+	for _, rr := range answer {
+		dname, ok := rr.(*dns.DNAME)
+		if !ok || strings.EqualFold(dname.Hdr.Name, current) || !dns.IsSubDomain(dname.Hdr.Name, current) {
+			continue
+		}
+		if best == nil || len(dname.Hdr.Name) > len(best.Hdr.Name) {
+			best = dname
+		}
+	}
+	if best == nil {
+		return "", nil
+	}
+	prefix := current[:len(current)-len(best.Hdr.Name)]
+	target := prefix + best.Target
+	return target, &dns.CNAME{
+		Hdr: dns.RR_Header{
+			Name:   current,
+			Rrtype: dns.TypeCNAME,
+			Class:  best.Hdr.Class,
+			Ttl:    best.Hdr.Ttl,
+		},
+		Target: target,
+	}
+}
+
+func ageCachedTTLs(msg *dns.Msg, expiresAt time.Time) {
+	remaining := uint32(0)
+	if d := time.Until(expiresAt); d > 0 {
+		remaining = uint32(d / time.Second)
+	}
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+		for _, rr := range section {
+			if rr.Header().Rrtype != dns.TypeOPT && rr.Header().Ttl > remaining {
+				rr.Header().Ttl = remaining
+			}
+		}
+	}
+}
+
 // resolveIterative performs iterative resolution starting from root
 func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, qclass uint16) (*dns.Msg, error) {
-	nameservers := rootServers
+	return r.resolveIterativeWithBudget(ctx, qname, qtype, qclass, r.cfg.MaxIterations)
+}
+
+func (r *Recursive) resolveIterativeWithBudget(ctx context.Context, qname string, qtype, qclass uint16, budget int) (*dns.Msg, error) {
+	if budget <= 0 {
+		return nil, ErrMaxIterations
+	}
+	nameservers := r.roots
 	iterations := 0
 	currentZone := "."
 
-	for iterations < r.cfg.MaxIterations {
+	for iterations < budget {
 		iterations++
 
 		// Compute minimized send name and type for this hop (D-02, D-03).
@@ -443,8 +559,18 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 					}
 					continue
 				}
+				sendName = qname
+				sendType = qtype
 			}
 			break // success
+		}
+
+		// A positive response to an intermediate minimized name is not the
+		// answer to the original question. Continue revealing labels using the
+		// same authoritative server (RFC 9156 section 3 step 6c).
+		if len(resp.Answer) > 0 && sendName != qname {
+			currentZone = dns.Fqdn(strings.ToLower(sendName))
+			continue
 		}
 
 		// Check if we got an answer
@@ -511,16 +637,23 @@ func (r *Recursive) resolveIterative(ctx context.Context, qname string, qtype, q
 			// iteration budget to prevent unbounded recursion.
 			if len(newNameservers) == 0 {
 				for _, ns := range nsRecords {
-					if iterations >= r.cfg.MaxIterations {
+					if iterations >= budget {
 						break
 					}
-					glueResp, glueErr := r.resolveIterative(ctx, ns.Ns, dns.TypeA, qclass)
+					remaining := budget - iterations
+					glueResp, glueErr := r.resolveIterativeWithBudget(ctx, ns.Ns, dns.TypeA, qclass, remaining)
 					if glueErr != nil {
-						continue
+						glueResp, glueErr = r.resolveIterativeWithBudget(ctx, ns.Ns, dns.TypeAAAA, qclass, remaining)
+						if glueErr != nil {
+							continue
+						}
 					}
 					for _, arec := range glueResp.Answer {
-						if a, ok := arec.(*dns.A); ok {
+						switch a := arec.(type) {
+						case *dns.A:
 							newNameservers = append(newNameservers, a.A.String()+":53")
+						case *dns.AAAA:
+							newNameservers = append(newNameservers, net.JoinHostPort(a.AAAA.String(), "53"))
 						}
 					}
 				}
@@ -565,7 +698,7 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 	}}
 	// 1232 bytes: DNS Flag Day 2020 recommendation (IPv6 min MTU 1280 - 48 bytes headers).
 	// Prevents IP fragmentation-based amplification attacks.
-	msg.SetEdns0(1232, false)
+	msg.SetEdns0(1232, r.cfg.EnableDNSSEC)
 
 	// Send query with timeout
 	queryCtx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)
@@ -574,6 +707,13 @@ func (r *Recursive) queryNameserver(ctx context.Context, ns string, qname string
 	resp, _, err := r.client.ExchangeContext(queryCtx, msg, ns)
 	if err != nil {
 		return nil, err
+	}
+	if resp.Truncated {
+		tcpClient := &dns.Client{Timeout: r.cfg.QueryTimeout, Net: "tcp"}
+		resp, _, err = tcpClient.ExchangeContext(queryCtx, msg, ns)
+		if err != nil {
+			return nil, fmt.Errorf("TCP retry after truncated UDP response: %w", err)
+		}
 	}
 
 	// Validate the 0x20 echo: a response that does not preserve the exact case we

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/defensive"
 	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/dnsscience/dnsscienced/internal/engine"
 	"github.com/dnsscience/dnsscienced/internal/eventbus"
 	"github.com/dnsscience/dnsscienced/internal/experimental"
 	"github.com/dnsscience/dnsscienced/internal/firewalld"
@@ -22,6 +24,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/protective"
 	"github.com/dnsscience/dnsscienced/internal/resolver"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/dnsscience/dnsscienced/internal/transport"
 	"github.com/dnsscience/dnsscienced/internal/tsig"
 	"github.com/dnsscience/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
@@ -31,16 +34,19 @@ import (
 // Config holds DNS server configuration
 type Config struct {
 	// Listen addresses
-	UDPAddr string `yaml:"udp_addr"`
-	TCPAddr string `yaml:"tcp_addr"`
+	UDPAddr string              `yaml:"udp_addr"`
+	TCPAddr string              `yaml:"tcp_addr"`
+	DoH     transport.DoHConfig `yaml:"doh"`
+	DoT     transport.DoTConfig `yaml:"dot"`
 
 	// Number of UDP listeners (SO_REUSEPORT)
 	// Set to runtime.NumCPU() for maximum performance
 	UDPListeners int `yaml:"udp_listeners"`
 
 	// Enable recursive resolver
-	EnableRecursive bool            `yaml:"enable_recursive"`
-	RecursiveConfig resolver.Config `yaml:"recursive"`
+	EnableRecursive       bool            `yaml:"enable_recursive"`
+	RecursionAllowedCIDRs []string        `yaml:"recursion_allowed_cidrs"`
+	RecursiveConfig       resolver.Config `yaml:"recursive"`
 
 	// Enable authoritative server
 	EnableAuthoritative bool                  `yaml:"enable_authoritative"`
@@ -70,7 +76,8 @@ type Config struct {
 	// ZoneTransferCIDRs maps zone FQDN origin to CIDR strings allowed to AXFR.
 	// Populated by main.go from config.ZoneConfig.AllowTransfer.
 	// Empty/absent = deny all (D-01).
-	ZoneTransferCIDRs map[string][]string `yaml:"-"`
+	ZoneTransferCIDRs     map[string][]string `yaml:"-"`
+	ZoneAllowAXFRFallback map[string]bool     `yaml:"-"`
 
 	// ZoneUpdateCIDRs maps zone FQDN origin to CIDR strings allowed to send RFC 2136 UPDATE.
 	// Populated by main.go from config.ZoneConfig.AllowUpdate.
@@ -122,10 +129,8 @@ type DSYNCConfig struct {
 // DefaultConfig returns default server configuration
 func DefaultConfig() Config {
 	rcfg := resolver.DefaultConfig()
-	rcfg.CacheConfig = cache.Config{
-		ShardCount: 256,
-		MaxEntries: 100000,
-	}
+	rcfg.CacheConfig.ShardCount = 256
+	rcfg.CacheConfig.MaxEntries = 100000
 	rcfg.Workers = 1000
 	rcfg.QueryTimeout = 5 * time.Second
 	rcfg.MaxIterations = 20
@@ -135,8 +140,11 @@ func DefaultConfig() Config {
 		TCPAddr:      ":53",
 		UDPListeners: runtime.NumCPU(),
 
-		EnableRecursive: true,
-		RecursiveConfig: rcfg,
+		// Recursion is opt-in. When enabled without an explicit ACL, New limits it
+		// to loopback clients so a default deployment cannot become an open resolver.
+		EnableRecursive:       false,
+		RecursionAllowedCIDRs: []string{"127.0.0.0/8", "::1/128"},
+		RecursiveConfig:       rcfg,
 
 		EnableAuthoritative: false,
 		Zones:               make(map[string]*zone.Zone),
@@ -170,18 +178,20 @@ type Server struct {
 	zonesMu sync.RWMutex
 
 	// Components
-	recursive    *resolver.Recursive
-	cookies      *cookie.Manager
-	rrl          *rrl.Limiter
-	defensive    *defensive.Manager
-	protective   *protective.Engine
-	firewall     *firewalld.Firewall
+	recursive        *resolver.Recursive
+	recursionACL     *engine.ACL
+	cookies          *cookie.Manager
+	rrl              *rrl.Limiter
+	defensive        *defensive.Manager
+	protective       *protective.Engine
+	firewall         *firewalld.Firewall
 	tsigKeyRing      *tsig.KeyRing
 	dsyncHandler     *dsync.Handler
 	dsyncNotifier    *dsync.DSYNCNotifier
 	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
 	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
 	persistPaths     map[string]string           // Per-zone file paths for persist_updates write-back (D-11).
+	persistMu        sync.Mutex                  // Orders zone swaps and durable snapshots across UPDATE requests.
 
 	// Event bus for real-time query streaming
 	bus *eventbus.Bus
@@ -189,6 +199,8 @@ type Server struct {
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
 	tcpServer  *dns.Server
+	dohServer  *transport.DoHListener
+	dotServer  *transport.DoTListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -218,6 +230,18 @@ func New(cfg Config) (*Server, error) {
 
 	// Initialize recursive resolver if enabled
 	if cfg.EnableRecursive {
+		allowedCIDRs := cfg.RecursionAllowedCIDRs
+		if len(allowedCIDRs) == 0 {
+			allowedCIDRs = []string{"127.0.0.0/8", "::1/128"}
+		}
+		s.recursionACL = engine.NewACL(false)
+		for _, cidr := range allowedCIDRs {
+			if err := s.recursionACL.AllowNet(cidr); err != nil {
+				cancel()
+				return nil, fmt.Errorf("recursion_allowed_cidrs %q: %w", cidr, err)
+			}
+		}
+
 		var err error
 		s.recursive, err = resolver.NewRecursive(cfg.RecursiveConfig)
 		if err != nil {
@@ -397,8 +421,8 @@ func New(cfg Config) (*Server, error) {
 			ReadTimeout:  cfg.ReadTimeout,
 			WriteTimeout: cfg.WriteTimeout,
 
-			UDPSize:    4096,
-			TsigSecret: s.tsigSecretMap(), // populate for automatic TSIG verification
+			UDPSize:      4096,
+			TsigProvider: s.tsigKeyRing,
 		}
 
 		s.udpServers = append(s.udpServers, udpServer)
@@ -412,7 +436,24 @@ func New(cfg Config) (*Server, error) {
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-		TsigSecret:   s.tsigSecretMap(), // populate for automatic TSIG verification
+		TsigProvider: s.tsigKeyRing,
+	}
+
+	if cfg.DoH.Enabled {
+		var err error
+		s.dohServer, err = transport.NewDoHListener(cfg.DoH, s)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init DNS-over-HTTPS listener: %w", err)
+		}
+	}
+	if cfg.DoT.Enabled {
+		var err error
+		s.dotServer, err = transport.NewDoTListener(cfg.DoT, s)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init DNS-over-TLS listener: %w", err)
+		}
 	}
 
 	return s, nil
@@ -420,6 +461,19 @@ func New(cfg Config) (*Server, error) {
 
 // Start starts all DNS listeners
 func (s *Server) Start() error {
+	if s.dohServer != nil {
+		if err := s.dohServer.Start(); err != nil {
+			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
+		}
+	}
+	if s.dotServer != nil {
+		if err := s.dotServer.Start(); err != nil {
+			if s.dohServer != nil {
+				_ = s.dohServer.Stop()
+			}
+			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
+		}
+	}
 	// Start UDP listeners (SO_REUSEPORT)
 	for i, udpServer := range s.udpServers {
 		i := i
@@ -458,6 +512,16 @@ func (s *Server) Stop() error {
 
 	// Cancel context
 	s.cancel()
+	if s.dohServer != nil {
+		if err := s.dohServer.Stop(); err != nil {
+			fmt.Printf("Error shutting down DNS-over-HTTPS listener: %v\n", err)
+		}
+	}
+	if s.dotServer != nil {
+		if err := s.dotServer.Stop(); err != nil {
+			fmt.Printf("Error shutting down DNS-over-TLS listener: %v\n", err)
+		}
+	}
 
 	// Shutdown all UDP servers
 	for i, udpServer := range s.udpServers {
@@ -547,6 +611,55 @@ func (s *Server) GetEventBus() *eventbus.Bus {
 	return s.bus
 }
 
+// HandleDNS adapts the core DNS handler to encrypted transports. The source
+// address is preserved so recursion, update, transfer, firewall, and RRL ACLs
+// behave exactly as they do on port 53.
+func (s *Server) HandleDNS(ctx context.Context, req *dns.Msg, remoteAddr net.Addr) (*dns.Msg, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("nil DNS request")
+	}
+	w := &messageResponseWriter{remoteAddr: remoteAddr}
+	// The encrypted transport adapters do not currently retain the original
+	// TSIG wire image. Fail closed for signed operations rather than treating an
+	// unverified signature as valid.
+	if req.IsTsig() != nil {
+		w.tsigStatus = fmt.Errorf("TSIG verification unavailable on encrypted transport")
+	}
+	s.handleDNS(w, req)
+	if w.msg == nil {
+		return nil, fmt.Errorf("DNS request produced no response")
+	}
+	return w.msg, nil
+}
+
+type messageResponseWriter struct {
+	remoteAddr net.Addr
+	msg        *dns.Msg
+	tsigStatus error
+}
+
+func (w *messageResponseWriter) LocalAddr() net.Addr  { return &net.TCPAddr{} }
+func (w *messageResponseWriter) RemoteAddr() net.Addr { return w.remoteAddr }
+func (w *messageResponseWriter) Close() error         { return nil }
+func (w *messageResponseWriter) TsigStatus() error    { return w.tsigStatus }
+func (w *messageResponseWriter) TsigTimersOnly(bool)  {}
+func (w *messageResponseWriter) Hijack()              {}
+func (w *messageResponseWriter) WriteMsg(msg *dns.Msg) error {
+	w.msg = msg.Copy()
+	return nil
+}
+func (w *messageResponseWriter) Write(p []byte) (int, error) {
+	msg := new(dns.Msg)
+	if err := msg.Unpack(p); err != nil {
+		return 0, err
+	}
+	w.msg = msg
+	return len(p), nil
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
@@ -569,6 +682,23 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// RFC 9859: dispatch NOTIFY opcode before query processing.
 	// This must be FIRST — before pool.GetMessage, before defensive checks.
 	if r.Opcode == dns.OpcodeNotify {
+		if len(r.Question) != 1 {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeFormatError
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+		// RFC 9859 DSYNC notifications use CDS or CSYNC. Ordinary RFC 1996
+		// SOA NOTIFY belongs to secondary-zone refresh, which is not yet
+		// implemented; never route it through the DSYNC acceptance path.
+		if r.Question[0].Qtype != dns.TypeCDS && r.Question[0].Qtype != dns.TypeCSYNC {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeNotImplemented
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
 		// Guard against unknown transport types that leave clientIP nil.
 		// An unknown address type cannot be rate-limited or ACL-checked safely.
 		if clientIP == nil {
@@ -684,7 +814,8 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	defer pool.PutMessage(m)
 
 	m.SetReply(r)
-	m.RecursionAvailable = s.cfg.EnableRecursive
+	recursionAllowed := s.cfg.EnableRecursive && s.recursionACL != nil && clientIP != nil && s.recursionACL.IsAllowed(clientIP)
+	m.RecursionAvailable = recursionAllowed
 
 	// Apply compression controls
 	if s.defensive != nil {
@@ -694,11 +825,25 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// Validate query
-	if len(r.Question) == 0 {
+	if len(r.Question) != 1 {
 		m.Rcode = dns.RcodeFormatError
 		s.errors.Add(1)
 		emitQuery(m.Rcode, "")
 		w.WriteMsg(m)
+		return
+	}
+	if r.Opcode != dns.OpcodeQuery {
+		m.Rcode = dns.RcodeNotImplemented
+		s.errors.Add(1)
+		emitQuery(m.Rcode, "")
+		w.WriteMsg(m) //nolint:errcheck
+		return
+	}
+	if r.Question[0].Qclass != dns.ClassINET {
+		m.Rcode = dns.RcodeRefused
+		s.errors.Add(1)
+		emitQuery(m.Rcode, "")
+		w.WriteMsg(m) //nolint:errcheck
 		return
 	}
 
@@ -789,6 +934,10 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	var responseClientCookie [8]byte
+	var responseServerCookie [16]byte
+	haveResponseCookie := false
+
 	// Check DNS cookies if enabled
 	if s.cfg.EnableCookies && s.cookies != nil {
 		// Extract cookies from request
@@ -801,11 +950,15 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if opt != nil {
 			for _, option := range opt.Option {
 				if cookie, ok := option.(*dns.EDNS0_COOKIE); ok {
-					if len(cookie.Cookie) >= 8 {
-						copy(clientCookie[:], cookie.Cookie[:8])
+					decoded, err := hex.DecodeString(cookie.Cookie)
+					if err != nil {
+						break
 					}
-					if len(cookie.Cookie) >= 24 {
-						copy(serverCookie[:], cookie.Cookie[8:24])
+					if len(decoded) >= 8 {
+						copy(clientCookie[:], decoded[:8])
+					}
+					if len(decoded) >= 24 {
+						copy(serverCookie[:], decoded[8:24])
 					}
 					break
 				}
@@ -841,10 +994,14 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			return
 		}
 
-		// Add cookies to response
+		// Save the successful response cookie. It is attached to the actual
+		// authoritative or recursive response below, rather than the base message
+		// whose Extra section may be replaced during dispatch.
 		if clientCookie != [8]byte{} {
 			newServerCookie, _ := s.cookies.GenerateServerCookie(clientCookie, clientIP)
-			s.addCookieToResponse(m, clientCookie, newServerCookie)
+			responseClientCookie = clientCookie
+			responseServerCookie = newServerCookie
+			haveResponseCookie = true
 		}
 	}
 
@@ -866,8 +1023,11 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Answer = resp.Answer
 			m.Ns = resp.Ns
 			m.Extra = resp.Extra
+			if haveResponseCookie {
+				s.addCookieToResponse(m, responseClientCookie, responseServerCookie)
+			}
 			m.Rcode = resp.Rcode
-			m.Authoritative = true
+			m.Authoritative = resp.Authoritative
 			// RFC 1034 §4.3.1: authoritative servers MUST NOT set RA.
 			// The base message has RA set from the initial RecursionAvailable assignment;
 			// clear it here so authoritative responses are strictly conformant.
@@ -893,6 +1053,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Try recursive
 	if s.cfg.EnableRecursive && s.recursive != nil {
+		// RFC 1034 section 4.3.1: recursion is performed only when RD is set.
+		// Recursion is additionally restricted to the configured client ACL so
+		// binding :53 on a public interface cannot create an open resolver.
+		if !r.RecursionDesired || !recursionAllowed {
+			m.Rcode = dns.RcodeRefused
+			s.errors.Add(1)
+			emitQuery(m.Rcode, "")
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
 		resp, err := s.recursive.Resolve(s.ctx, r, clientIP)
 		if err != nil {
 			m.Rcode = dns.RcodeServerFailure
@@ -929,6 +1099,9 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 			// Log response
 			s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, resp.Rcode)
+		}
+		if haveResponseCookie {
+			s.addCookieToResponse(resp, responseClientCookie, responseServerCookie)
 		}
 
 		emitQuery(resp.Rcode, "")
@@ -972,11 +1145,37 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 		return nil, false
 	}
 
-	// Build response
-	m := pool.GetMessage()
+	// Build response. This message escapes the function, so it must not come
+	// from the shared pool unless ownership is explicitly returned by the caller.
+	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Authoritative = true
 	m.RecursionAvailable = false
+	if qtype == dns.TypeANY {
+		m.Answer = []dns.RR{&dns.HINFO{
+			Hdr: dns.RR_Header{Name: qname, Rrtype: dns.TypeHINFO, Class: dns.ClassINET, Ttl: 0},
+			Cpu: "RFC8482",
+			Os:  "",
+		}}
+		return m, true
+	}
+
+	// A delegation NS RRset below the apex creates a zone cut. Answer DS at the
+	// cut from the parent zone; all other names/types at or below it are referrals.
+	if cut, nsRecords := matchedZone.FindDelegation(qname); cut != "" &&
+		!(strings.EqualFold(qname, cut) && qtype == dns.TypeDS) {
+		m.Authoritative = false
+		m.Ns = append(m.Ns, nsRecords...)
+		for _, rr := range nsRecords {
+			ns, ok := rr.(*dns.NS)
+			if !ok || !dns.IsSubDomain(matchedZone.Origin, ns.Ns) {
+				continue
+			}
+			m.Extra = append(m.Extra, matchedZone.ExactRecords(ns.Ns, dns.TypeA)...)
+			m.Extra = append(m.Extra, matchedZone.ExactRecords(ns.Ns, dns.TypeAAAA)...)
+		}
+		return m, true
+	}
 
 	// Get records
 	records := matchedZone.GetRecords(qname, qtype)
@@ -1187,6 +1386,6 @@ func (s *Server) addCookieToResponse(m *dns.Msg, clientCookie [8]byte, serverCoo
 
 	opt.Option = append(opt.Option, &dns.EDNS0_COOKIE{
 		Code:   dns.EDNS0COOKIE,
-		Cookie: string(fullCookie),
+		Cookie: hex.EncodeToString(fullCookie),
 	})
 }
