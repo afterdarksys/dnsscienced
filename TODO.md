@@ -71,9 +71,11 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [ ] Implement DNS over QUIC (RFC 9250); the experimental configuration stub is
   not an operational listener.
 - [ ] Implement Oblivious DoH (RFC 9230).
-- [ ] Add authenticated and confidential zone transfer over TLS/QUIC (RFC 9103):
-  strict TLS 1.3 outbound AXFR/IXFR with ALPN, server authentication, optional
-  mTLS, and no cleartext fallback is complete; primary-side XoT and QUIC remain.
+- [x] Add authenticated and confidential zone transfer over TLS (RFC 9103):
+  strict TLS 1.3 AXFR/IXFR in both directions, ALPN `dot`, primary
+  authentication, optional mTLS, TSIG/source-ACL authorization, per-zone
+  cleartext refusal, EDE 21, and no client fallback. RFC 9103 does not define
+  zone transfer over QUIC; DoQ remains tracked separately.
 - [x] Add configurable query-complexity admission scoring before policy,
   authoritative, and recursive processing, with Prometheus rejection counters.
 - [x] Add bounded adaptive IP-reputation admission limits with lazy score decay,

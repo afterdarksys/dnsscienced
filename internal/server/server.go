@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -40,6 +41,7 @@ type Config struct {
 	TCPAddr string              `yaml:"tcp_addr"`
 	DoH     transport.DoHConfig `yaml:"doh"`
 	DoT     transport.DoTConfig `yaml:"dot"`
+	XoT     XoTConfig           `yaml:"xot"`
 
 	// Number of UDP listeners (SO_REUSEPORT)
 	// Set to runtime.NumCPU() for maximum performance
@@ -91,6 +93,7 @@ type Config struct {
 	// Populated by main.go from config.ZoneConfig.AllowTransfer.
 	// Empty/absent = deny all (D-01).
 	ZoneTransferCIDRs     map[string][]string `yaml:"-"`
+	ZoneTransferTLSOnly   map[string]bool     `yaml:"-"`
 	ZoneAllowAXFRFallback map[string]bool     `yaml:"-"`
 
 	// ZoneUpdateCIDRs maps zone FQDN origin to CIDR strings allowed to send RFC 2136 UPDATE.
@@ -236,6 +239,9 @@ type Server struct {
 	tcpLimiter *transport.LimitedListener
 	dohServer  *transport.DoHListener
 	dotServer  *transport.DoTListener
+	xotServer  *dns.Server
+	xotTLS     *tls.Config
+	xotLimiter *transport.LimitedListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -588,6 +594,25 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("init DNS-over-TLS listener: %w", err)
 		}
 	}
+	if cfg.XoT.Enabled {
+		var err error
+		s.xotTLS, err = loadXoTTLSConfig(cfg.XoT)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init XFR-over-TLS listener: %w", err)
+		}
+		s.xotServer = &dns.Server{
+			Net:          "tcp-tls",
+			Handler:      dns.HandlerFunc(s.handleXoT),
+			ReadTimeout:  cfg.ReadTimeout,
+			WriteTimeout: cfg.WriteTimeout,
+			IdleTimeout: func() time.Duration {
+				return cfg.IdleTimeout
+			},
+			MaxTCPQueries: cfg.TCPProtection.MaxQueriesPerConnection,
+			TsigProvider:  s.tsigKeyRing,
+		}
+	}
 
 	return s, nil
 }
@@ -616,8 +641,33 @@ func (s *Server) Start() error {
 			s.tcpLimiter = nil
 		}
 	}
+	closeXoTListener := func() {
+		if s.xotServer != nil && s.xotServer.Listener != nil {
+			_ = s.xotServer.Listener.Close()
+			s.xotServer.Listener = nil
+			s.xotLimiter = nil
+		}
+	}
+	if s.xotServer != nil {
+		baseListener, err := net.Listen("tcp", xotAddress(s.cfg.XoT))
+		if err != nil {
+			closeTCPListener()
+			return fmt.Errorf("listen XFR-over-TLS: %w", err)
+		}
+		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
+		if err != nil {
+			_ = baseListener.Close()
+			closeTCPListener()
+			return fmt.Errorf("protect XFR-over-TLS listener: %w", err)
+		}
+		if limited, ok := listener.(*transport.LimitedListener); ok {
+			s.xotLimiter = limited
+		}
+		s.xotServer.Listener = tls.NewListener(listener, s.xotTLS)
+	}
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
@@ -627,6 +677,7 @@ func (s *Server) Start() error {
 			if s.dohServer != nil {
 				_ = s.dohServer.Stop()
 			}
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
@@ -639,6 +690,7 @@ func (s *Server) Start() error {
 			if s.dotServer != nil {
 				_ = s.dotServer.Stop()
 			}
+			closeXoTListener()
 			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
@@ -673,6 +725,16 @@ func (s *Server) Start() error {
 			}
 		}()
 	}
+	if s.xotServer != nil && s.xotServer.Listener != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			fmt.Printf("XFR-over-TLS listener started on %s\n", xotAddress(s.cfg.XoT))
+			if err := s.xotServer.ActivateAndServe(); err != nil {
+				fmt.Printf("XFR-over-TLS listener error: %v\n", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -691,6 +753,11 @@ func (s *Server) Stop() error {
 	if s.dotServer != nil {
 		if err := s.dotServer.Stop(); err != nil {
 			fmt.Printf("Error shutting down DNS-over-TLS listener: %v\n", err)
+		}
+	}
+	if s.xotServer != nil && s.xotServer.Listener != nil {
+		if err := s.xotServer.Shutdown(); err != nil {
+			fmt.Printf("Error shutting down XFR-over-TLS listener: %v\n", err)
 		}
 	}
 
@@ -1551,6 +1618,7 @@ type Stats struct {
 
 	ClientReputation reputation.Stats
 	TCPConnections   transport.TCPConnectionStats
+	XoTConnections   transport.TCPConnectionStats
 
 	Recursive     *resolver.Stats
 	RRL           *rrl.Stats
@@ -1573,6 +1641,9 @@ func (s *Server) GetStats() Stats {
 	}
 	if s.tcpLimiter != nil {
 		stats.TCPConnections = s.tcpLimiter.Stats()
+	}
+	if s.xotLimiter != nil {
+		stats.XoTConnections = s.xotLimiter.Stats()
 	}
 
 	if s.recursive != nil {

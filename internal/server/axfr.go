@@ -31,6 +31,19 @@ func (s *Server) handleAXFR(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 		return
 	}
 
+	// A primary zone configured for an RFC 9103-only transfer group must not
+	// expose AXFR or IXFR on the ordinary cleartext TCP listener.
+	if len(r.Question) == 1 {
+		qname := strings.ToLower(dns.Fqdn(r.Question[0].Name))
+		if s.cfg.ZoneTransferTLSOnly[qname] && !isXoTWriter(w) {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m) //nolint:errcheck
+			return
+		}
+	}
+
 	// 2. TSIG presence check (D-04): no TSIG record at all → NOTAUTH.
 	// This MUST come before the validity check — an absent TSIG yields
 	// TsigStatus() == nil, which would incorrectly allow unsigned requests.

@@ -163,20 +163,7 @@ func main() {
 		// Wire per-zone allow_transfer CIDRs from zone config into server config.
 		// config.Config.Zones holds AllowTransfer; server.Config.ZoneTransferCIDRs
 		// carries them to the AXFR handler. Wired here to avoid import cycle.
-		if len(loadedCfg.Zones) > 0 {
-			cfg.ZoneTransferCIDRs = make(map[string][]string, len(loadedCfg.Zones))
-			cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(loadedCfg.Zones))
-			for _, zc := range loadedCfg.Zones {
-				// Ensure zone name is FQDN (trailing dot)
-				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
-				cfg.ZoneTransferCIDRs[zoneName] = zc.AllowTransfer
-				allowFallback := true
-				if zc.AllowAXFRFallback != nil {
-					allowFallback = *zc.AllowAXFRFallback
-				}
-				cfg.ZoneAllowAXFRFallback[zoneName] = allowFallback
-			}
-		}
+		wireZoneTransferPolicies(&cfg, loadedCfg.Zones)
 
 		// Wire per-zone allow_update CIDRs from zone config into server config.
 		// Same pattern as ZoneTransferCIDRs; wired here to avoid import cycle.
@@ -727,6 +714,25 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 	return result, nil
 }
 
+func wireZoneTransferPolicies(cfg *server.Config, zones []config.ZoneConfig) {
+	if len(zones) == 0 {
+		return
+	}
+	cfg.ZoneTransferCIDRs = make(map[string][]string, len(zones))
+	cfg.ZoneTransferTLSOnly = make(map[string]bool, len(zones))
+	cfg.ZoneAllowAXFRFallback = make(map[string]bool, len(zones))
+	for _, zoneConfig := range zones {
+		zoneName := strings.ToLower(dns.Fqdn(zoneConfig.Name))
+		cfg.ZoneTransferCIDRs[zoneName] = append([]string(nil), zoneConfig.AllowTransfer...)
+		cfg.ZoneTransferTLSOnly[zoneName] = zoneConfig.TransferTLSOnly
+		allowFallback := true
+		if zoneConfig.AllowAXFRFallback != nil {
+			allowFallback = *zoneConfig.AllowAXFRFallback
+		}
+		cfg.ZoneAllowAXFRFallback[zoneName] = allowFallback
+	}
+}
+
 func buildCatalogConfigs(cfg *config.Config) (
 	[]catalog.SourceConfig,
 	map[string]secondary.Config,
@@ -954,6 +960,15 @@ func printStats(srv *server.Server) {
 		fmt.Printf("  Answers:    %10d\n", stats.Answers)
 		fmt.Printf("  Errors:     %10d\n", stats.Errors)
 		fmt.Printf("  NXDOMAIN:   %10d\n", stats.NXDOMAIN)
+		if stats.XoTConnections.Active != 0 ||
+			stats.XoTConnections.Accepted != 0 ||
+			stats.XoTConnections.Rejected != 0 {
+			fmt.Printf("  XoT TCP:    %10d active  (%d accepted, %d rejected)\n",
+				stats.XoTConnections.Active,
+				stats.XoTConnections.Accepted,
+				stats.XoTConnections.Rejected,
+			)
+		}
 
 		if stats.Recursive != nil {
 			fmt.Printf("\nRecursive Resolver:\n")

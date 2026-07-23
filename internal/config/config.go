@@ -149,6 +149,7 @@ type ZoneConfig struct {
 
 	// AXFR/IXFR configuration
 	AllowTransfer       []string      `yaml:"allow_transfer,omitempty"`        // CIDRs allowed to AXFR
+	TransferTLSOnly     bool          `yaml:"transfer_tls_only,omitempty"`     // Refuse cleartext AXFR/IXFR for this primary zone
 	AlsoNotify          []string      `yaml:"also_notify,omitempty"`           // Additional NOTIFY targets
 	NotifyTSIGKey       string        `yaml:"notify_tsig_key,omitempty"`       // Named key used to sign outbound RFC 1996 NOTIFY
 	AllowUnsignedNotify bool          `yaml:"allow_unsigned_notify,omitempty"` // Explicit legacy compatibility escape hatch

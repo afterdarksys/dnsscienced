@@ -51,6 +51,49 @@ protects transfer confidentiality and authenticates the channel. Keep the same
 strict XoT policy for AXFR and IXFR on every primary and secondary in the
 transfer group.
 
+## Primary XFR-over-TLS
+
+Primary servers expose a dedicated streaming XoT listener. It is separate from
+general-purpose DoT so AXFR and IXFR retain their multi-message transfer
+semantics.
+
+```yaml
+server:
+  xot:
+    enabled: true
+    address: ":853"
+    cert_file: "/etc/dnsscienced/tls/primary.pem"
+    key_file: "/etc/dnsscienced/tls/primary-key.pem"
+    client_ca_file: "/etc/dnsscienced/tls/secondary-ca.pem"
+    require_client_cert: true
+
+tsig_keys:
+  - name: "secondary-xfer.example."
+    algorithm: "hmac-sha256"
+    secret: "<base64-secret>"
+
+zones:
+  - name: "primary.example."
+    type: "primary"
+    file: "/etc/dnsscienced/zones/primary.example.zone"
+    allow_transfer:
+      - "192.0.2.0/24"
+    transfer_tls_only: true
+```
+
+The listener accepts only TLS 1.3 or later with ALPN `dot`. Non-transfer DNS
+traffic receives REFUSED with RFC 8914 EDE 21 (Not Supported). The existing
+per-zone source ACL and TSIG validation still authorize every AXFR/IXFR
+request. When `require_client_cert` is true, the TLS handshake additionally
+requires a certificate chaining to `client_ca_file`.
+
+Set `transfer_tls_only: true` on every confidential primary zone. This refuses
+AXFR and IXFR on the ordinary TCP listener and prevents a cleartext weak link
+in the transfer group. During a controlled migration it may remain false, but
+that mode does not provide end-to-end XoT confidentiality. If general DoT is
+also enabled, configure it on a different address or port from the dedicated
+XoT listener.
+
 `transfer_tsig_key` is required by default:
 
 - outbound AXFR is signed with that named key;

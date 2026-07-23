@@ -88,6 +88,26 @@ func TestConfiguredZonesDefersSecondaryToTransferManager(t *testing.T) {
 	}
 }
 
+func TestWireZoneTransferPoliciesIncludesTLSOnly(t *testing.T) {
+	disabled := false
+	cfg := server.Config{}
+	wireZoneTransferPolicies(&cfg, []config.ZoneConfig{{
+		Name:              "Primary.Example",
+		AllowTransfer:     []string{"192.0.2.0/24"},
+		TransferTLSOnly:   true,
+		AllowAXFRFallback: &disabled,
+	}})
+	if cfg.ZoneTransferCIDRs["primary.example."][0] != "192.0.2.0/24" ||
+		!cfg.ZoneTransferTLSOnly["primary.example."] ||
+		cfg.ZoneAllowAXFRFallback["primary.example."] {
+		t.Fatalf("transfer policies = ACL:%v TLS-only:%v fallback:%v",
+			cfg.ZoneTransferCIDRs,
+			cfg.ZoneTransferTLSOnly,
+			cfg.ZoneAllowAXFRFallback,
+		)
+	}
+}
+
 func TestWireResolverForwardingIncludesGlobalAndZonePolicies(t *testing.T) {
 	resolverConfig := resolver.Config{ForwardMode: resolver.ForwardModeFirst}
 	cfg := &config.Config{

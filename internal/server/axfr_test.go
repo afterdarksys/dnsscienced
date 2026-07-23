@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"testing"
@@ -18,6 +19,7 @@ type axfrTestResponseWriter struct {
 	tsigStatus error
 	closed     bool
 	remoteAddr net.Addr
+	tlsState   *tls.ConnectionState
 }
 
 // newAXFRTestWriter creates a TCP-backed test writer for the given IP.
@@ -46,6 +48,9 @@ func (w *axfrTestResponseWriter) Close() error                { w.closed = true;
 func (w *axfrTestResponseWriter) TsigStatus() error           { return w.tsigStatus }
 func (w *axfrTestResponseWriter) TsigTimersOnly(b bool)       {}
 func (w *axfrTestResponseWriter) Hijack()                     {}
+func (w *axfrTestResponseWriter) ConnectionState() *tls.ConnectionState {
+	return w.tlsState
+}
 
 // testZone returns a minimal valid zone for AXFR testing.
 func testZone() *zone.Zone {
@@ -104,6 +109,7 @@ func testServerWithAXFR(allowTransfer []string) (*Server, error) {
 	cfg := Config{
 		Zones:             zones,
 		ZoneTransferCIDRs: xferCIDRs,
+		UDPListeners:      1,
 	}
 	return New(cfg)
 }
