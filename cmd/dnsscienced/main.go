@@ -249,8 +249,19 @@ func main() {
 	if isFlagPassed("darkapi-key") {
 		cfg.RecursiveConfig.CacheConfig.DarkAPIKey = *darkApiKey
 	}
+	if loadedCfg != nil && loadedCfg.Role != "" {
+		loadedCfg.Server = cfg
+		if err := loadedCfg.ApplyRoleProfile(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error validating deployment role after CLI overrides: %v\n", err)
+			os.Exit(1)
+		}
+		cfg = loadedCfg.Server
+	}
 
 	fmt.Printf("Configuration:\n")
+	if loadedCfg != nil && loadedCfg.Role != "" {
+		fmt.Printf("  Role:               %s\n", loadedCfg.Role)
+	}
 	fmt.Printf("  UDP Address:      %s\n", cfg.UDPAddr)
 	fmt.Printf("  TCP Address:      %s\n", cfg.TCPAddr)
 	fmt.Printf("  UDP Listeners:    %d (SO_REUSEPORT)\n", cfg.UDPListeners)

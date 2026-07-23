@@ -1,6 +1,10 @@
 # DNSScienced Configuration Example
 # Comprehensive configuration showing all defensive DNS features
 
+# This example intentionally combines authoritative and recursive service.
+# Production deployments should select a narrower validated role.
+role: custom
+
 # Go runtime tuning. Omit or leave at zero to preserve Go's environment- and
 # container-aware defaults (GOMAXPROCS, GOGC, and GOMEMLIMIT).
 runtime:

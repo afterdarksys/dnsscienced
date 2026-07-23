@@ -20,7 +20,7 @@ root-authoritative deployments.
 - [x] Define explicit role boundaries, data-plane tiers, correctness gates,
   Linux performance gates, and the distinction between loading `.` and operating
   a standards-conformant public root service.
-- [ ] Add validated role profiles that reject unsafe combinations and default
+- [x] Add validated role profiles that reject unsafe combinations and default
   authoritative/root listeners to recursion disabled.
 - [ ] Build differential protocol suites against current BIND and NSD releases.
 - [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate

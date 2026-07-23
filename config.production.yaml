@@ -1,4 +1,8 @@
 # DNSScienced Production Configuration with ThreatScript
+# This sample intentionally demonstrates a mixed deployment. Prefer one of the
+# narrower validated roles documented in docs/ROLE_PROFILES.md.
+role: custom
+
 runtime:
   max_procs: 0          # Auto/container-aware; set only after measuring
   gc_percent: 100

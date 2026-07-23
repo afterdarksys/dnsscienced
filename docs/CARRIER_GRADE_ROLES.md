@@ -13,18 +13,21 @@ server suitable for public root service.
 
 | Role | Required behavior | Isolation rule | Current gate |
 |---|---|---|---|
-| Authoritative primary | Atomic zone load/reload, correct referrals and negative answers, DNSSEC serving, UPDATE, NOTIFY, AXFR/IXFR, TSIG, ACLs | Recursion disabled by default | Partial: protocol matrix and interoperability remain |
+| Authoritative primary | Atomic zone load/reload, correct referrals and negative answers, DNSSEC serving, UPDATE, NOTIFY, AXFR/IXFR, TSIG, ACLs | Recursion disabled by validated profile | Partial: protocol matrix and interoperability remain |
 | Authoritative secondary | Authenticated AXFR/IXFR, serial arithmetic, refresh/retry/expire, NOTIFY, last-good atomic snapshots | Expired zones cannot silently serve stale authority | Partial: interoperability and durable state remain |
 | Validating recursive | Iteration from root hints, DNSSEC validation, negative caching, QNAME minimization, bounded work, cache/prefetch, serve-stale policy | Authoritative data cannot contaminate recursion | Partial: forwarding modes, RFC 5011, and broad conformance remain |
-| Forwarder | Explicit public-recursive, private-upstream, and conditional-forwarding modes with health, failover, TLS policy, and loop prevention | Never silently fall back to an ISP/host resolver | Missing |
+| Forwarder | Explicit public-recursive, private-upstream, and conditional-forwarding modes with health, failover, TLS policy, and loop prevention | Never silently fall back to an ISP/host resolver | Partial: strict profile and modes implemented; health and encrypted upstreams remain |
 | Security/policy | RPZ, RRL, cookies, ACLs, threat enrichment, auditable decisions, bounded failure behavior | Security checks are part of every enabled data path, including fast paths | Partial |
-| Local root | Authenticated root-zone acquisition, DNSSEC validation, loopback-only authority, refresh/expire behavior | Must not become an unintended public alternate root | Missing conformance mode |
-| Public root authoritative | Unique root-zone service, IPv4/IPv6, UDP/TCP, EDNS, authoritative DNSSEC, exact protocol behavior, anycast operations, published service evidence | Dedicated authoritative-only profile; no recursion, forwarding, or tenant policy | Not release-ready |
+| Local root | Authenticated root-zone acquisition, DNSSEC validation, loopback-only authority, refresh/expire behavior | Must not become an unintended public alternate root | Partial: isolation profile implemented; conformance suite remains |
+| Public root authoritative | Unique root-zone service, IPv4/IPv6, UDP/TCP, EDNS, authoritative DNSSEC, exact protocol behavior, anycast operations, published service evidence | Dedicated authoritative-only profile; no recursion, forwarding, or tenant policy | Isolation profile implemented; not release-ready |
 
 NSD is deliberately authoritative-only, while BIND can combine authoritative and
 recursive functions. DNSScienced may support multiple roles in one binary, but a
 carrier deployment should select an explicit profile. Listener and policy
 configuration must reject unsafe combinations rather than infer intent.
+
+The validated profiles and examples are documented in
+[ROLE_PROFILES.md](ROLE_PROFILES.md).
 
 ## Data-plane tiers
 
@@ -125,4 +128,3 @@ Official comparison references:
 - [NSD documentation](https://nsd.docs.nlnetlabs.nl/en/latest/)
 - [NSD tuning](https://nsd.docs.nlnetlabs.nl/en/latest/running/tuning.html)
 - [Large authoritative DNS operator considerations (RFC 9199)](https://www.rfc-editor.org/rfc/rfc9199)
-
