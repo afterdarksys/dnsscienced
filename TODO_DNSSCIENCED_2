@@ -11,9 +11,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   1. DNSSEC Validation (Critical Gap)
 
-  Status: **Partial** — signature/denial validation, algorithm policy, static
-  trust anchors, and NSEC3 limits are implemented; RFC 5011 durable rollover is
-  still pending.
+  Status: **Implemented** — signature/denial validation, algorithm policy,
+  static trust-anchor bootstrap, RFC 5011 durable rollover, and NSEC3 limits
+  are implemented.
 
   - Full DNSSEC signature verification
   - Algorithm downgrade protection
@@ -58,8 +58,9 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   5. DNS Firewall Enhancements
 
-  Status: **Partial** — regex/QNAME RPZ and configurable multi-source threat
-  feeds are implemented; GeoIP and durable per-client behavioral history remain.
+  Status: **Partial** — all five RPZ trigger families, regex policies, and
+  configurable multi-source threat feeds are implemented; GeoIP and durable
+  per-client behavioral history remain.
 
   - Behavioral anomaly detection: ML-based detection of unusual query patterns
   - Geofencing: Block/allow queries based on GeoIP
@@ -77,8 +78,8 @@ Based on my exploration, dnsscienced already has extensive security features bui
 
   7. Network Protocol Security
 
-  Status: **Partial** — DoT/DoH are available; operational DoQ, ODoH, and
-  authenticated confidential RFC 9103 transfer remain pending.
+  Status: **Partial** — DoT/DoH and authenticated confidential RFC 9103
+  transfer are operational; DoQ and ODoH remain pending.
 
   - DNS over QUIC (DoQ) - RFC 9250 (more efficient than DoT)
   - Oblivious DoH (ODoH) - RFC 9230 (zero-knowledge privacy)

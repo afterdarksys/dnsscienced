@@ -14,12 +14,12 @@ server suitable for public root service.
 | Role | Required behavior | Isolation rule | Current gate |
 |---|---|---|---|
 | Authoritative primary | Atomic zone load/reload, correct referrals and negative answers, DNSSEC serving, UPDATE, NOTIFY, AXFR/IXFR, TSIG, ACLs | Recursion disabled by validated profile | Partial: protocol matrix and interoperability remain |
-| Authoritative secondary | Authenticated AXFR/IXFR, serial arithmetic, refresh/retry/expire, NOTIFY, last-good atomic snapshots | Expired zones cannot silently serve stale authority | Partial: interoperability and durable state remain |
-| Validating recursive | Iteration from root hints, DNSSEC validation, negative caching, QNAME minimization, bounded work, cache/prefetch, serve-stale policy | Authoritative data cannot contaminate recursion | Partial: forwarding modes, RFC 5011, and broad conformance remain |
+| Authoritative secondary | Authenticated AXFR/IXFR, serial arithmetic, refresh/retry/expire, NOTIFY, last-good atomic snapshots | Expired zones are withdrawn at SOA Expire | Partial: interoperability and durable transfer state remain |
+| Validating recursive | Iteration from root hints, DNSSEC validation, negative caching, QNAME minimization, bounded work, cache/prefetch, serve-stale policy | Authoritative data cannot contaminate recursion | Partial: RFC 5011 and forwarding modes are implemented; broad interoperability/conformance remains |
 | Forwarder | Explicit public-recursive, private-upstream, and conditional-forwarding modes with health, failover, TLS policy, and loop prevention | Never silently fall back to an ISP/host resolver | Partial: strict profile and modes implemented; health and encrypted upstreams remain |
 | Security/policy | RPZ, RRL, cookies, ACLs, threat enrichment, auditable decisions, bounded failure behavior | Security checks are part of every enabled data path, including fast paths | Partial |
-| Local root | Authenticated root-zone acquisition, DNSSEC validation, loopback-only authority, refresh/expire behavior | Must not become an unintended public alternate root | Partial: isolation profile implemented; conformance suite remains |
-| Public root authoritative | Unique root-zone service, IPv4/IPv6, UDP/TCP, EDNS, authoritative DNSSEC, exact protocol behavior, anycast operations, published service evidence | Dedicated authoritative-only profile; no recursion, forwarding, or tenant policy | Isolation profile implemented; not release-ready |
+| Local root | Complete root-zone acquisition, signed authoritative data, loopback-only authority, refresh/expire behavior | Must not become an unintended public alternate root; stale authority is withdrawn | Software conformance suite implemented; deployment integration with a same-host validating resolver remains |
+| Public root authoritative | Unique root-zone service, IPv4/IPv6, UDP/TCP, EDNS, authoritative DNSSEC, exact protocol behavior, anycast operations, published service evidence | Dedicated authoritative-only profile; no recursion, forwarding, or tenant policy | RFC 7720 daemon protocol suite implemented; operationally not release-ready |
 
 NSD is deliberately authoritative-only, while BIND can combine authoritative and
 recursive functions. DNSScienced may support multiple roles in one binary, but a
@@ -103,6 +103,11 @@ evidence they need, but application code alone cannot satisfy them.
 A local root is a different role. It follows
 [RFC 8806](https://www.rfc-editor.org/rfc/rfc8806), including a current complete
 root zone, DNSSEC validation material, and authority restricted to the same host.
+DNSScienced's local-root profile enforces loopback listeners, serves the signed
+root data required by the same-host validating resolver, refreshes a secondary
+root from SOA timers, and withdraws it at SOA Expire after failed refreshes.
+Fallback to non-local roots is the responsibility of that same-host validating
+resolver, matching the separated-service model described by RFC 8806.
 
 ## Performance gates
 

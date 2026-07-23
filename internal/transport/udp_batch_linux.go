@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync/atomic"
 
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -16,6 +17,7 @@ const (
 	defaultUDPBatchSize = 64
 	maxUDPBatchSize     = 256
 	maxUDPDatagramSize  = 65535
+	udpBatchOOBSize     = 128
 )
 
 type packetBatchConn interface {
@@ -29,6 +31,7 @@ type UDPDatagram struct {
 	Payload   []byte
 	Addr      *net.UDPAddr
 	Truncated bool
+	OOB       []byte
 }
 
 // UDPBatchConn wraps x/net's Linux recvmmsg/sendmmsg implementation with bounded,
@@ -39,9 +42,13 @@ type UDPBatchConn struct {
 	packetConn packetBatchConn
 	packetSize int
 	storage    []byte
+	oobStorage []byte
 	recv       []ipv4.Message
 	send       []ipv4.Message
 	datagrams  []UDPDatagram
+	readCalls  atomic.Uint64
+	received   atomic.Uint64
+	truncated  atomic.Uint64
 }
 
 // NewUDPBatchConn prepares fixed receive/send descriptors for conn.
@@ -72,9 +79,17 @@ func NewUDPBatchConn(conn *net.UDPConn, batchSize, packetSize int) (*UDPBatchCon
 
 	var packets packetBatchConn
 	if local.IP.To4() != nil {
-		packets = ipv4.NewPacketConn(conn)
+		packetConn := ipv4.NewPacketConn(conn)
+		if err := packetConn.SetControlMessage(ipv4.FlagDst|ipv4.FlagInterface, true); err != nil {
+			return nil, fmt.Errorf("udp batch: enable IPv4 packet info: %w", err)
+		}
+		packets = packetConn
 	} else {
-		packets = ipv6.NewPacketConn(conn)
+		packetConn := ipv6.NewPacketConn(conn)
+		if err := packetConn.SetControlMessage(ipv6.FlagDst|ipv6.FlagInterface, true); err != nil {
+			return nil, fmt.Errorf("udp batch: enable IPv6 packet info: %w", err)
+		}
+		packets = packetConn
 	}
 
 	b := &UDPBatchConn{
@@ -82,6 +97,7 @@ func NewUDPBatchConn(conn *net.UDPConn, batchSize, packetSize int) (*UDPBatchCon
 		packetConn: packets,
 		packetSize: packetSize,
 		storage:    make([]byte, batchSize*packetSize),
+		oobStorage: make([]byte, batchSize*udpBatchOOBSize),
 		recv:       make([]ipv4.Message, batchSize),
 		send:       make([]ipv4.Message, batchSize),
 		datagrams:  make([]UDPDatagram, batchSize),
@@ -89,6 +105,7 @@ func NewUDPBatchConn(conn *net.UDPConn, batchSize, packetSize int) (*UDPBatchCon
 	for i := range b.recv {
 		slot := b.storage[i*packetSize : (i+1)*packetSize]
 		b.recv[i].Buffers = [][]byte{slot}
+		b.recv[i].OOB = b.oobStorage[i*udpBatchOOBSize : (i+1)*udpBatchOOBSize]
 		b.send[i].Buffers = make([][]byte, 1)
 	}
 	return b, nil
@@ -102,6 +119,7 @@ func (b *UDPBatchConn) Capacity() int {
 // ReadBatch receives up to Capacity datagrams with one recvmmsg call.
 func (b *UDPBatchConn) ReadBatch() ([]UDPDatagram, error) {
 	for i := range b.recv {
+		b.recv[i].OOB = b.oobStorage[i*udpBatchOOBSize : (i+1)*udpBatchOOBSize]
 		b.recv[i].N = 0
 		b.recv[i].NN = 0
 		b.recv[i].Flags = 0
@@ -112,6 +130,8 @@ func (b *UDPBatchConn) ReadBatch() ([]UDPDatagram, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.readCalls.Add(1)
+	b.received.Add(uint64(n))
 	for i := 0; i < n; i++ {
 		addr, ok := b.recv[i].Addr.(*net.UDPAddr)
 		if !ok {
@@ -125,9 +145,21 @@ func (b *UDPBatchConn) ReadBatch() ([]UDPDatagram, error) {
 			Payload:   b.recv[i].Buffers[0][:length:length],
 			Addr:      addr,
 			Truncated: b.recv[i].Flags&unix.MSG_TRUNC != 0,
+			OOB:       b.recv[i].OOB[:b.recv[i].NN:b.recv[i].NN],
+		}
+		if b.datagrams[i].Truncated {
+			b.truncated.Add(1)
 		}
 	}
 	return b.datagrams[:n], nil
+}
+
+func (b *UDPBatchConn) Stats() UDPBatchStats {
+	return UDPBatchStats{
+		ReadCalls:          b.readCalls.Load(),
+		Datagrams:          b.received.Load(),
+		TruncatedDatagrams: b.truncated.Load(),
+	}
 }
 
 // WriteBatch sends datagrams with one sendmmsg call. A partial count is returned

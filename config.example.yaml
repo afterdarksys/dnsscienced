@@ -17,6 +17,7 @@ server:
   udp_addr: "0.0.0.0:53"
   tcp_addr: "0.0.0.0:53"
   udp_listeners: 4               # Number of SO_REUSEPORT listeners (default: NumCPU)
+  udp_batch_size: 0              # Linux recvmmsg batch (1-256); 0 keeps portable listener
   primary_notify_workers: 4      # Fixed outbound RFC 1996 NOTIFY workers
   update_replay_cache_size: 65536 # Authenticated RFC 2136 MACs retained during the TSIG window
   read_timeout: 5s
@@ -79,6 +80,13 @@ server:
     aggressive_nsec: true        # Aggressive NSEC caching (RFC 8198)
     serve_stale: true            # Serve stale on upstream failure (RFC 8767)
     stale_max_ttl: 24h           # Max stale record age (struct tag: stale_max_ttl, NOT stale_ttl)
+    enable_dnssec: true
+    dnssec:
+      trust_anchor_file: "/etc/dnsscienced/root.key" # Initial out-of-band KSK
+      auto_trust_anchor: true                        # RFC 5011 maintenance
+      trust_anchor_state_file: "/var/lib/dnsscienced/managed-keys.json"
+      # Optional upper bound; RFC 5011 TTL/signature timers can refresh sooner:
+      trust_anchor_update: 168h
 
   # DNS Cookies (RFC 7873) - Off-path attack protection
   enable_cookies: true
@@ -102,10 +110,13 @@ server:
       - "::1/128"
 
   # Response Policy Zones. Lower priority values are evaluated first.
-  # Files use standard RPZ QNAME CNAME policies and are atomically reloaded
-  # with SIGHUP. A failed reload retains the last valid policy.
+  # Files use all five standard RPZ trigger families and are atomically
+  # reloaded with SIGHUP. A failed reload retains the last valid policy.
   rpz:
     enabled: false
+    min_ns_dots: 1                # Skip root; use 0 to include it
+    max_ns_lookups: 64            # Total NS/A/AAAA policy lookups, 1..256
+    nameserver_lookup_timeout: 2s # Total NSDNAME/NSIP discovery deadline
     zones:
       - name: "security-policy"
         file: "/etc/dnsscienced/rpz/security-policy.bind"
@@ -269,7 +280,7 @@ defensive:
     # Validation mode
     validation: true                    # Enable DNSSEC validation
     validation_mode: "strict"           # "strict", "permissive", or "log-only"
-    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf  # RFC 5011 format
+    trust_anchor_file: /etc/dnsscienced/trust-anchors.conf
     root_key_file: /etc/dnsscienced/root.key                # Root KSK for bootstrapping
 
     # Troubleshooting and compatibility
@@ -294,7 +305,7 @@ defensive:
     cache_ttl: 3600s                    # TTL for DNSSEC cache entries (1 hour)
 
     # Key management
-    auto_trust_anchor: true             # RFC 5011 automatic trust anchor update
+    auto_trust_anchor: true             # Legacy defensive setting; use server.recursive.dnssec
     trust_anchor_update: 168h           # Check for updates weekly (7 days)
 
     # Algorithm support

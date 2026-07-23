@@ -2,6 +2,8 @@ package zone
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,6 +23,27 @@ func TestParseBIND(t *testing.T) {
 
 	if z.Name != "example.org." {
 		t.Errorf("Zone name = %s, want example.org.", z.Name)
+	}
+}
+
+func TestParseBIND_DerivesOriginFromSOA(t *testing.T) {
+	cfg := DefaultConfig()
+	z, err := ParseBIND("testdata/example.org.bind", "", cfg)
+	if err != nil {
+		t.Fatalf("ParseBIND() error = %v", err)
+	}
+	if z.Origin != "example.org." {
+		t.Fatalf("Zone origin = %q, want example.org.", z.Origin)
+	}
+}
+
+func TestParseBIND_EmptyOriginWithoutSOAReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-soa.bind")
+	if err := os.WriteFile(path, []byte("$ORIGIN example.org.\nwww IN A 192.0.2.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseBIND(path, "", DefaultConfig()); err == nil {
+		t.Fatal("ParseBIND() error = nil, want missing-origin error")
 	}
 }
 

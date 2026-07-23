@@ -398,6 +398,14 @@ func main() {
 		}
 	}
 
+	if loadedCfg != nil &&
+		(loadedCfg.Role == config.RoleLocalRoot || loadedCfg.Role == config.RolePublicRoot) {
+		if err := srv.ValidateRootAuthoritativeZone(); err != nil {
+			fmt.Fprintf(os.Stderr, "Root role conformance check failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Start DNS server
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)

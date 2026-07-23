@@ -1,0 +1,22 @@
+$ORIGIN example.test.
+$TTL 300
+
+@ IN SOA ns1.example.test. hostmaster.example.test. (
+    2026072301 3600 600 1209600 300
+)
+@       IN NS    ns1.example.test.
+@       IN NS    ns2.example.test.
+ns1     IN A     192.0.2.53
+ns2     IN A     192.0.2.54
+www     IN A     192.0.2.80
+www     IN AAAA  2001:db8::80
+only-a  IN A     192.0.2.81
+alias   IN CNAME www.example.test.
+mail    IN A     192.0.2.25
+@       IN MX    10 mail.example.test.
+@       IN TXT   "dnsscienced differential conformance"
+@       IN CAA   0 issue "ca.example"
+*.wild  IN A     192.0.2.99
+
+child           IN NS ns.child.example.test.
+ns.child        IN A  192.0.2.100

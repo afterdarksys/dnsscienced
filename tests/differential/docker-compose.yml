@@ -1,0 +1,41 @@
+services:
+  candidate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command:
+      - -udp=:53
+      - -tcp=:53
+      - -listeners=1
+      - -zone=/zones/example.test.zone
+      - -format=bind
+      - -authoritative
+      - -recursive=false
+      - -stats=false
+    volumes:
+      - ./example.test.zone:/zones/example.test.zone:ro
+
+  bind:
+    build:
+      context: ../..
+      dockerfile: tests/differential/bind/Dockerfile
+    volumes:
+      - ./bind/named.conf:/etc/bind/named.conf:ro
+      - ./example.test.zone:/zones/example.test.zone:ro
+
+  nsd:
+    build:
+      context: ../..
+      dockerfile: tests/differential/nsd/Dockerfile
+    volumes:
+      - ./nsd/nsd.conf:/etc/nsd/nsd.conf:ro
+      - ./example.test.zone:/zones/example.test.zone:ro
+
+  runner:
+    build:
+      context: ../..
+      dockerfile: tests/differential/runner/Dockerfile
+    depends_on:
+      - candidate
+      - bind
+      - nsd

@@ -132,6 +132,9 @@ type Config struct {
 	// UDP buffer sizes
 	UDPReadBuffer  int `yaml:"udp_read_buffer"`
 	UDPWriteBuffer int `yaml:"udp_write_buffer"`
+	// UDPBatchSize enables Linux recvmmsg receive batching when positive.
+	// Zero retains the portable miekg/dns listener.
+	UDPBatchSize int `yaml:"udp_batch_size"`
 }
 
 // DSYNCConfig configures inbound RFC 9859 NOTIFY handling.
@@ -188,6 +191,13 @@ func DefaultConfig() Config {
 
 		EnableRRL: true,
 		RRLConfig: rrl.DefaultConfig(),
+		RPZ: RPZConfig{
+			// Match the long-standing BIND default: inspect TLD and lower
+			// delegations but avoid a root NS walk for every eligible answer.
+			MinNSDots:               1,
+			MaxNSLookups:            64,
+			NameserverLookupTimeout: 2 * time.Second,
+		},
 
 		Experimental:     experimental.DefaultConfig(),
 		QueryComplexity:  defaultQueryComplexityConfig(),
@@ -241,13 +251,17 @@ type Server struct {
 
 	// DNS servers (one per listener for SO_REUSEPORT)
 	udpServers []*dns.Server
-	tcpServer  *dns.Server
-	tcpLimiter *transport.LimitedListener
-	dohServer  *transport.DoHListener
-	dotServer  *transport.DoTListener
-	xotServer  *dns.Server
-	xotTLS     *tls.Config
-	xotLimiter *transport.LimitedListener
+	// udpBatchStats is server-owned because dns.Server.PacketConn is assigned
+	// by miekg/dns during startup and cannot be inspected concurrently.
+	udpBatchStatsMu sync.RWMutex
+	udpBatchStats   []transport.UDPBatchStatser
+	tcpServer       *dns.Server
+	tcpLimiter      *transport.LimitedListener
+	dohServer       *transport.DoHListener
+	dotServer       *transport.DoTListener
+	xotServer       *dns.Server
+	xotTLS          *tls.Config
+	xotLimiter      *transport.LimitedListener
 
 	// Statistics
 	queries  atomic.Uint64
@@ -281,6 +295,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.UpdateReplayCacheSize < 1 || cfg.UpdateReplayCacheSize > 16_777_216 {
 		return nil, fmt.Errorf("update_replay_cache_size must be zero (default) or between 1 and 16777216 (got %d)", cfg.UpdateReplayCacheSize)
+	}
+	if cfg.UDPBatchSize < 0 || cfg.UDPBatchSize > 256 {
+		return nil, fmt.Errorf("udp_batch_size must be between 0 and 256 (got %d)", cfg.UDPBatchSize)
+	}
+	if cfg.UDPBatchSize > 0 && !transport.UDPBatchSupported() {
+		return nil, fmt.Errorf("udp_batch_size requires Linux recvmmsg support")
 	}
 	if err := cfg.TCPProtection.Validate(); err != nil {
 		return nil, err
@@ -663,15 +683,67 @@ func (s *Server) Start() error {
 			s.xotLimiter = nil
 		}
 	}
+	closeUDPListeners := func() {
+		for _, udpServer := range s.udpServers {
+			if udpServer.PacketConn != nil {
+				_ = udpServer.PacketConn.Close()
+				udpServer.PacketConn = nil
+			}
+		}
+		s.udpBatchStatsMu.Lock()
+		s.udpBatchStats = nil
+		s.udpBatchStatsMu.Unlock()
+	}
+	if s.cfg.UDPBatchSize > 0 {
+		batchStats := make([]transport.UDPBatchStatser, 0, len(s.udpServers))
+		for i, udpServer := range s.udpServers {
+			conn, err := transport.ListenUDPReusePort(s.cfg.UDPAddr)
+			if err != nil {
+				closeUDPListeners()
+				closeTCPListener()
+				return fmt.Errorf("listen batched UDP DNS %d: %w", i, err)
+			}
+			if s.cfg.UDPReadBuffer > 0 {
+				if err := conn.SetReadBuffer(s.cfg.UDPReadBuffer); err != nil {
+					_ = conn.Close()
+					closeUDPListeners()
+					closeTCPListener()
+					return fmt.Errorf("set batched UDP read buffer %d: %w", i, err)
+				}
+			}
+			if s.cfg.UDPWriteBuffer > 0 {
+				if err := conn.SetWriteBuffer(s.cfg.UDPWriteBuffer); err != nil {
+					_ = conn.Close()
+					closeUDPListeners()
+					closeTCPListener()
+					return fmt.Errorf("set batched UDP write buffer %d: %w", i, err)
+				}
+			}
+			packetConn, err := transport.NewUDPBatchPacketConn(conn, s.cfg.UDPBatchSize, udpServer.UDPSize)
+			if err != nil {
+				_ = conn.Close()
+				closeUDPListeners()
+				closeTCPListener()
+				return fmt.Errorf("prepare batched UDP DNS %d: %w", i, err)
+			}
+			udpServer.PacketConn = packetConn
+			batchStats = append(batchStats, packetConn)
+		}
+		s.udpBatchStatsMu.Lock()
+		s.udpBatchStats = batchStats
+		s.udpBatchStatsMu.Unlock()
+	}
 	if s.xotServer != nil {
 		baseListener, err := net.Listen("tcp", xotAddress(s.cfg.XoT))
 		if err != nil {
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("listen XFR-over-TLS: %w", err)
 		}
 		listener, err := transport.NewLimitedListener(baseListener, s.cfg.TCPProtection)
 		if err != nil {
 			_ = baseListener.Close()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("protect XFR-over-TLS listener: %w", err)
 		}
@@ -683,6 +755,7 @@ func (s *Server) Start() error {
 	if s.dohServer != nil {
 		if err := s.dohServer.Start(); err != nil {
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-HTTPS listener: %w", err)
 		}
@@ -693,6 +766,7 @@ func (s *Server) Start() error {
 				_ = s.dohServer.Stop()
 			}
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start DNS-over-TLS listener: %w", err)
 		}
@@ -706,6 +780,7 @@ func (s *Server) Start() error {
 				_ = s.dotServer.Stop()
 			}
 			closeXoTListener()
+			closeUDPListeners()
 			closeTCPListener()
 			return fmt.Errorf("start primary notify: %w", err)
 		}
@@ -719,9 +794,15 @@ func (s *Server) Start() error {
 		go func() {
 			defer s.wg.Done()
 
-			fmt.Printf("UDP listener %d started on %s (SO_REUSEPORT)\n", i, s.cfg.UDPAddr)
+			fmt.Printf("UDP listener %d started on %s (SO_REUSEPORT, batch=%d)\n", i, s.cfg.UDPAddr, s.cfg.UDPBatchSize)
 
-			if err := udpServer.ListenAndServe(); err != nil {
+			var err error
+			if udpServer.PacketConn != nil {
+				err = udpServer.ActivateAndServe()
+			} else {
+				err = udpServer.ListenAndServe()
+			}
+			if err != nil {
 				fmt.Printf("UDP listener %d error: %v\n", i, err)
 			}
 		}()
@@ -943,12 +1024,27 @@ func writeMsg(w dns.ResponseWriter, msg *dns.Msg) error {
 	return err
 }
 
+func addEDNS0Response(response, request *dns.Msg) {
+	requestOPT := request.IsEdns0()
+	if requestOPT == nil || requestOPT.Version() != 0 || response.IsEdns0() != nil {
+		return
+	}
+	udpSize := requestOPT.UDPSize()
+	if udpSize < dns.MinMsgSize {
+		udpSize = dns.MinMsgSize
+	}
+	if udpSize > dns.DefaultMsgSize {
+		udpSize = dns.DefaultMsgSize
+	}
+	response.SetEdns0(udpSize, requestOPT.Do())
+}
+
 // handleDNS is the main DNS query handler
 func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	s.queries.Add(1)
 
 	// Transport split counter
-	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	if _, ok := transport.UDPAddress(w.RemoteAddr()); ok {
 		s.udpQueries.Add(1)
 	} else {
 		s.tcpQueries.Add(1)
@@ -956,7 +1052,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Get client IP
 	var clientIP net.IP
-	if addr, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	if addr, ok := transport.UDPAddress(w.RemoteAddr()); ok {
 		clientIP = addr.IP
 	} else if addr, ok := w.RemoteAddr().(*net.TCPAddr); ok {
 		clientIP = addr.IP
@@ -1076,7 +1172,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// (no-op when bus is nil). Called before each response write in the normal path.
 	queryStart := time.Now()
 	queryProto := "udp"
-	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+	if _, ok := transport.UDPAddress(w.RemoteAddr()); !ok {
 		queryProto = "tcp"
 	}
 	queryDomain := ""
@@ -1150,6 +1246,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	defer pool.PutMessage(m)
 
 	m.SetReply(r)
+	addEDNS0Response(m, r)
 	recursionAllowed := s.cfg.EnableRecursive && s.recursionACL != nil && clientIP != nil && s.recursionACL.IsAllowed(clientIP)
 	m.RecursionAvailable = recursionAllowed
 
@@ -1193,6 +1290,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if reqOpt := r.IsEdns0(); reqOpt != nil && reqOpt.Version() > 0 {
 		s.observeClient(clientIP, reputation.SignalProtocol)
 		m.Rcode = dns.RcodeBadVers
+		m.Extra = nil
 		respOpt := &dns.OPT{
 			Hdr: dns.RR_Header{
 				Name:   ".",
@@ -1289,21 +1387,25 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	if matched, drop, rule := s.applyRPZ(r, m); matched {
-		s.observeClient(clientIP, reputation.SignalPolicy)
-		if drop {
+	rpzDecided := false
+	if matched, drop, rule, decisive := s.applyRPZQuery(r, m, clientIP); decisive {
+		rpzDecided = true
+		if matched {
+			s.observeClient(clientIP, reputation.SignalPolicy)
+			if drop {
+				return
+			}
+			if s.shouldRateLimit(m, clientIP) {
+				return
+			}
+			s.answers.Add(1)
+			if m.Rcode == dns.RcodeNameError {
+				s.nxdomain.Add(1)
+			}
+			emitQuery(m.Rcode, rule.Zone)
+			writeMsg(w, m) //nolint:errcheck
 			return
 		}
-		if s.shouldRateLimit(m, clientIP) {
-			return
-		}
-		s.answers.Add(1)
-		if m.Rcode == dns.RcodeNameError {
-			s.nxdomain.Add(1)
-		}
-		emitQuery(m.Rcode, rule.Zone)
-		writeMsg(w, m) //nolint:errcheck
-		return
 	}
 
 	var responseClientCookie [8]byte
@@ -1380,6 +1482,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// Try authoritative first
 	if s.cfg.EnableAuthoritative {
 		if resp, ok := s.handleAuthoritative(r, clientIP); ok {
+			rpzZone := ""
+			if !rpzDecided {
+				if matched, drop, rule := s.applyRPZResponse(r, resp, clientIP); matched {
+					s.observeClient(clientIP, reputation.SignalPolicy)
+					if drop {
+						return
+					}
+					rpzZone = rule.Zone
+				}
+			}
 			// Check RRL before sending
 			if s.shouldRateLimit(resp, clientIP) {
 				// Drop or slip
@@ -1395,6 +1507,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Answer = resp.Answer
 			m.Ns = resp.Ns
 			m.Extra = resp.Extra
+			addEDNS0Response(m, r)
 			if haveResponseCookie {
 				s.addCookieToResponse(m, responseClientCookie, responseServerCookie)
 			}
@@ -1417,7 +1530,7 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				s.defensive.LogQuery("responses", clientIP, question.Name, question.Qtype, m.Rcode)
 			}
 
-			emitQuery(m.Rcode, "")
+			emitQuery(m.Rcode, rpzZone)
 			writeMsg(w, m)
 			return
 		}
@@ -1449,6 +1562,66 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeMsg(w, m)
 			return
 		}
+		rpzZone := ""
+		if !rpzDecided {
+			active := s.rpz.Load()
+			var nameservers *engine.RPZNameserverData
+			responseDecisive := false
+			if active != nil {
+				rule, action, decisive := active.CheckRequestResponseShortcut(
+					r.Question[0].Name,
+					rpzClientAddress(clientIP),
+					resp,
+				)
+				responseDecisive = decisive
+				if decisive {
+					matched, drop, matchedRule := applyRPZAction(
+						r,
+						resp,
+						rule,
+						action,
+					)
+					if matched {
+						s.observeClient(clientIP, reputation.SignalPolicy)
+						if drop {
+							return
+						}
+						rpzZone = matchedRule.Zone
+					}
+				}
+			}
+			if active != nil && !responseDecisive {
+				requirements := active.NameserverRequirements()
+				if requirements.Names || requirements.Addresses {
+					discoveryCtx, cancelDiscovery := context.WithTimeout(
+						s.ctx,
+						requirements.Timeout,
+					)
+					nameservers = s.recursive.DiscoverRPZNameservers(
+						discoveryCtx,
+						resp,
+						requirements.Addresses,
+						requirements.MinNSDots,
+						requirements.MaxLookups,
+					)
+					cancelDiscovery()
+				}
+			}
+			if !responseDecisive {
+				if matched, drop, rule := s.applyRPZResponseWithNameservers(
+					r,
+					resp,
+					clientIP,
+					nameservers,
+				); matched {
+					s.observeClient(clientIP, reputation.SignalPolicy)
+					if drop {
+						return
+					}
+					rpzZone = rule.Zone
+				}
+			}
+		}
 
 		// Check RRL before sending
 		if s.shouldRateLimit(resp, clientIP) {
@@ -1475,8 +1648,9 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if haveResponseCookie {
 			s.addCookieToResponse(resp, responseClientCookie, responseServerCookie)
 		}
+		addEDNS0Response(resp, r)
 
-		emitQuery(resp.Rcode, "")
+		emitQuery(resp.Rcode, rpzZone)
 		writeMsg(w, resp)
 		return
 	}
@@ -1497,6 +1671,7 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	question := r.Question[0]
 	qname := question.Name
 	qtype := question.Qtype
+	wantsDNSSEC := requestWantsDNSSEC(r)
 
 	// Find matching zone (RLock protects concurrent map read, CR-01)
 	var matchedZone *zone.Zone
@@ -1538,6 +1713,14 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 		!(strings.EqualFold(qname, cut) && qtype == dns.TypeDS) {
 		m.Authoritative = false
 		m.Ns = append(m.Ns, nsRecords...)
+		if wantsDNSSEC {
+			dsRecords := matchedZone.ExactRecords(cut, dns.TypeDS)
+			if len(dsRecords) > 0 {
+				m.Ns = append(m.Ns, appendCoveringSignatures(dsRecords, matchedZone)...)
+			} else {
+				m.Ns = appendAuthoritativeDenial(m.Ns, matchedZone, cut, true)
+			}
+		}
 		for _, rr := range nsRecords {
 			ns, ok := rr.(*dns.NS)
 			if !ok || !dns.IsSubDomain(matchedZone.Origin, ns.Ns) {
@@ -1559,12 +1742,22 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 	// query the exact CNAME type (i.e. every real-world client).
 	if len(records) == 0 && qtype != dns.TypeCNAME {
 		if cnameRecords := matchedZone.GetRecords(qname, dns.TypeCNAME); len(cnameRecords) > 0 {
-			records = cnameRecords
+			m.Answer = appendAuthoritativeCNAMEChain(
+				m.Answer,
+				matchedZone,
+				cnameRecords,
+				qtype,
+				wantsDNSSEC,
+			)
+			return m, true
 		}
 	}
 
 	if len(records) > 0 {
-		m.Answer = records
+		m.Answer = append([]dns.RR(nil), records...)
+		if wantsDNSSEC {
+			m.Answer = appendCoveringSignatures(m.Answer, matchedZone)
+		}
 	} else {
 		// NODATA: name exists but no records of this type → NOERROR + empty answer
 		// NXDOMAIN: name does not exist in the zone → RcodeNameError
@@ -1577,9 +1770,71 @@ func (s *Server) handleAuthoritative(r *dns.Msg, clientIP net.IP) (*dns.Msg, boo
 		if matchedZone.SOA != nil {
 			m.Ns = []dns.RR{matchedZone.SOA}
 		}
+		if wantsDNSSEC {
+			m.Ns = appendCoveringSignatures(m.Ns, matchedZone)
+			m.Ns = appendAuthoritativeDenial(
+				m.Ns,
+				matchedZone,
+				qname,
+				matchedZone.HasName(qname),
+			)
+		}
 	}
 
 	return m, true
+}
+
+// appendAuthoritativeCNAMEChain adds an alias RRset and follows targets that
+// remain authoritative in this zone. BIND and NSD include the terminal RRset
+// for an in-zone alias, avoiding an extra client round trip. The hop limit and
+// visited-owner set bound malformed or cyclic zone data.
+func appendAuthoritativeCNAMEChain(
+	answer []dns.RR,
+	z *zone.Zone,
+	cnameRecords []dns.RR,
+	qtype uint16,
+	wantsDNSSEC bool,
+) []dns.RR {
+	const maxCNAMEHops = 16
+
+	visited := make(map[string]struct{}, maxCNAMEHops)
+	current := cnameRecords
+	for hop := 0; hop < maxCNAMEHops && len(current) > 0; hop++ {
+		owner := strings.ToLower(dns.Fqdn(current[0].Header().Name))
+		if _, seen := visited[owner]; seen {
+			return answer
+		}
+		visited[owner] = struct{}{}
+
+		if wantsDNSSEC {
+			answer = append(answer, appendCoveringSignatures(current, z)...)
+		} else {
+			answer = append(answer, current...)
+		}
+
+		cname, ok := current[0].(*dns.CNAME)
+		if !ok {
+			return answer
+		}
+		target := strings.ToLower(dns.Fqdn(cname.Target))
+		if !dns.IsSubDomain(z.Origin, target) {
+			return answer
+		}
+		if cut, _ := z.FindDelegation(target); cut != "" {
+			return answer
+		}
+
+		if terminal := z.GetRecords(target, qtype); len(terminal) > 0 {
+			if wantsDNSSEC {
+				answer = append(answer, appendCoveringSignatures(terminal, z)...)
+			} else {
+				answer = append(answer, terminal...)
+			}
+			return answer
+		}
+		current = z.GetRecords(target, dns.TypeCNAME)
+	}
+	return answer
 }
 
 // shouldRateLimit checks if response should be rate limited
@@ -1635,6 +1890,9 @@ type Stats struct {
 	ComplexityRejected uint64
 	UpdateReplays      uint64
 	UpdateReplayFull   uint64
+	UDPBatchReadCalls  uint64
+	UDPBatchDatagrams  uint64
+	UDPBatchTruncated  uint64
 
 	ClientReputation reputation.Stats
 	TCPConnections   transport.TCPConnectionStats
@@ -1681,6 +1939,14 @@ func (s *Server) GetStats() Stats {
 		notifyStats := s.primaryNotifier.Stats()
 		stats.PrimaryNotify = &notifyStats
 	}
+	s.udpBatchStatsMu.RLock()
+	for _, batch := range s.udpBatchStats {
+		batchStats := batch.BatchStats()
+		stats.UDPBatchReadCalls += batchStats.ReadCalls
+		stats.UDPBatchDatagrams += batchStats.Datagrams
+		stats.UDPBatchTruncated += batchStats.TruncatedDatagrams
+	}
+	s.udpBatchStatsMu.RUnlock()
 
 	return stats
 }

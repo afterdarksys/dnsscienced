@@ -294,6 +294,9 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 		if vcfg.MaxChainDepth == 0 {
 			defaults := dnssec.DefaultValidatorConfig()
 			defaults.TrustAnchorFile = vcfg.TrustAnchorFile
+			defaults.AutoTrustAnchor = vcfg.AutoTrustAnchor
+			defaults.TrustAnchorStateFile = vcfg.TrustAnchorStateFile
+			defaults.TrustAnchorUpdate = vcfg.TrustAnchorUpdate
 			vcfg = defaults
 		}
 		if vcfg.TrustAnchorFile == "" {
@@ -304,6 +307,7 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 			return nil, fmt.Errorf("init dnssec validator: %w", err)
 		}
 		r.validator = v
+		v.Start(r.ctx)
 	}
 
 	// Register prefetch callback when prefetch is enabled.
@@ -325,6 +329,7 @@ func NewRecursive(cfg Config) (*Recursive, error) {
 func (r *Recursive) Query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
 	msg := new(dns.Msg)
 	msg.SetQuestion(name, qtype)
+	msg.SetEdns0(1232, true)
 	return r.Resolve(ctx, msg, nil)
 }
 

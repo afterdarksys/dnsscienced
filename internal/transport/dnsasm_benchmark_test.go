@@ -2,10 +2,7 @@ package transport
 
 import (
 	"net"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	dnsasm "github.com/dnsscience/dnsscienced/dnsasm/go"
 	"github.com/dnsscience/dnsscienced/internal/engine"
@@ -125,84 +122,4 @@ func BenchmarkParallelPipeline(b *testing.B) {
 			_ = action
 		}
 	})
-}
-
-// TestQPSRate runs a timed test to measure actual QPS
-func TestQPSRate(t *testing.T) {
-	acl := engine.NewACL(true)
-	limiter := engine.NewRateLimiter(engine.RateLimiterConfig{
-		QueriesPerSecond: 100000000,
-		BurstSize:        100000000,
-	})
-	rpz := engine.NewRPZAggregate()
-
-	// Number of goroutines (simulating parallel connections)
-	numWorkers := 16
-	duration := 3 * time.Second
-
-	var totalQueries atomic.Int64
-	var wg sync.WaitGroup
-	stop := make(chan struct{})
-
-	// Start workers
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			clientIP := net.ParseIP("192.168.1.100")
-			localCount := int64(0)
-
-			for {
-				select {
-				case <-stop:
-					totalQueries.Add(localCount)
-					return
-				default:
-				}
-
-				// Full pipeline
-				header, err := dnsasm.ParseHeader(benchmarkQuery)
-				if err != nil || header.QR {
-					continue
-				}
-
-				if !acl.IsAllowed(clientIP) {
-					continue
-				}
-
-				if !limiter.Allow(clientIP) {
-					continue
-				}
-
-				question, _, err := dnsasm.ParseQuestion(benchmarkQuery, 12)
-				if err != nil {
-					continue
-				}
-
-				_, action := rpz.Check(question.Name + ".")
-				_ = action
-
-				localCount++
-			}
-		}(i)
-	}
-
-	// Run for duration
-	time.Sleep(duration)
-	close(stop)
-	wg.Wait()
-
-	total := totalQueries.Load()
-	qps := float64(total) / duration.Seconds()
-
-	t.Logf("\n")
-	t.Logf("═══════════════════════════════════════════════════════════")
-	t.Logf("                    QPS BENCHMARK RESULTS")
-	t.Logf("═══════════════════════════════════════════════════════════")
-	t.Logf("  Workers:        %d", numWorkers)
-	t.Logf("  Duration:       %v", duration)
-	t.Logf("  Total Queries:  %d", total)
-	t.Logf("  QPS Rate:       %.2f million queries/sec", qps/1_000_000)
-	t.Logf("  Per-Query:      %.2f µs", 1_000_000/qps)
-	t.Logf("═══════════════════════════════════════════════════════════")
 }

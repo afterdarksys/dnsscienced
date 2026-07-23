@@ -22,9 +22,16 @@ root-authoritative deployments.
   a standards-conformant public root service.
 - [x] Add validated role profiles that reject unsafe combinations and default
   authoritative/root listeners to recursion disabled.
-- [ ] Build differential protocol suites against current BIND and NSD releases.
-- [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate
-  local-root suite for RFC 8806.
+- [x] Build a pinned Linux differential authoritative protocol suite against
+  current BIND and NSD releases, covering normalized UDP/TCP/EDNS answers,
+  common RR types, wildcard synthesis, authoritative negative answers, and
+  delegation referrals with glue.
+- [x] Build a root-authoritative conformance suite for RFC 7720 and a separate
+  local-root suite for RFC 8806: signed authoritative answers and denial,
+  EDNS(0), IPv4/IPv6 UDP/TCP, unique-root startup validation, loopback role
+  isolation, complete root-secondary loading, SOA refresh/retry timing, and
+  mandatory withdrawal at SOA Expire are covered. Public-root operational
+  qualification remains a separate release gate.
 - [ ] Define and continuously test carrier-grade overload SLOs for sustained QPS,
   p99/p99.9 latency, packet loss, TCP fallback, bounded memory, and recovery.
 
@@ -52,8 +59,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Validate DNSSEC positive answers and authenticated denial with NSEC/NSEC3.
 - [x] Enforce DNSSEC algorithm policy and NSEC3 iteration limits.
 - [x] Load configured static DNSSEC trust anchors.
-- [ ] Implement RFC 5011 automatic trust-anchor maintenance and durable key-rollover
-  state; configuration fields alone do not count as support.
+- [x] Implement RFC 5011 automatic trust-anchor maintenance with authenticated
+  DNSKEY refresh, add/remove hold-down state, immediate self-signed revocation,
+  permanent removed-key tombstones, RFC-derived refresh/retry timing, and
+  atomic durable state required at startup.
 - [x] Emit Extended DNS Errors for implemented validation and policy failures.
 - [x] Apply QNAME minimization in the recursive resolver.
 - [x] Authenticate DNS UPDATE and zone-transfer requests with TSIG, including
@@ -92,7 +101,14 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   passthrough, NXDOMAIN, NODATA, drop, and rewrite actions.
 - [x] Wire RPZ loading and enforcement into the primary production server and its
   documented configuration path.
-- [ ] Implement response-IP and other RFC-defined RPZ triggers.
+- [x] Implement response-IP (`rpz-ip`) policy triggers for answer-section A/AAAA
+  data with IPv4/IPv6 prefix validation, RPZ-zone and trigger precedence, and
+  production authoritative/recursive response enforcement.
+- [x] Implement client-IP (`rpz-client-ip`) triggers with longest-prefix matching,
+  IPv4/IPv6 validation, and precedence over QNAME/response-IP within a policy zone.
+- [x] Implement NS-name (`rpz-nsdname`) and NS-IP (`rpz-nsip`) triggers with
+  recursive answer data-path discovery, wildcard/canonical-name and IP-prefix
+  tie-breaking, bounded lookup controls, and full trigger/zone precedence.
 - [x] Add safe hot reload, precedence rules, source attribution, hit metrics, and
   end-to-end production-path tests.
 
@@ -109,9 +125,10 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
 - [x] Wire the existing byte-buffer pools or an equivalent allocation strategy
   into measured production network paths; retain only changes that benchmarks
   show reduce allocations.
-- [ ] Bring the experimental assembly-parser UDP server to feature and security
-  parity before considering it for production; the primary UDP path remains the
-  audited `miekg/dns` server.
+- [x] Retire the unused experimental assembly-parser UDP server and its raw
+  resolver bypass instead of duplicating the production security pipeline.
+  DNSASM remains a research/benchmark library; production UDP remains on the
+  audited `miekg/dns` path with the faster scalar header check.
 - [x] Add a fixed-stride, recvmmsg-compatible batch header API with reusable output
   storage and measured zero-allocation steady-state parsing. Benchmarking showed
   scalar Go is faster than cgo even after amortizing the transition, so production
@@ -121,8 +138,12 @@ Gates](docs/CARRIER_GRADE_ROLES.md).
   response-header builder's corrupted output pointer.
 - [x] Add a bounded Linux-only recvmmsg/sendmmsg transport primitive with reusable
   packet slots, IPv4/IPv6 and truncation tests, and syscall-level benchmarks.
-- [ ] Integrate Linux batching into a feature-parity listener only after complete
-  receive-parse-route-send load tests improve throughput and tail latency.
+- [x] Integrate opt-in Linux recvmmsg receive batching through the production
+  `miekg/dns` parser/handler path with SO_REUSEPORT, destination-address
+  preservation, TSIG failure parity, bounded batches, and fill/truncation stats.
+- [ ] Promote Linux batching from opt-in (`server.udp_batch_size`) only after
+  complete receive-parse-route-send NIC/RSS load tests improve throughput and
+  p99/p99.9 latency versus the portable listener.
 - [x] Define an opt-in XDP/AF_XDP architecture with guarded `XDP_PASS` fallback,
   queue-owned workers, generation-based cache/policy coherence, least privilege,
   observability, hardware qualification, and portable-path differential tests.
@@ -162,7 +183,8 @@ fleet-scale policy, operations, interoperability, and producer support.
 
 - [x] Add explicit catalog consumer configuration, primary endpoints, TSIG
   credentials, refresh policy, and per-catalog group mappings.
-- [ ] Add catalog producer support and RFC 9103 TLS transfer credentials.
+- [ ] Add catalog producer support with explicit query/transfer ACLs and RFC 9103
+  TLS transfer credentials.
 - [x] Parse and validate `version.<catalog> TXT "2"` exactly as RFC 9432 requires.
 - [x] Parse member nodes as one-PTR RRsets beneath
   `<unique>.zones.<catalog>` and reject duplicate member names or malformed sets.
@@ -206,7 +228,9 @@ fleet-scale policy, operations, interoperability, and producer support.
   default.
 - [x] Support confidential catalog and catalog-member transfer using strict
   RFC 9103 TLS 1.3 with optional mTLS and no cleartext fallback.
-- [ ] Restrict catalog queries and transfers with explicit ACLs.
+- [x] Keep consumer catalog contents outside the authoritative query/transfer
+  store (deny-all by architecture); any future producer surface is gated above
+  on explicit query/transfer ACLs.
 - [x] Scope admissible member names with per-catalog allow/deny suffixes; deny
   rules take precedence and reject the complete snapshot.
 - [x] Bound configured catalogs, members per catalog, reconciliation action

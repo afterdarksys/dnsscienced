@@ -43,6 +43,12 @@ func (s *memoryStore) GetZone(name string) *zone.Zone {
 	return s.zones[name]
 }
 
+func (s *memoryStore) RemoveZone(name string) {
+	s.mu.Lock()
+	delete(s.zones, name)
+	s.mu.Unlock()
+}
+
 func (s *memoryStore) ObserveTransfer(name string, err error) {
 	s.mu.Lock()
 	s.observations = append(s.observations, transferObservation{name: name, err: err})
@@ -117,11 +123,17 @@ func (f *fakeFetcher) setError(err error) {
 
 func validZone(name string, serial uint32) *zone.Zone {
 	name = dns.Fqdn(name)
+	nameserver := "ns1." + name
+	responsible := "hostmaster." + name
+	if name == "." {
+		nameserver = "ns1."
+		responsible = "hostmaster."
+	}
 	z := zone.New(name)
-	soa, _ := dns.NewRR(name + " 300 IN SOA ns1." + name + " hostmaster." + name + " " +
+	soa, _ := dns.NewRR(name + " 300 IN SOA " + nameserver + " " + responsible + " " +
 		serialString(serial) + " 60 30 3600 60")
-	ns, _ := dns.NewRR(name + " 300 IN NS ns1." + name)
-	glue, _ := dns.NewRR("ns1." + name + " 300 IN A 192.0.2.53")
+	ns, _ := dns.NewRR(name + " 300 IN NS " + nameserver)
+	glue, _ := dns.NewRR(nameserver + " 300 IN A 192.0.2.53")
 	_ = z.AddRecord(soa)
 	_ = z.AddRecord(ns)
 	_ = z.AddRecord(glue)
@@ -229,6 +241,20 @@ func TestManagerAllowsExplicitLegacyUnsignedSecondary(t *testing.T) {
 		"",
 	); err != nil {
 		t.Fatalf("explicit legacy unsigned NOTIFY rejected: %v", err)
+	}
+}
+
+func TestManagerAllowsRootSecondary(t *testing.T) {
+	manager, err := NewManager(newMemoryStore(), &fakeFetcher{serial: 1}, []Config{{
+		Name:                  ".",
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
+	}})
+	if err != nil {
+		t.Fatalf("root secondary rejected: %v", err)
+	}
+	if _, ok := manager.zones["."]; !ok {
+		t.Fatal("root secondary was not normalized to the root origin")
 	}
 }
 
@@ -455,6 +481,112 @@ func TestManagerStartupRetainsExistingZoneWhenConfigured(t *testing.T) {
 		t.Fatalf("startup rejected retained zone: %v", err)
 	}
 	manager.Close()
+}
+
+func TestManagerWithdrawsExpiredSecondaryAfterRefreshFailure(t *testing.T) {
+	store := newMemoryStore()
+	fetcher := &fakeFetcher{serial: 1}
+	manager, err := NewManager(store, fetcher, []Config{{
+		Name:                  ".",
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	manager.now = func() time.Time { return now }
+	managed := manager.zones["."]
+	if err := manager.refresh(context.Background(), managed); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.zones["."].SOA.Expire = 60
+	store.mu.Unlock()
+
+	fetcher.setError(context.DeadlineExceeded)
+	now = now.Add(59 * time.Second)
+	if err := manager.refresh(context.Background(), managed); err == nil {
+		t.Fatal("failed refresh unexpectedly succeeded")
+	}
+	if manager.expireIfNeeded(managed) {
+		t.Fatal("secondary was withdrawn before SOA Expire")
+	}
+	now = now.Add(time.Second)
+	if !manager.expireIfNeeded(managed) {
+		t.Fatal("secondary was not withdrawn at SOA Expire")
+	}
+	if store.GetZone(".") != nil {
+		t.Fatal("expired root secondary remains published")
+	}
+}
+
+func TestSuccessfulUnchangedRefreshResetsExpiryClock(t *testing.T) {
+	store := newMemoryStore()
+	fetcher := &fakeFetcher{serial: 1}
+	manager, err := NewManager(store, fetcher, []Config{{
+		Name:                  "secondary.test.",
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	manager.now = func() time.Time { return now }
+	managed := manager.zones["secondary.test."]
+	if err := manager.refresh(context.Background(), managed); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.zones["secondary.test."].SOA.Expire = 60
+	store.mu.Unlock()
+
+	now = now.Add(50 * time.Second)
+	if err := manager.refresh(context.Background(), managed); err != nil {
+		t.Fatal(err)
+	}
+	fetcher.setError(context.DeadlineExceeded)
+	now = now.Add(59 * time.Second)
+	if manager.expireIfNeeded(managed) {
+		t.Fatal("unchanged successful refresh did not reset expiry clock")
+	}
+	now = now.Add(time.Second)
+	if !manager.expireIfNeeded(managed) {
+		t.Fatal("secondary was not withdrawn after the reset expiry clock elapsed")
+	}
+}
+
+func TestRetryDelayNeverExtendsPastSOAExpire(t *testing.T) {
+	store := newMemoryStore()
+	fetcher := &fakeFetcher{serial: 1}
+	manager, err := NewManager(store, fetcher, []Config{{
+		Name:                  "secondary.test.",
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
+		MinRetryTime:          10 * time.Minute,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	manager.now = func() time.Time { return now }
+	managed := manager.zones["secondary.test."]
+	if err := manager.refresh(context.Background(), managed); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.zones["secondary.test."].SOA.Expire = 60
+	store.mu.Unlock()
+
+	now = now.Add(50 * time.Second)
+	if got := manager.nextRefreshDelay(managed, true); got != 10*time.Second {
+		t.Fatalf("retry delay = %v, want remaining 10s before expiry", got)
+	}
+	now = now.Add(10 * time.Second)
+	if got := manager.nextRefreshDelay(managed, true); got <= 0 || got > time.Millisecond {
+		t.Fatalf("expired retry delay = %v, want immediate retry", got)
+	}
 }
 
 func TestManagerInitialTransfersFollowConfigurationOrder(t *testing.T) {

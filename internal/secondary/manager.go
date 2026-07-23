@@ -60,6 +60,12 @@ type ZoneStore interface {
 	GetZone(string) *zone.Zone
 }
 
+// ZoneRemover is an optional ZoneStore capability. Stores that implement it
+// allow the manager to withdraw a secondary after its SOA Expire interval.
+type ZoneRemover interface {
+	RemoveZone(string)
+}
+
 // TransferObserver is an optional ZoneStore capability used for operational
 // visibility. Transfer publication semantics do not depend on the observer.
 type TransferObserver interface {
@@ -90,6 +96,7 @@ type managedZone struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	opMu             sync.Mutex
+	lastRefresh      time.Time
 }
 
 // Manager schedules initial, timer-driven, and NOTIFY-driven secondary refresh.
@@ -106,6 +113,7 @@ type Manager struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	started    bool
+	now        func() time.Time
 }
 
 func NewManager(store ZoneStore, fetcher Fetcher, configs []Config) (*Manager, error) {
@@ -120,6 +128,7 @@ func NewManager(store ZoneStore, fetcher Fetcher, configs []Config) (*Manager, e
 		store:   store,
 		fetcher: fetcher,
 		zones:   make(map[string]*managedZone, len(configs)),
+		now:     time.Now,
 	}
 	for _, cfg := range configs {
 		managed, err := prepareManagedZone(cfg)
@@ -156,10 +165,16 @@ func (m *Manager) Start(parent context.Context) error {
 
 	for _, managed := range zones {
 		managed.ctx, managed.cancel = context.WithCancel(m.ctx)
-		if err := m.refresh(managed.ctx, managed); err != nil &&
-			(!managed.cfg.RetainOnError || m.store.GetZone(managed.cfg.Name) == nil) {
-			m.cancel()
-			return err
+		if err := m.refresh(managed.ctx, managed); err != nil {
+			if !managed.cfg.RetainOnError || m.store.GetZone(managed.cfg.Name) == nil {
+				m.cancel()
+				return err
+			}
+			// Persisted zones have no in-memory refresh timestamp after restart.
+			// Give them at most one SOA Expire interval from this startup.
+			managed.opMu.Lock()
+			managed.lastRefresh = m.now()
+			managed.opMu.Unlock()
 		}
 	}
 	for _, managed := range zones {
@@ -226,8 +241,15 @@ func (m *Manager) Upsert(ctx context.Context, cfg Config, resetState bool) error
 		if !(candidate.cfg.RetainOnError && current != nil) {
 			return fmt.Errorf("secondary %s: transfer failed: %w", candidate.cfg.Name, err)
 		}
+		if currentManaged != nil && !currentManaged.lastRefresh.IsZero() {
+			candidate.lastRefresh = currentManaged.lastRefresh
+		} else {
+			candidate.lastRefresh = m.now()
+		}
 	} else if err := m.publish(candidate.cfg, replacement, resetState); err != nil {
 		return err
+	} else {
+		candidate.lastRefresh = m.now()
 	}
 
 	candidate.ctx, candidate.cancel = context.WithCancel(managerCtx)
@@ -278,10 +300,11 @@ func (m *Manager) ApplyBatch(ctx context.Context, changes []BatchChange, publish
 		if !change.Remove {
 			name = change.Config.Name
 		}
-		name = strings.ToLower(dns.Fqdn(strings.TrimSpace(name)))
-		if name == "." {
+		name = strings.TrimSpace(name)
+		if name == "" {
 			return fmt.Errorf("secondary: batch change has no zone name")
 		}
+		name = strings.ToLower(dns.Fqdn(name))
 		if _, duplicate := seen[name]; duplicate {
 			return fmt.Errorf("secondary: duplicate batch change for %s", name)
 		}
@@ -340,11 +363,17 @@ func (m *Manager) ApplyBatch(ctx context.Context, changes []BatchChange, publish
 			if !(item.candidate.cfg.RetainOnError && current != nil) {
 				return fmt.Errorf("secondary %s: transfer failed: %w", item.name, err)
 			}
+			if item.previous != nil && !item.previous.lastRefresh.IsZero() {
+				item.candidate.lastRefresh = item.previous.lastRefresh
+			} else {
+				item.candidate.lastRefresh = m.now()
+			}
 			continue
 		}
 		if err := validateReplacement(item.candidate.cfg, replacement); err != nil {
 			return err
 		}
+		item.candidate.lastRefresh = m.now()
 		if !force && current != nil && current.SOA != nil &&
 			!zone.SerialGreater(replacement.SOA.Serial, current.SOA.Serial) {
 			continue
@@ -458,7 +487,7 @@ func (m *Manager) HandleNotify(ctx context.Context, zoneName string, sourceIP ne
 
 func (m *Manager) runZone(managed *managedZone) {
 	defer m.wg.Done()
-	delay := refreshDelay(managed.cfg, m.store.GetZone(managed.cfg.Name), false)
+	delay := m.nextRefreshDelay(managed, false)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 
@@ -471,7 +500,16 @@ func (m *Manager) runZone(managed *managedZone) {
 		}
 
 		err := m.refresh(managed.ctx, managed)
-		delay = refreshDelay(managed.cfg, m.store.GetZone(managed.cfg.Name), err != nil)
+		if err != nil && managed.ctx.Err() == nil {
+			m.expireIfNeeded(managed)
+		}
+		delay = m.nextRefreshDelay(managed, err != nil)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
 		timer.Reset(delay)
 	}
 }
@@ -489,7 +527,56 @@ func (m *Manager) refresh(ctx context.Context, managed *managedZone) error {
 	if err != nil {
 		return fmt.Errorf("secondary %s: transfer failed: %w", managed.cfg.Name, err)
 	}
-	return m.publish(managed.cfg, replacement, false)
+	if err := m.publish(managed.cfg, replacement, false); err != nil {
+		return err
+	}
+	// An unchanged serial still proves that the primary was reachable and the
+	// zone remains current, so it resets the SOA expiry clock.
+	managed.lastRefresh = m.now()
+	return nil
+}
+
+func (m *Manager) expireIfNeeded(managed *managedZone) bool {
+	remover, ok := m.store.(ZoneRemover)
+	if !ok {
+		return false
+	}
+	managed.opMu.Lock()
+	defer managed.opMu.Unlock()
+	current := m.store.GetZone(managed.cfg.Name)
+	if current == nil || current.SOA == nil || managed.lastRefresh.IsZero() {
+		return false
+	}
+	expiresAt := managed.lastRefresh.Add(time.Duration(current.SOA.Expire) * time.Second)
+	if m.now().Before(expiresAt) {
+		return false
+	}
+	remover.RemoveZone(managed.cfg.Name)
+	return true
+}
+
+func (m *Manager) nextRefreshDelay(managed *managedZone, retry bool) time.Duration {
+	current := m.store.GetZone(managed.cfg.Name)
+	delay := refreshDelay(managed.cfg, current, retry)
+	if current == nil || current.SOA == nil {
+		return delay
+	}
+	managed.opMu.Lock()
+	lastRefresh := managed.lastRefresh
+	managed.opMu.Unlock()
+	if lastRefresh.IsZero() {
+		return delay
+	}
+	untilExpiry := lastRefresh.
+		Add(time.Duration(current.SOA.Expire) * time.Second).
+		Sub(m.now())
+	if untilExpiry <= 0 {
+		return time.Nanosecond
+	}
+	if untilExpiry < delay {
+		return untilExpiry
+	}
+	return delay
 }
 
 func (m *Manager) observeTransfer(name string, err error) {
@@ -533,10 +620,11 @@ func removeOrderedZone(order *[]string, name string) {
 }
 
 func prepareManagedZone(cfg Config) (*managedZone, error) {
-	cfg.Name = strings.ToLower(dns.Fqdn(strings.TrimSpace(cfg.Name)))
-	if cfg.Name == "." {
+	cfg.Name = strings.TrimSpace(cfg.Name)
+	if cfg.Name == "" {
 		return nil, fmt.Errorf("secondary: zone name is required")
 	}
+	cfg.Name = strings.ToLower(dns.Fqdn(cfg.Name))
 	if len(cfg.Masters) == 0 {
 		return nil, fmt.Errorf("secondary %s: at least one master is required", cfg.Name)
 	}

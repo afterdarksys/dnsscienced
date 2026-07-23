@@ -98,8 +98,10 @@ depth/rejections, cache hit/eviction rate, heap size, allocation rate, GC CPU,
 and process RSS. Compare one configuration change at a time under the same
 query mix.
 
-The assembly-parser UDP server is experimental. Its microbenchmarks do not
-establish feature, protocol, or security parity with the production server.
+The former assembly-parser UDP server was retired because it duplicated and
+bypassed the production protocol/security pipeline while its cgo header parser
+was slower than scalar Go. DNSASM remains available for differential tests and
+research benchmarks; it is not a network listener.
 
 ## Measured packet-header parsing
 
@@ -123,18 +125,36 @@ AVX2/AVX-512 are not justified for one 12-byte DNS header; any future SIMD work
 must benchmark multiple independent headers per vector and include runtime CPU
 feature dispatch.
 
-`recvmmsg`/`sendmmsg` remains a Linux-only experiment until end-to-end batching
-beats the production listener under equivalent protocol and security behavior.
+Linux `recvmmsg` receive batching is available as an opt-in production-handler
+transport. It remains disabled by default until end-to-end NIC/RSS testing beats
+the portable listener for throughput and p99/p99.9 latency. `sendmmsg` remains
+an isolated primitive; synchronous DNS handler responses are not buffered.
 XDP/eBPF is a separate deployment architecture: it needs cache-coherency,
 policy-parity, privilege, observability, and fallback designs before code is
 attached to a network interface.
 
 ## Measured Linux UDP batching
 
-The experimental `UDPBatchConn` uses the Go `x/net` wrappers that issue
+`UDPBatchConn` uses the Go `x/net` wrappers that issue
 `recvmmsg` and `sendmmsg` on Linux. It bounds batches at 256 datagrams, defaults
 to 64, reuses receive storage, reports truncation, and has IPv4 and IPv6
 loopback coverage.
+
+Enable production receive batching explicitly:
+
+```yaml
+server:
+  udp_listeners: 4
+  udp_batch_size: 64
+```
+
+Each SO_REUSEPORT listener owns one batch reader. Received packets continue
+through the normal `miekg/dns` parser and the complete TSIG, ACL, RRL, cookie,
+policy, authoritative, and recursive handler chain. Packet destination metadata
+is retained so wildcard and multihomed listeners reply from the queried local
+address. `UDPBatchReadCalls`, `UDPBatchDatagrams`, and `UDPBatchTruncated`
+statistics expose actual batch fill and oversized traffic; average fill is
+`UDPBatchDatagrams / UDPBatchReadCalls`.
 
 In a Linux/amd64 Docker loopback benchmark on an Intel i9-9880H:
 

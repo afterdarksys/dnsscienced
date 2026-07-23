@@ -58,7 +58,15 @@ zones:
     transfer_tsig_key: root-transfer.
 ```
 
-The profile validates daemon-level isolation; it does not by itself establish
-RFC 7720 public-root readiness or RFC 8806 operational conformance. Those gates
-also require current authenticated root-zone distribution, DNSSEC material,
-protocol interoperability, external monitoring, and deployment evidence.
+Root profiles additionally refuse to open listeners unless the loaded `.` zone
+contains the signed apex and denial material needed for authoritative DNSSEC.
+The local-root path accepts `.` as a secondary, follows SOA refresh/retry timers,
+and withdraws the zone no later than SOA Expire after refresh failures so the
+same-host validating resolver can fall back to remote roots instead of consuming
+stale authority.
+
+These daemon-level checks and protocol suites do not establish public-root
+operational readiness. That separate gate still requires interoperability,
+production Linux/NIC qualification, anycast and DDoS engineering, external
+monitoring, authenticated root-zone distribution, and published deployment
+evidence.
