@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,6 +106,165 @@ func TestResolveAgesFreshCacheTTLs(t *testing.T) {
 	got := resp.Answer[0].Header().Ttl
 	if got > 1800 || got < 1795 {
 		t.Fatalf("aged TTL=%d, want approximately 1800", got)
+	}
+}
+
+func TestResolveCoalescesConcurrentCacheMisses(t *testing.T) {
+	var queries atomic.Int32
+	lookupStarted := make(chan struct{})
+	releaseLookup := make(chan struct{})
+	addr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		if queries.Add(1) == 1 {
+			close(lookupStarted)
+		}
+		<-releaseLookup
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.20"),
+		}}
+		_ = w.WriteMsg(resp)
+	}))
+
+	r, err := NewRecursive(Config{QueryTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+	r.roots = []string{addr}
+
+	const callers = 32
+	start := make(chan struct{})
+	results := make(chan *dns.Msg, callers)
+	errs := make(chan error, callers)
+	var ready sync.WaitGroup
+	ready.Add(callers)
+	for i := range callers {
+		go func(id int) {
+			query := new(dns.Msg)
+			query.SetQuestion("burst.example.", dns.TypeA)
+			query.Id = uint16(id + 1)
+			ready.Done()
+			<-start
+			resp, resolveErr := r.Resolve(context.Background(), query, nil)
+			results <- resp
+			errs <- resolveErr
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+
+	select {
+	case <-lookupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upstream lookup did not start")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("upstream queries while lookup blocked = %d, want 1", got)
+	}
+	close(releaseLookup)
+
+	seenIDs := make(map[uint16]bool, callers)
+	for range callers {
+		if resolveErr := <-errs; resolveErr != nil {
+			t.Fatalf("Resolve: %v", resolveErr)
+		}
+		resp := <-results
+		seenIDs[resp.Id] = true
+	}
+	if len(seenIDs) != callers {
+		t.Fatalf("response IDs = %v, want %d independent IDs", seenIDs, callers)
+	}
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("upstream queries = %d, want 1", got)
+	}
+}
+
+func TestPrefetchRefreshesLiveCacheEntry(t *testing.T) {
+	var queries atomic.Int32
+	refreshed := make(chan struct{})
+	addr := startDualProtocolDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		queries.Add(1)
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   net.ParseIP("198.51.100.22"),
+		}}
+		_ = w.WriteMsg(resp)
+		select {
+		case <-refreshed:
+		default:
+			close(refreshed)
+		}
+	}))
+
+	r, err := NewRecursive(Config{
+		QueryTimeout: time.Second,
+		CacheConfig: cache.Config{
+			ShardCount:        1,
+			MaxEntries:        10,
+			Prefetch:          true,
+			PrefetchMinTTLPct: 0.1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRecursive: %v", err)
+	}
+	defer r.Close()
+	r.roots = []string{addr}
+
+	old := new(dns.Msg)
+	old.SetQuestion("popular.example.", dns.TypeA)
+	old.Response = true
+	old.Answer = []dns.RR{&dns.A{
+		Hdr: dns.RR_Header{Name: "popular.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 100},
+		A:   net.ParseIP("198.51.100.21"),
+	}}
+	wire, packErr := old.Pack()
+	if packErr != nil {
+		t.Fatalf("Pack: %v", packErr)
+	}
+	question := old.Question[0]
+	r.cache.Set(packet.HashQuery(question.Name, question.Qtype, question.Qclass), &cache.Entry{
+		Data: wire, ExpiresAt: time.Now().Add(time.Second), OrigTTL: 100,
+		QName: question.Name, QType: question.Qtype, QClass: question.Qclass,
+	})
+
+	query := new(dns.Msg)
+	query.SetQuestion(question.Name, question.Qtype)
+	first, err := r.Resolve(context.Background(), query, nil)
+	if err != nil {
+		t.Fatalf("initial Resolve: %v", err)
+	}
+	if got := first.Answer[0].(*dns.A).A.String(); got != "198.51.100.21" {
+		t.Fatalf("initial answer = %s, want cached address", got)
+	}
+
+	select {
+	case <-refreshed:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not query upstream")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		current, resolveErr := r.Resolve(context.Background(), query, nil)
+		if resolveErr != nil {
+			t.Fatalf("refreshed Resolve: %v", resolveErr)
+		}
+		if got := current.Answer[0].(*dns.A).A.String(); got == "198.51.100.22" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("live cache entry was not replaced by background refresh")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("upstream refresh queries = %d, want 1", got)
 	}
 }
 

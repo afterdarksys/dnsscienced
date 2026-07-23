@@ -10,6 +10,7 @@ import (
 	"github.com/dnsscience/dnsscienced/internal/cache"
 	"github.com/dnsscience/dnsscienced/internal/cookie"
 	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/dnsscience/dnsscienced/internal/packet"
 	"github.com/dnsscience/dnsscienced/internal/rrl"
 	"github.com/miekg/dns"
 )
@@ -444,14 +445,7 @@ func TestResolve_ContextCancellation(t *testing.T) {
 
 // Helper function that matches the one in recursive.go
 func hashQuery(name string, qtype, qclass uint16) uint64 {
-	// Simple hash for testing - matches packet.HashQuery
-	hash := uint64(0)
-	for _, c := range name {
-		hash = hash*31 + uint64(c)
-	}
-	hash = hash*31 + uint64(qtype)
-	hash = hash*31 + uint64(qclass)
-	return hash
+	return packet.HashQuery(name, qtype, qclass)
 }
 
 // Benchmark recursive resolver (end-to-end)
