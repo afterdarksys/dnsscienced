@@ -28,16 +28,17 @@ type TransferKey struct {
 
 // Config defines one secondary zone.
 type Config struct {
-	Name              string
-	Masters           []string
-	TransferSource    string
-	TransferKey       *TransferKey
-	RefreshInterval   time.Duration
-	MinRefreshTime    time.Duration
-	MaxRefreshTime    time.Duration
-	MinRetryTime      time.Duration
-	MaxRetryTime      time.Duration
-	AllowAXFRFallback bool
+	Name                  string
+	Masters               []string
+	TransferSource        string
+	TransferKey           *TransferKey
+	AllowUnsignedTransfer bool
+	RefreshInterval       time.Duration
+	MinRefreshTime        time.Duration
+	MaxRefreshTime        time.Duration
+	MinRetryTime          time.Duration
+	MaxRetryTime          time.Duration
+	AllowAXFRFallback     bool
 }
 
 // ZoneStore atomically publishes a fully validated zone.
@@ -115,6 +116,11 @@ func NewManager(store ZoneStore, fetcher Fetcher, configs []Config) (*Manager, e
 			if cfg.TransferKey.Name == "." || cfg.TransferKey.Secret == "" {
 				return nil, fmt.Errorf("secondary %s: transfer key name and secret are required", cfg.Name)
 			}
+		} else if !cfg.AllowUnsignedTransfer {
+			return nil, fmt.Errorf(
+				"secondary %s: transfer key is required; set allow_unsigned_transfer only for an explicitly accepted legacy trust boundary",
+				cfg.Name,
+			)
 		}
 		if _, exists := m.zones[cfg.Name]; exists {
 			return nil, fmt.Errorf("secondary: duplicate zone %s", cfg.Name)
@@ -184,6 +190,10 @@ func (m *Manager) HandleNotify(ctx context.Context, zoneName string, sourceIP ne
 		if tsigName == "" || keyName != managed.cfg.TransferKey.Name {
 			return ErrUnauthorizedTSIG
 		}
+	} else if !managed.cfg.AllowUnsignedTransfer {
+		// NewManager rejects this state, but retain the fail-closed guard in the
+		// request path so a future alternate constructor cannot weaken NOTIFY.
+		return ErrUnauthorizedTSIG
 	}
 
 	select {

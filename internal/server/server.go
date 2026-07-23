@@ -84,6 +84,10 @@ type Config struct {
 	// Empty/absent = deny all (D-15).
 	ZoneUpdateCIDRs map[string][]string `yaml:"-"`
 
+	// ZoneUpdateTSIGKeys maps zone FQDN origin to TSIG key names authorized to
+	// send RFC 2136 UPDATE. Empty/absent = deny all.
+	ZoneUpdateTSIGKeys map[string][]string `yaml:"-"`
+
 	// PersistPaths maps zone FQDN origin to the .dnszone file path for write-back
 	// after a successful RFC 2136 UPDATE (D-11, D-13).
 	// Populated by main.go from config.ZoneConfig.PersistUpdates + File.
@@ -188,8 +192,9 @@ type Server struct {
 	tsigKeyRing      *tsig.KeyRing
 	dsyncHandler     *dsync.Handler
 	dsyncNotifier    *dsync.DSYNCNotifier
-	zoneTransferACLs map[string]*dsync.SourceACL // Per-zone transfer ACLs. nil entry = deny all (D-01).
-	zoneUpdateACLs   map[string]*dsync.SourceACL // Per-zone update ACLs.  nil entry = deny all (D-15).
+	zoneTransferACLs map[string]*dsync.SourceACL    // Per-zone transfer ACLs. nil entry = deny all (D-01).
+	zoneUpdateACLs   map[string]*dsync.SourceACL    // Per-zone update ACLs.  nil entry = deny all (D-15).
+	zoneUpdateKeys   map[string]map[string]struct{} // Per-zone TSIG identities. nil entry = deny all.
 	soaNotifyMu      sync.RWMutex
 	soaNotifyHandler SOANotifyHandler
 	ixfrJournal      *zone.Journal
@@ -414,6 +419,31 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("zone %s allow_update: %w", zoneName, err)
 		}
 		s.zoneUpdateACLs[zoneName] = acl
+	}
+
+	// Build per-zone UPDATE key authorization independently from TSIG
+	// authentication. A valid key proves identity; this map grants that identity
+	// permission to mutate one specific zone.
+	configuredKeys := s.tsigKeyRing.Algorithms()
+	s.zoneUpdateKeys = make(map[string]map[string]struct{})
+	for zoneName, keyNames := range cfg.ZoneUpdateTSIGKeys {
+		if len(keyNames) == 0 {
+			continue
+		}
+		allowed := make(map[string]struct{}, len(keyNames))
+		for _, keyName := range keyNames {
+			normalized := strings.ToLower(dns.Fqdn(strings.TrimSpace(keyName)))
+			if normalized == "." {
+				cancel()
+				return nil, fmt.Errorf("zone %s update_tsig_keys contains an empty key name", zoneName)
+			}
+			if _, ok := configuredKeys[normalized]; !ok {
+				cancel()
+				return nil, fmt.Errorf("zone %s update_tsig_keys references undefined key %q", zoneName, keyName)
+			}
+			allowed[normalized] = struct{}{}
+		}
+		s.zoneUpdateKeys[strings.ToLower(dns.Fqdn(zoneName))] = allowed
 	}
 
 	// Wire per-zone persist paths from config (D-11, D-12).

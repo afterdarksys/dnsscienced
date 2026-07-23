@@ -174,9 +174,11 @@ func main() {
 		// Empty AllowUpdate slice is passed as-is; server.New() intercepts empty → nil (deny all per D-15).
 		if len(loadedCfg.Zones) > 0 {
 			cfg.ZoneUpdateCIDRs = make(map[string][]string, len(loadedCfg.Zones))
+			cfg.ZoneUpdateTSIGKeys = make(map[string][]string, len(loadedCfg.Zones))
 			for _, zc := range loadedCfg.Zones {
 				zoneName := strings.ToLower(dns.Fqdn(zc.Name))
 				cfg.ZoneUpdateCIDRs[zoneName] = zc.AllowUpdate
+				cfg.ZoneUpdateTSIGKeys[zoneName] = zc.UpdateTSIGKeys
 			}
 		}
 
@@ -523,15 +525,16 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 			continue
 		}
 		secondaryCfg := secondary.Config{
-			Name:              zc.Name,
-			Masters:           append([]string(nil), zc.Masters...),
-			TransferSource:    zc.TransferSource,
-			RefreshInterval:   zc.RefreshInterval,
-			MinRefreshTime:    zc.MinRefreshTime,
-			MaxRefreshTime:    zc.MaxRefreshTime,
-			MinRetryTime:      zc.MinRetryTime,
-			MaxRetryTime:      zc.MaxRetryTime,
-			AllowAXFRFallback: true,
+			Name:                  zc.Name,
+			Masters:               append([]string(nil), zc.Masters...),
+			TransferSource:        zc.TransferSource,
+			AllowUnsignedTransfer: zc.AllowUnsignedTransfer,
+			RefreshInterval:       zc.RefreshInterval,
+			MinRefreshTime:        zc.MinRefreshTime,
+			MaxRefreshTime:        zc.MaxRefreshTime,
+			MinRetryTime:          zc.MinRetryTime,
+			MaxRetryTime:          zc.MaxRetryTime,
+			AllowAXFRFallback:     true,
 		}
 		if zc.AllowAXFRFallback != nil {
 			secondaryCfg.AllowAXFRFallback = *zc.AllowAXFRFallback
@@ -547,6 +550,11 @@ func buildSecondaryConfigs(cfg *config.Config) ([]secondary.Config, error) {
 				Algorithm: key.Algorithm,
 				Secret:    key.Secret,
 			}
+		} else if !zc.AllowUnsignedTransfer {
+			return nil, fmt.Errorf(
+				"zone %s: transfer_tsig_key is required for secure secondary operation; set allow_unsigned_transfer: true only for a legacy primary",
+				zc.Name,
+			)
 		}
 		result = append(result, secondaryCfg)
 	}

@@ -119,6 +119,13 @@ zones:
       - "2001:db8::/32"
     # also_notify is reserved for outbound primary NOTIFY support.
 
+    # RFC 2136 UPDATE requires both a source ACL and a per-zone TSIG identity.
+    allow_update:
+      - "192.0.2.0/24"
+    update_tsig_keys:
+      - "update-key.example."
+    persist_updates: true
+
     # Security overrides (per-zone)
     enable_0x20: true          # Enable 0x20 for this zone
     enable_dnssec: true        # Enable DNSSEC validation
@@ -133,6 +140,8 @@ zones:
   #     - "[2001:db8::10]:53"
   #   transfer_source: "192.0.2.20"
   #   transfer_tsig_key: "secondary-xfer.example."
+  #   # Legacy escape hatch only; weakens both transfer and NOTIFY authentication:
+  #   # allow_unsigned_transfer: true
   #   refresh_interval: 1h     # optional; otherwise use transferred SOA
   #   min_refresh_time: 5m
   #   max_refresh_time: 24h

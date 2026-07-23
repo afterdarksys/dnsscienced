@@ -156,6 +156,35 @@ func TestManagerRejectsUnauthorizedNotify(t *testing.T) {
 	}
 }
 
+func TestManagerRequiresAuthenticatedSecondaryByDefault(t *testing.T) {
+	_, err := NewManager(newMemoryStore(), &fakeFetcher{serial: 1}, []Config{{
+		Name:    "secondary.test.",
+		Masters: []string{"192.0.2.1"},
+	}})
+	if err == nil {
+		t.Fatal("NewManager accepted an unsigned secondary without explicit opt-in")
+	}
+}
+
+func TestManagerAllowsExplicitLegacyUnsignedSecondary(t *testing.T) {
+	manager, err := NewManager(newMemoryStore(), &fakeFetcher{serial: 1}, []Config{{
+		Name:                  "secondary.test.",
+		Masters:               []string{"192.0.2.1"},
+		AllowUnsignedTransfer: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.HandleNotify(
+		context.Background(),
+		"secondary.test.",
+		net.ParseIP("192.0.2.1"),
+		"",
+	); err != nil {
+		t.Fatalf("explicit legacy unsigned NOTIFY rejected: %v", err)
+	}
+}
+
 func TestSerialGreaterWraparound(t *testing.T) {
 	if !zone.SerialGreater(0, ^uint32(0)) {
 		t.Fatal("serial wraparound should be newer")

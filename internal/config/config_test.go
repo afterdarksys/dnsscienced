@@ -245,6 +245,10 @@ zones:
     enable_scrubbing: true
     allow_transfer:
       - "192.0.2.0/24"
+    allow_update:
+      - "198.51.100.0/24"
+    update_tsig_keys:
+      - "update-key.example."
     also_notify:
       - "192.0.2.53:53"
     dnssec_signing:
@@ -265,6 +269,7 @@ zones:
       - "10.0.1.11:53"
     transfer_source: "10.0.0.5"
     transfer_tsig_key: "secondary-xfer.example."
+    allow_unsigned_transfer: true
     refresh_interval: 3600s
 
   - name: "forward.example.com"
@@ -305,6 +310,8 @@ zones:
 	assert.True(t, *primaryZone.EnableScrubbing)
 	assert.Len(t, primaryZone.AllowTransfer, 1)
 	assert.Equal(t, "192.0.2.0/24", primaryZone.AllowTransfer[0])
+	assert.Equal(t, []string{"198.51.100.0/24"}, primaryZone.AllowUpdate)
+	assert.Equal(t, []string{"update-key.example."}, primaryZone.UpdateTSIGKeys)
 	assert.Len(t, primaryZone.AlsoNotify, 1)
 
 	// Verify DNSSEC signing config
@@ -327,6 +334,7 @@ zones:
 	assert.Equal(t, "10.0.1.10:53", secondaryZone.Masters[0])
 	assert.Equal(t, "10.0.0.5", secondaryZone.TransferSource)
 	assert.Equal(t, "secondary-xfer.example.", secondaryZone.TransferTSIGKey)
+	assert.True(t, secondaryZone.AllowUnsignedTransfer)
 	assert.Equal(t, 3600*time.Second, secondaryZone.RefreshInterval)
 
 	// Verify forward zone

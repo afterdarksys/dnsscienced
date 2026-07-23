@@ -158,17 +158,18 @@ func containsRRValue(records []dns.RR, candidate dns.RR, zoneClass uint16) bool 
 //  2. TSIG validity (D-16): bad/replayed TSIG → NOTAUTH
 //  3. Empty Zone section guard → FORMERR
 //  4. Zone lookup: unknown zone → REFUSED
-//  5. ACL check (D-15, D-17): nil ACL (no allow_update) or IP not allowed → REFUSED
-//  6. Lock zone.updateMu
-//  7. Evaluate prerequisites (r.Answer) against live zone
-//  8. Clone live zone
-//  9. Apply Update section (r.Ns) to clone
-//
-// 10. clone.Validate() → SERVFAIL on failure
-// 11. clone.IncrementSerial()
-// 12. Atomic swap: s.cfg.Zones[zoneName] = clone
-// 13. Unlock zone.updateMu
-// 14. Reply NOERROR
+//  5. Per-zone TSIG identity authorization: absent/unlisted key → REFUSED
+//  6. ACL check (D-15, D-17): nil ACL (no allow_update) or IP not allowed → REFUSED
+//  7. Zone containment: out-of-zone prerequisite/update owner → NOTZONE
+//  8. Lock zone.updateMu
+//  9. Evaluate prerequisites (r.Answer) against live zone
+//  10. Clone live zone
+//  11. Apply Update section (r.Ns) to clone
+//  12. clone.Validate() → SERVFAIL on failure
+//  13. clone.IncrementSerial()
+//  14. Atomic swap: s.cfg.Zones[zoneName] = clone
+//  15. Unlock zone.updateMu
+//  16. Reply NOERROR
 func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP) {
 	// Local helper to send an error rcode without the pooled message path.
 	sendRcode := func(rcode int) {
@@ -204,7 +205,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 
 	// 4. Zone lookup. In UPDATE messages, Question[0].Name = zone FQDN (TypeSOA class).
 	// CR-02: canonicalize to lowercase before map key lookup (RFC 4343 case-insensitivity).
-	zoneName := strings.ToLower(r.Question[0].Name)
+	zoneName := strings.ToLower(dns.Fqdn(r.Question[0].Name))
 	// CR-01: RLock protects concurrent read of cfg.Zones map.
 	s.zonesMu.RLock()
 	z, ok := s.cfg.Zones[zoneName]
@@ -218,7 +219,17 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 5. ACL check (D-15, D-17):
+	// 5. A globally valid TSIG key is authenticated, but it is authorized only
+	// for zones that name it explicitly.
+	reqTSIG := r.IsTsig()
+	allowedKeys := s.zoneUpdateKeys[zoneName]
+	keyName := strings.ToLower(dns.Fqdn(reqTSIG.Hdr.Name))
+	if _, allowed := allowedKeys[keyName]; !allowed {
+		sendRcode(dns.RcodeRefused)
+		return
+	}
+
+	// 6. ACL check (D-15, D-17):
 	//    nil ACL = no allow_update configured = deny all (secure-by-default).
 	//    non-nil ACL = source IP must be in the allowlist.
 	acl := s.zoneUpdateACLs[zoneName]
@@ -227,12 +238,24 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 6. Lock zone.updateMu to serialize concurrent UPDATE requests (D-06, T-13-08).
+	// 7. RFC 2136 §3.1 requires every prerequisite and update owner name to
+	// belong to the Zone section. Reject the complete transaction before
+	// evaluating prerequisites or cloning so no partial effect is possible.
+	for _, section := range [][]dns.RR{r.Answer, r.Ns} {
+		for _, rr := range section {
+			if rr == nil || !dns.IsSubDomain(zoneName, strings.ToLower(dns.Fqdn(rr.Header().Name))) {
+				sendRcode(dns.RcodeNotZone)
+				return
+			}
+		}
+	}
+
+	// 8. Lock zone.updateMu to serialize concurrent UPDATE requests (D-06, T-13-08).
 	// Hold through prereq evaluation, clone, apply, swap.
 	z.Lock()
 	defer z.Unlock()
 
-	// 7. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
+	// 9. Evaluate prerequisites (r.Answer = PREREQUISITE section per RFC 2136 §2).
 	// Evaluated against the LIVE zone (before cloning) so that concurrent updates
 	// are correctly serialized.  Any failure → return error rcode; zero updates applied (D-03).
 	if rcode, ok := evaluatePrereqs(r.Answer, z); !ok {
@@ -240,11 +263,11 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		return
 	}
 
-	// 8. Clone the live zone. All mutations are applied to the clone only.
+	// 10. Clone the live zone. All mutations are applied to the clone only.
 	// The live zone remains readable and consistent until the atomic swap (D-05, T-13-07).
 	clone := z.Clone()
 
-	// 9. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
+	// 11. Apply Update section (r.Ns = UPDATE section per RFC 2136 §2).
 	for _, rr := range r.Ns {
 		hdr := rr.Header()
 		owner := strings.ToLower(hdr.Name)
@@ -353,20 +376,20 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 		}
 	}
 
-	// 10. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
+	// 12. Validate the mutated clone (D-05, T-13-07): zone must still be structurally valid.
 	// If validation fails the live zone is untouched (no swap).
 	if err := clone.Validate(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 11. Auto-increment serial (D-09).
+	// 13. Auto-increment serial (D-09).
 	if err := clone.IncrementSerial(); err != nil {
 		sendRcode(dns.RcodeServerFailure)
 		return
 	}
 
-	// 12. Atomic swap: replace the live zone with the validated, serial-incremented clone (D-05, DYNUP-04).
+	// 14. Atomic swap: replace the live zone with the validated, serial-incremented clone (D-05, DYNUP-04).
 	// CR-01: write lock protects concurrent write to cfg.Zones map.
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -375,9 +398,9 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	s.cfg.Zones[zoneName] = clone
 	s.zonesMu.Unlock()
 
-	// 13. updateMu released by defer above.
+	// 15. updateMu released by defer above.
 
-	// 14. Reply NOERROR.
+	// 16. Reply NOERROR.
 	// CR-04: RFC 2845 §3.2 requires the response to be TSIG-signed when the request was
 	// TSIG-authenticated. Sign using the same key that authenticated the request.
 	m := new(dns.Msg)
@@ -387,7 +410,7 @@ func (s *Server) handleUpdate(w dns.ResponseWriter, r *dns.Msg, clientIP net.IP)
 	}
 	w.WriteMsg(m) //nolint:errcheck
 
-	// 15. Persist to disk if configured (D-11, D-14).
+	// 17. Persist to disk if configured (D-11, D-14).
 	// WR-04: run in a goroutine so blocking disk I/O does not hold z.Lock() (released
 	// by defer above when handleUpdate returns) and does not stall subsequent UPDATE
 	// clients waiting on the zone lock. The in-memory swap already succeeded; the

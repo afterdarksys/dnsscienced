@@ -108,3 +108,36 @@ func TestBuildSecondaryConfigsResolvesTransferKey(t *testing.T) {
 		t.Fatalf("secondary configs = %+v", got)
 	}
 }
+
+func TestBuildSecondaryConfigsRequiresTransferKeyByDefault(t *testing.T) {
+	cfg := &config.Config{
+		Zones: []config.ZoneConfig{{
+			Name:    "secondary.test",
+			Type:    "secondary",
+			Masters: []string{"192.0.2.1"},
+		}},
+	}
+
+	if _, err := buildSecondaryConfigs(cfg); err == nil {
+		t.Fatal("buildSecondaryConfigs accepted an unsigned secondary without explicit opt-in")
+	}
+}
+
+func TestBuildSecondaryConfigsAllowsExplicitLegacyUnsignedTransfer(t *testing.T) {
+	cfg := &config.Config{
+		Zones: []config.ZoneConfig{{
+			Name:                  "secondary.test",
+			Type:                  "secondary",
+			Masters:               []string{"192.0.2.1"},
+			AllowUnsignedTransfer: true,
+		}},
+	}
+
+	got, err := buildSecondaryConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].AllowUnsignedTransfer || got[0].TransferKey != nil {
+		t.Fatalf("secondary configs = %+v", got)
+	}
+}

@@ -144,13 +144,18 @@ type ZoneConfig struct {
 	AlsoNotify    []string `yaml:"also_notify,omitempty"`    // Additional NOTIFY targets
 
 	// Dynamic DNS Update configuration (RFC 2136)
-	AllowUpdate    []string `yaml:"allow_update,omitempty"`    // CIDRs allowed to send UPDATE; empty = REFUSED (D-15)
-	PersistUpdates *bool    `yaml:"persist_updates,omitempty"` // nil/false = in-memory only; true = write-back to zone file (D-11)
+	AllowUpdate    []string `yaml:"allow_update,omitempty"`     // CIDRs allowed to send UPDATE; empty = REFUSED (D-15)
+	UpdateTSIGKeys []string `yaml:"update_tsig_keys,omitempty"` // Named keys authorized to update this zone; empty = REFUSED
+	PersistUpdates *bool    `yaml:"persist_updates,omitempty"`  // nil/false = in-memory only; true = write-back to zone file (D-11)
 
 	// Zone transfer options (for secondary zones)
-	TransferSource  string        `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
-	TransferTSIGKey string        `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
-	RefreshInterval time.Duration `yaml:"refresh_interval,omitempty"`  // Override SOA refresh
+	TransferSource  string `yaml:"transfer_source,omitempty"`   // Source IP for AXFR
+	TransferTSIGKey string `yaml:"transfer_tsig_key,omitempty"` // Named key from tsig_keys
+	// AllowUnsignedTransfer is an explicit compatibility escape hatch for
+	// secondaries whose primary cannot authenticate AXFR/IXFR and RFC 1996
+	// NOTIFY with TSIG. The secure default is false.
+	AllowUnsignedTransfer bool          `yaml:"allow_unsigned_transfer,omitempty"`
+	RefreshInterval       time.Duration `yaml:"refresh_interval,omitempty"` // Override SOA refresh
 
 	// AllowAXFRFallback controls whether IXFR failures fall back to a full AXFR.
 	// Set to false to force operators to fix IXFR issues rather than silently

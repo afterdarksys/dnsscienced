@@ -31,14 +31,17 @@ resolved at startup and their addresses form the inbound NOTIFY allowlist.
 Using fixed IP addresses avoids DNS-dependent startup and makes authorization
 changes explicit.
 
-When `transfer_tsig_key` is set:
+`transfer_tsig_key` is required by default:
 
 - outbound AXFR is signed with that named key;
 - an inbound SOA NOTIFY must have a valid TSIG with the same key name; and
 - the NOTIFY source address must match a configured master.
 
-Without a transfer key, the source-address allowlist still applies, but the
-transfer and NOTIFY are unauthenticated. Use TSIG in production.
+For a legacy primary that cannot use TSIG, `allow_unsigned_transfer: true`
+explicitly permits unauthenticated transfers and NOTIFY. The configured master
+source-address allowlist still applies, but source addresses are not
+cryptographic identities and UDP source addresses can be spoofed. Do not use
+this compatibility mode across an untrusted network.
 
 The manager coalesces repeated NOTIFY messages per zone and serializes transfers,
 so a NOTIFY flood cannot create concurrent transfers for the same zone. A newly
