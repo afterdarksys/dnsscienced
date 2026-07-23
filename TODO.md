@@ -216,7 +216,7 @@ fleet-scale policy, operations, interoperability, and producer support.
   conflicts, migrations, and state resets.
 - [x] Add Prometheus metrics and admin status APIs for catalog freshness, serial,
   members, reconcile outcomes, and transfer failures.
-- [ ] Add CLI/admin operations to list catalogs, members, effective group config,
+- [x] Add CLI/admin operations to list catalogs, members, effective group config,
   ownership, errors, and pending reconciliation.
 - [x] Add unit, race, restart, malformed-catalog, and failure-injection tests.
 - [x] Add catalog parser and reconciliation fuzz tests.

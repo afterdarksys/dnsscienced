@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -58,6 +61,7 @@ type AdminSrvAdapter interface {
 // allowing the admin plane to mutate reconciliation state.
 type CatalogStatusSource interface {
 	Statuses() []catalog.Status
+	CatalogMembers(string, string, int, *uint32) ([]catalog.MemberStatus, string, int, uint32, error)
 }
 
 // Service implements the AdminService gRPC interface
@@ -988,6 +992,110 @@ func (s *Service) GetMetrics(ctx context.Context, req *emptypb.Empty) (*pb.Admin
 	}
 
 	return resp, nil
+}
+
+// ListCatalogs returns bounded summaries for every configured RFC 9432 source.
+func (s *Service) ListCatalogs(
+	_ context.Context,
+	_ *emptypb.Empty,
+) (*pb.AdminListCatalogsResponse, error) {
+	response := &pb.AdminListCatalogsResponse{}
+	if s.catalogs == nil {
+		return response, nil
+	}
+	for _, catalogStatus := range s.catalogs.Statuses() {
+		info := &pb.AdminCatalogInfo{
+			Name:                catalogStatus.Name,
+			Serial:              catalogStatus.Serial,
+			MemberCount:         uint64(catalogStatus.Members),
+			LastError:           catalogStatus.LastError,
+			PendingSerial:       catalogStatus.PendingSerial,
+			PendingReason:       catalogStatus.PendingReason,
+			PendingActionCounts: make(map[string]uint64, len(catalogStatus.PendingActionCounts)),
+		}
+		if !catalogStatus.LastAttempt.IsZero() {
+			info.LastAttempt = timestamppb.New(catalogStatus.LastAttempt)
+		}
+		if !catalogStatus.LastSuccess.IsZero() {
+			info.LastSuccess = timestamppb.New(catalogStatus.LastSuccess)
+		}
+		for action, count := range catalogStatus.PendingActionCounts {
+			info.PendingActionCounts[action] = uint64(count)
+		}
+		response.Catalogs = append(response.Catalogs, info)
+	}
+	return response, nil
+}
+
+// ListCatalogMembers returns an allocation-bounded, cursor-paginated member
+// view. Page tokens are opaque base64 encodings of the last returned zone.
+func (s *Service) ListCatalogMembers(
+	_ context.Context,
+	request *pb.AdminListCatalogMembersRequest,
+) (*pb.AdminListCatalogMembersResponse, error) {
+	if s.catalogs == nil {
+		return nil, status.Error(codes.FailedPrecondition, "catalog zones are not configured")
+	}
+	if request == nil || strings.TrimSpace(request.Catalog) == "" {
+		return nil, status.Error(codes.InvalidArgument, "catalog is required")
+	}
+	pageSize := int(request.PageSize)
+	if pageSize == 0 {
+		pageSize = 100
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		return nil, status.Error(codes.InvalidArgument, "page_size must be between 1 and 1000")
+	}
+	cursor := ""
+	var expectedSerial *uint32
+	if request.PageToken != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(request.PageToken)
+		if err != nil || len(decoded) <= 4 {
+			return nil, status.Error(codes.InvalidArgument, "invalid page_token")
+		}
+		serial := binary.BigEndian.Uint32(decoded[:4])
+		expectedSerial = &serial
+		cursor = string(decoded[4:])
+	}
+	members, nextCursor, total, snapshotSerial, err := s.catalogs.CatalogMembers(
+		request.Catalog,
+		cursor,
+		pageSize,
+		expectedSerial,
+	)
+	if errors.Is(err, catalog.ErrCatalogNotFound) {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	if errors.Is(err, catalog.ErrCatalogChanged) {
+		return nil, status.Error(codes.Aborted, err.Error())
+	}
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	response := &pb.AdminListCatalogMembersResponse{
+		TotalCount:     uint64(total),
+		SnapshotSerial: snapshotSerial,
+	}
+	for _, member := range members {
+		response.Members = append(response.Members, &pb.AdminCatalogMember{
+			Zone:              member.Zone,
+			Label:             member.Label,
+			Groups:            member.Groups,
+			ChangeOfOwnership: member.ChangeOfOwnership,
+			OwnerCatalog:      member.OwnerCatalog,
+			EffectiveGroup:    member.EffectiveGroup,
+			Masters:           member.Masters,
+			TransferKeyName:   member.TransferKeyName,
+			TransferAlgorithm: member.TransferAlgorithm,
+		})
+	}
+	if nextCursor != "" {
+		token := make([]byte, 4+len(nextCursor))
+		binary.BigEndian.PutUint32(token[:4], snapshotSerial)
+		copy(token[4:], nextCursor)
+		response.NextPageToken = base64.RawURLEncoding.EncodeToString(token)
+	}
+	return response, nil
 }
 
 // ShutdownServer gracefully shuts down the server

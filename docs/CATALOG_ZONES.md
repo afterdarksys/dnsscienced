@@ -139,3 +139,23 @@ counts. The action summary explicitly records conflicts, ownership migrations,
 and state resets without emitting an attacker-controlled number of log lines.
 The logger is initialized before initial catalog transfers, so startup failures
 are included in the audit trail.
+
+## Admin inspection
+
+The authenticated admin gRPC service exposes `ListCatalogs` and
+`ListCatalogMembers`. Catalog summaries include freshness, errors, and any
+dry-run or approval-blocked serial with fixed action counts. Member inspection
+is lexicographically cursor-paginated with a hard page-size ceiling of 1,000;
+selecting a page uses bounded auxiliary memory even for very large catalogs.
+Page tokens are bound to the snapshot serial, and a concurrent reconciliation
+returns gRPC `ABORTED` instead of mixing member or ownership data from different
+snapshots.
+It reports member labels, advertised groups, effective group selection,
+ownership, masters, and TSIG key name/algorithm. TSIG secrets are never exposed.
+
+The companion CLI commands are:
+
+```text
+dnsscienced-admin catalog list
+dnsscienced-admin catalog members <catalog> [page-size] [page-token]
+```

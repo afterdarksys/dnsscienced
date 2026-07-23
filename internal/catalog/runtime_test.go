@@ -233,6 +233,12 @@ func TestRuntimeDryRunRetainsFleet(t *testing.T) {
 	if runtime.GetZone("alpha.example.") != nil || runtime.catalogs["catalog.example."] != nil {
 		t.Fatal("dry-run mutated catalog fleet")
 	}
+	status := runtime.Statuses()[0]
+	if status.PendingSerial != 42 ||
+		status.PendingReason != "dry_run" ||
+		status.PendingActionCounts[string(ActionAdd)] != 1 {
+		t.Fatalf("dry-run pending status = %+v", status)
+	}
 }
 
 func TestRuntimeRequiresSerialBoundApprovalForMassDestruction(t *testing.T) {
@@ -280,6 +286,104 @@ func TestRuntimeRequiresSerialBoundApprovalForMassDestruction(t *testing.T) {
 		runtime.GetZone("beta.example.") != nil ||
 		runtime.GetZone("gamma.example.") == nil {
 		t.Fatalf("approved fleet not applied; removed=%v", controller.removed)
+	}
+	status := runtime.Statuses()[0]
+	if status.PendingSerial != 0 ||
+		status.PendingReason != "" ||
+		status.PendingActionCounts != nil {
+		t.Fatalf("approved plan left pending status = %+v", status)
+	}
+}
+
+func TestRuntimeCatalogMembersUsesBoundedCursorPagination(t *testing.T) {
+	source := runtimeSource("catalog.example.")
+	source.Defaults.TransferKey = &secondary.TransferKey{
+		Name:      "default-key.example.",
+		Algorithm: "hmac-sha256",
+		Secret:    "not-exposed",
+	}
+	source.Groups["blue"] = secondary.Config{
+		Masters: []string{"192.0.2.20", "192.0.2.21"},
+		TransferKey: &secondary.TransferKey{
+			Name:      "blue-key.example.",
+			Algorithm: "hmac-sha512",
+			Secret:    "also-not-exposed",
+		},
+	}
+	runtime, err := NewRuntime(
+		newRuntimeStore(),
+		[]SourceConfig{source},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatalf("AttachController: %v", err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`c1.zones.catalog.example. 0 IN PTR charlie.example.`,
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`b1.zones.catalog.example. 0 IN PTR beta.example.`,
+		`group.b1.zones.catalog.example. 0 IN TXT "blue"`,
+	)); err != nil {
+		t.Fatalf("AddZone: %v", err)
+	}
+
+	first, cursor, total, serial, err := runtime.CatalogMembers("catalog.example.", "", 2, nil)
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if total != 3 ||
+		serial != 42 ||
+		len(first) != 2 ||
+		first[0].Zone != "alpha.example." ||
+		first[1].Zone != "beta.example." ||
+		cursor != "beta.example." {
+		t.Fatalf("first page = %+v cursor=%q total=%d", first, cursor, total)
+	}
+	if first[1].EffectiveGroup != "blue" ||
+		first[1].TransferKeyName != "blue-key.example." ||
+		first[1].TransferAlgorithm != "hmac-sha512" ||
+		len(first[1].Masters) != 2 {
+		t.Fatalf("effective grouped member = %+v", first[1])
+	}
+
+	second, cursor, total, serial, err := runtime.CatalogMembers(
+		"catalog.example.",
+		cursor,
+		2,
+		&serial,
+	)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if total != 3 ||
+		serial != 42 ||
+		len(second) != 1 ||
+		second[0].Zone != "charlie.example." ||
+		cursor != "" {
+		t.Fatalf("second page = %+v cursor=%q total=%d", second, cursor, total)
+	}
+	if second[0].TransferKeyName != "default-key.example." ||
+		second[0].TransferAlgorithm != "hmac-sha256" {
+		t.Fatalf("default member = %+v", second[0])
+	}
+	if _, _, _, _, err := runtime.CatalogMembers("catalog.example.", "", 1001, nil); err == nil {
+		t.Fatal("oversized catalog member page was accepted")
+	}
+	staleSerial := uint32(41)
+	if _, _, _, _, err := runtime.CatalogMembers(
+		"catalog.example.",
+		"",
+		2,
+		&staleSerial,
+	); !errors.Is(err, ErrCatalogChanged) {
+		t.Fatalf("stale page serial error = %v", err)
 	}
 }
 
