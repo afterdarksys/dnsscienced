@@ -10,6 +10,27 @@ Legend:
 - `[ ]` is missing, only partially implemented, configuration-only, or belongs to
   another repository.
 
+## Governing product goal
+
+Build a Linux-native, security-first, ultra-fast, carrier-grade DNS platform
+capable of replacing BIND and NSD in defined authoritative, secondary,
+validating-recursive, forwarding, policy, local-root, and eventually public
+root-authoritative deployments.
+
+- [x] Define explicit role boundaries, data-plane tiers, correctness gates,
+  Linux performance gates, and the distinction between loading `.` and operating
+  a standards-conformant public root service.
+- [ ] Add validated role profiles that reject unsafe combinations and default
+  authoritative/root listeners to recursion disabled.
+- [ ] Build differential protocol suites against current BIND and NSD releases.
+- [ ] Build a root-authoritative conformance suite for RFC 7720 and a separate
+  local-root suite for RFC 8806.
+- [ ] Define and continuously test carrier-grade overload SLOs for sustained QPS,
+  p99/p99.9 latency, packet loss, TCP fallback, bounded memory, and recovery.
+
+See [Carrier-Grade Multi-Role Architecture and Release
+Gates](docs/CARRIER_GRADE_ROLES.md).
+
 ## Completed DNS cache and threat-intelligence work
 
 - [x] Add threat score, categories, reputation, first/last seen, and source fields
