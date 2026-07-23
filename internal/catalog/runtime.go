@@ -161,6 +161,9 @@ func NewRuntime(
 			return nil, fmt.Errorf("catalog: persisted snapshot violates current limits: %w", err)
 		}
 	}
+	if err := r.validateCatalogGraph(r.catalogs); err != nil {
+		return nil, fmt.Errorf("catalog: persisted snapshots contain an ownership cycle: %w", err)
+	}
 	for zoneName, owner := range r.ownership {
 		source, ok := r.sources[owner.Catalog]
 		if !ok {
@@ -313,6 +316,9 @@ func (r *Runtime) reconcile(name string, accepted *Catalog, raw *zone.Zone) erro
 		)
 	}
 	next[name] = accepted
+	if err := r.validateCatalogGraph(next); err != nil {
+		return err
+	}
 
 	actions, err := Plan(previous, next, ownership, r.order, r.reserved)
 	if err != nil {
@@ -418,8 +424,48 @@ func (r *Runtime) validateMemberScope(catalogName string, accepted *Catalog) err
 		)
 	}
 	for memberName := range accepted.Members {
+		if _, isCatalog := r.sources[memberName]; isCatalog {
+			return fmt.Errorf("catalog %s cannot provision configured catalog %s as a member", catalogName, memberName)
+		}
 		if err := validateMemberName(catalogName, memberName, source); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) validateCatalogGraph(catalogs map[string]*Catalog) error {
+	memberZones := make(map[string]struct{})
+	for _, accepted := range catalogs {
+		for memberName := range accepted.Members {
+			memberZones[memberName] = struct{}{}
+		}
+	}
+	for _, memberName := range sortedSet(memberZones) {
+		edges := make(map[string]string)
+		for catalogName, accepted := range catalogs {
+			member, exists := accepted.Members[memberName]
+			if !exists || member.ChangeOfOwnership == "" {
+				continue
+			}
+			target := normalizeName(member.ChangeOfOwnership)
+			if target == catalogName {
+				return fmt.Errorf("catalog %s member %s has self-referential coo", catalogName, memberName)
+			}
+			if _, configured := r.sources[target]; configured {
+				edges[catalogName] = target
+			}
+		}
+		for _, start := range sortedMapKeys(edges) {
+			seen := make(map[string]bool)
+			current := start
+			for current != "" {
+				if seen[current] {
+					return fmt.Errorf("member %s has cyclic catalog ownership through %s", memberName, current)
+				}
+				seen[current] = true
+				current = edges[current]
+			}
 		}
 	}
 	return nil
@@ -652,6 +698,24 @@ func normalizeSuffixes(suffixes []string) ([]string, error) {
 		result = append(result, suffix)
 	}
 	return normalizeNames(result), nil
+}
+
+func sortedSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func sortedMapKeys(values map[string]string) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func containsName(names []string, target string) bool {

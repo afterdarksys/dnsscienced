@@ -79,6 +79,12 @@ reconciliation action counts. AXFR/IXFR ingestion enforces record and estimated
 wire-byte limits before copying records into the zone model; the same transfer
 limits apply to ordinary secondaries and catalog-provisioned members.
 
+A configured catalog zone can never be provisioned as a member. Self-directed
+`coo` properties and deterministic multi-catalog `coo` cycles are rejected
+before the snapshot is persisted or any member transfer is changed. References
+to a destination catalog that is not configured remain inert until an operator
+configures that catalog and a complete acyclic ownership handoff is present.
+
 State is written atomically with mode `0600` and includes last-valid catalog
 records, member-zone records, and catalog ownership. Startup restores those
 zones before attempting refresh, so a temporary primary outage does not empty

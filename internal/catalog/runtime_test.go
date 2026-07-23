@@ -383,6 +383,83 @@ func TestRuntimeBoundsCatalogSourceCount(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectsConfiguredCatalogAsMember(t *testing.T) {
+	runtime, controller := newTestRuntime(
+		t,
+		newRuntimeStore(),
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+	)
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`self.zones.catalog.example. 0 IN PTR catalog.example.`,
+	)); err == nil {
+		t.Fatal("configured catalog was accepted as its own member")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.upserts) != 0 {
+		t.Fatalf("self-member caused provisioning: %v", controller.upserts)
+	}
+}
+
+func TestRuntimeRejectsSelfReferentialCOO(t *testing.T) {
+	runtime, _ := newTestRuntime(
+		t,
+		newRuntimeStore(),
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+	)
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"catalog.example.",
+		`a1.zones.catalog.example. 0 IN PTR alpha.example.`,
+		`coo.a1.zones.catalog.example. 0 IN PTR catalog.example.`,
+	)); err == nil {
+		t.Fatal("self-referential COO was accepted")
+	}
+}
+
+func TestRuntimeRejectsCrossCatalogOwnershipCycle(t *testing.T) {
+	store := newRuntimeStore()
+	runtime, err := NewRuntime(
+		store,
+		[]SourceConfig{
+			runtimeSource("first.catalog."),
+			runtimeSource("second.catalog."),
+		},
+		filepath.Join(t.TempDir(), "catalog-state.json"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &runtimeController{runtime: runtime}
+	if err := runtime.AttachController(controller); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"first.catalog.",
+		`a1.zones.first.catalog. 0 IN PTR alpha.example.`,
+		`coo.a1.zones.first.catalog. 0 IN PTR second.catalog.`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AddZone(catalogZone(
+		t,
+		"second.catalog.",
+		`b1.zones.second.catalog. 0 IN PTR alpha.example.`,
+		`coo.b1.zones.second.catalog. 0 IN PTR first.catalog.`,
+	)); err == nil {
+		t.Fatal("cross-catalog COO cycle was accepted")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if len(controller.upserts) != 1 {
+		t.Fatalf("cycle rejection caused side effects: %v", controller.upserts)
+	}
+}
+
 func TestRuntimeRemovalWithdrawsOnlyOwnedMember(t *testing.T) {
 	store := newRuntimeStore()
 	runtime, controller := newTestRuntime(t, store, filepath.Join(t.TempDir(), "catalog-state.json"))

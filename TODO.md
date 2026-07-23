@@ -201,7 +201,8 @@ fleet-scale policy, operations, interoperability, and producer support.
   counts, AXFR/IXFR records, transfer bytes, and member provisioning concurrency
   (currently serialized).
 - [ ] Add an operator-configurable catalog reconciliation rate budget.
-- [ ] Reject recursive/self-referential ownership and provisioning cycles.
+- [x] Reject configured catalogs as member zones, self-referential `coo`, and
+  deterministic cross-catalog ownership cycles before persistence or side effects.
 - [ ] Provide dry-run and approval modes for mass deletion or replacement.
 - [ ] Add structured audit events for catalog receipt, validation, reconciliation,
   conflicts, migrations, and state resets.
