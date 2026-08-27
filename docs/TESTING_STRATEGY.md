@@ -1,5 +1,10 @@
 # DNSScienced Testing Strategy
 
+> **Strategy, not a completion report:** Checklists and coverage percentages in
+> this document describe desired gates unless accompanied by current command
+> output. The authoritative current checks are `go test ./...` and
+> `tests/differential/run.sh`; see [README](../README.md#evidence).
+
 ## Testing Philosophy
 
 **"If it's not tested, it's broken."**

@@ -36,7 +36,7 @@ dnsscienced/
 
 ```bash
 # Clone with submodules
-git clone --recursive https://github.com/dnsscience/dnsscienced.git
+git clone --recursive https://github.com/afterdarksys/dnsscienced.git
 
 # Or add submodule to existing clone
 cd dnsscienced

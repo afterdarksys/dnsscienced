@@ -1,180 +1,151 @@
 # DNSScienced
 
-**High-Performance DNS Server with Modern Security**
+**A security-oriented authoritative DNS server and recursive resolver written in Go.**
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-DNSScienced is a production-ready DNS server written in Go, providing both **recursive** and **authoritative** DNS services with state-of-the-art security features.
+DNSScienced combines authoritative service, recursive resolution, DNSSEC
+validation, policy enforcement, protected zone operations, and an authenticated
+management plane in one codebase. It is designed for operators who need to
+understand and control DNS behavior under failure, attack, and change—not only
+answer ordinary queries.
 
-## Status
+The project is under active development. Its implemented surface is substantial
+and its automated suite is green, but feature claims in this README distinguish
+implemented behavior, measured results, and experimental work.
 
-🚀 **Phase 3 Complete** - Production-ready DNS server with recursive resolver, authoritative server, and zone management.
+## What is implemented
 
-**What Works Now:**
-- ✅ Recursive DNS resolver with caching (568k+ qps)
-- ✅ Authoritative DNS server with zone loading
-- ✅ Response Rate Limiting (RRL) for DDoS protection
-- ✅ DNS Cookies (RFC 7873/9018) with SipHash-2-4
-- ✅ Modern .dnszone YAML format + BIND compatibility
-- ✅ Compiled zones (.dzc) for 2-5x faster loading
-- ✅ SO_REUSEPORT multi-listener architecture
-- ✅ Zero-allocation buffer pooling
-- ✅ Crypto-secure randomization
-- ⚡ **Experimental**: IETF draft protocols (DNS-SD, DoQ, DSO, DELEG, DID, IoT DNS)
+### Authoritative DNS
 
-## Quick Start
+- Authoritative UDP and TCP service with EDNS(0).
+- Native `.dnszone` YAML and BIND-style zone-file loading.
+- Compiled `.dzc` zones and bidirectional format conversion.
+- Wildcards, delegations, referrals, in-bailiwick glue, negative answers, and
+  modern record types.
+- AXFR and IXFR, including strict TLS transport for zone transfers.
+- Primary NOTIFY and secondary-zone management.
+- RFC 2136 dynamic updates with TSIG, per-zone ACLs, replay handling, atomic
+  mutation, and optional durable persistence.
+- Catalog-zone reconciliation with limits, approvals, audit events, and admin
+  inspection.
+- Serving of pre-signed DNSSEC records and authoritative DNSSEC response logic.
 
-### Build from Source
+Authoritative online zone signing is **not** implemented. Configuration that
+requests it is rejected instead of silently running without signing.
 
-```bash
-# Clone repository
-git clone https://github.com/dnsscience/dnsscienced.git
+### Recursive DNS
+
+- Iterative resolution from root hints.
+- Sharded caching, negative caching, request coalescing, prefetch, and
+  serve-stale behavior.
+- QNAME minimization, 0x20 case randomization, UDP-to-TCP retry, bounded worker
+  routing, hedged authority queries, and conditional forwarding modes.
+- DNSSEC chain validation, bogus-result caching, aggressive NSEC/NSEC3 use, and
+  durable RFC 5011 trust-anchor state.
+- RPZ enforcement on query names, client IPs, response IPs, and nameserver
+  names.
+
+### Security and policy
+
+- Response Rate Limiting and query-complexity limits.
+- RFC 7873/9018 DNS Cookies using SipHash-2-4.
+- Cryptographic transaction-ID and source-port randomization.
+- Compression-loop/bomb defenses and malformed-query validation.
+- Bounded TCP resources, UDP receive batching on Linux, and pooled buffers.
+- TSIG request and response authentication with truncation and replay defenses.
+- DNS firewall policy with static rules, threat feeds, customer context, and
+  sandboxed Starlark hooks.
+- Optional kernel/XDP work for high-rate filtering; this path is advanced and
+  platform-specific rather than part of the portable baseline.
+
+### Operations
+
+- Authenticated gRPC administration using API key **and** mTLS identity.
+- Runtime zone and record management, cache operations, rate-limit controls,
+  connection inspection, audit logging, and metrics.
+- Prometheus instrumentation, structured logging, health endpoints, role
+  profiles, SIGHUP reload, and deployment/runbook documentation.
+- DoT and DoH listeners. DoQ and other draft-oriented work remain experimental.
+
+## Evidence
+
+The primary verification command is:
+
+```sh
+go test ./...
+```
+
+As of 2026-08-08, the full repository suite passes on macOS with Go 1.26.5. The
+repository currently contains more than 100 Go test files spanning unit,
+protocol, integration, race-sensitive, fuzz, and benchmark coverage.
+
+The authoritative differential suite builds pinned versions of DNSScienced,
+BIND, and NSD, sends an identical query corpus to all three, normalizes only
+wire-irrelevant differences, and compares DNS semantics:
+
+```sh
+tests/differential/run.sh
+```
+
+It currently covers 14 cases across UDP, TCP, EDNS(0), apex data, A/AAAA,
+CNAME, MX, TXT, CAA, wildcards, NODATA, NXDOMAIN, delegation referrals, and
+glue. See [Differential Conformance](docs/DIFFERENTIAL_CONFORMANCE.md) for its
+scope and exclusions.
+
+### What “compares with BIND and NSD” means
+
+DNSScienced is directly comparable to BIND and NSD for the authoritative
+semantics exercised by the differential suite. It also implements operational
+features—including recursive service, programmable policy, RPZ, authenticated
+administration, catalog operations, and protected dynamic updates—that extend
+beyond NSD's intentionally narrow role.
+
+That does **not** imply equivalent protocol breadth, platform coverage,
+independent review, deployment population, or decades of production history.
+BIND and NSD remain the references. DNSScienced treats compatibility as an
+executable claim that should expand case by case.
+
+## Quick start
+
+Requires Go 1.25 or newer.
+
+```sh
+git clone https://github.com/afterdarksys/dnsscienced.git
 cd dnsscienced
-
-# Build
-go build -o dnsscienced ./cmd/dnsscienced/
-
-# Run recursive resolver
-sudo ./dnsscienced -recursive
+go build -o dnsscienced ./cmd/dnsscienced
 ```
 
-### Basic Usage
+Run a recursive resolver on the default development port:
 
-```bash
-# Recursive resolver only
+```sh
 ./dnsscienced -recursive
-
-# Authoritative server with zone
-./dnsscienced -zone example.com.dnszone -authoritative
-
-# Both modes
-./dnsscienced -zone example.com.dnszone -recursive -authoritative
-
-# Custom listeners
-./dnsscienced -udp :5353 -tcp :5353 -listeners 8
+dig @127.0.0.1 -p 5353 example.com A
 ```
 
-### Test it
+Run an authoritative zone:
 
-```bash
-# Query recursive resolver
-dig @127.0.0.1 google.com
-
-# Query authoritative zone
-dig @127.0.0.1 www.example.com
+```sh
+./dnsscienced \
+  -recursive=false \
+  -authoritative \
+  -zone internal/zone/testdata/example.com.dnszone
 ```
 
-### Compile Zones for Performance
+Run from a production-style configuration:
 
-Compile zone files to binary format for 2-5x faster loading:
-
-```bash
-# Build compiler tool
-go build -o dnsscienced-compile ./cmd/dnsscienced-compile/
-
-# Compile a zone file
-./dnsscienced-compile -input example.com.dnszone
-
-# Server automatically uses .dzc if available
-./dnsscienced -zone example.com.dnszone -authoritative
+```sh
+./dnsscienced -config config.production.yaml
 ```
 
-See [Compiled Zones Documentation](docs/COMPILED_ZONES.md) for details.
+The command-line default is port `5353`, which avoids requiring privileged bind
+access during development. Review the example configuration, access controls,
+TSIG material, TLS identities, and deployment guide before exposing a server.
 
-## Features
+## Zone formats
 
-### Core DNS
-
-- **Recursive Resolver** - Full iterative resolution from root servers
-- **Authoritative Server** - Zone hosting with comprehensive validation
-- **Caching** - 256-shard concurrent cache with serve-stale support
-- **SO_REUSEPORT** - Multi-listener architecture for linear CPU scaling
-- **Buffer Pooling** - Zero-allocation design with sync.Pool
-
-### Security
-
-- **Response Rate Limiting (RRL)** - Token bucket algorithm per client/query/response
-- **DNS Cookies** - RFC 7873/9018 with SipHash-2-4 HMAC
-- **Source Port Randomization** - Crypto-secure (30.8 bits entropy)
-- **Compression Bomb Protection** - CVE-2024-8508 mitigation
-- **Query Validation** - RFC compliance checks
-
-### Zone Management
-
-- **Modern .dnszone Format** - Human-readable YAML syntax
-- **BIND Compatibility** - Full RFC 1035 zone file support
-- **Compiled Zones (.dzc)** - Binary format with 2-5x faster loading
-- **Bidirectional Conversion** - Convert between formats
-- **Comprehensive Validation** - SOA, NS, glue, CNAME conflict checks
-- **Wildcard Support** - *.example.com matching
-- **Auto-serial** - Automatic YYYYMMDD00 serial generation
-
-### Experimental Features (IETF Drafts)
-
-- **DNS-SD SRP (RFC 9665)** - Service registration for IoT devices
-- **DNS over QUIC (RFC 9250)** - Modern encrypted transport with 0-RTT
-- **DSO (RFC 8490)** - Stateful operations with push notifications
-- **DELEG (draft)** - Extensible delegation records
-- **DNS DID (draft)** - Decentralized identifiers
-- **IoT DNS (draft)** - Optimizations for constrained devices
-
-See [Experimental Features Documentation](docs/EXPERIMENTAL_FEATURES.md) for details.
-
-## Performance
-
-**Benchmarks** (Intel i9-9880H @ 2.30GHz):
-
-| Component | Performance | Notes |
-|-----------|-------------|-------|
-| DNS Packet Parse | 303 ns/op | CVE-2024-8508 protected |
-| DNS Cookie Gen | 214 ns/op | SipHash-2-4 |
-| Zone Load (text) | 229 µs | .dnszone YAML format |
-| Zone Load (compiled) | 104 µs | .dzc binary format (2.2x faster) |
-| Buffer Pool | 38 ns/op | 26M ops/sec |
-| Worker Submit | 193 ns/op | 5.2M jobs/sec |
-| Recursive Resolve | 1,761 ns/op | 568k qps (cache hit) |
-| Zone Parse (.dnszone) | 254 μs/op | 4,000 zones/sec |
-| Zone Parse (BIND) | 206 μs/op | 4,900 zones/sec |
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    DNSScienced Server                    │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌──────────────┐           ┌──────────────┐           │
-│  │   Recursive  │           │ Authoritative│           │
-│  │   Resolver   │           │    Server    │           │
-│  │              │           │              │           │
-│  │  • Cache     │           │  • Zones     │           │
-│  │  • Workers   │           │  • Wildcard  │           │
-│  │  • Iterative │           │  • DNSSEC    │           │
-│  └──────┬───────┘           └──────┬───────┘           │
-│         │                          │                    │
-│         └──────────┬───────────────┘                    │
-│                    │                                     │
-│         ┌──────────▼──────────┐                         │
-│         │  Security Layer     │                         │
-│         │  • RRL              │                         │
-│         │  • DNS Cookies      │                         │
-│         │  • Validation       │                         │
-│         └──────────┬──────────┘                         │
-│                    │                                     │
-│         ┌──────────▼──────────┐                         │
-│         │  Network Layer      │                         │
-│         │  • SO_REUSEPORT     │                         │
-│         │  • 16 UDP listeners │                         │
-│         │  • Buffer pooling   │                         │
-│         └─────────────────────┘                         │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Zone File Format
-
-### Modern .dnszone Format
+The native format is intended to be readable and mechanically validated:
 
 ```yaml
 zone:
@@ -184,7 +155,7 @@ zone:
 
 soa:
   primary_ns: ns1.example.com
-  contact: admin@example.com
+  contact: hostmaster@example.com
   serial: auto
   refresh: 2h
   retry: 1h
@@ -197,181 +168,161 @@ records:
       - ns1.example.com
       - ns2.example.com
     A: 192.0.2.1
-    AAAA: 2001:db8::1
-    MX:
-      - priority: 10
-        target: mail.example.com
-
   www:
     A:
       - 192.0.2.10
       - 192.0.2.11
-    AAAA: 2001:db8::10
-
-  "*":
-    A: 192.0.2.100
 ```
 
-### BIND Format (Compatible)
+Standard BIND zone files are also accepted. A zone may be compiled to `.dzc`
+for faster and deterministic loading:
 
-Standard RFC 1035 zone files work directly:
-
-```
-$ORIGIN example.com.
-$TTL 3600
-
-@  IN  SOA  ns1.example.com. admin.example.com. (
-           2024010100  ; Serial
-           7200        ; Refresh
-           3600        ; Retry
-           1209600     ; Expire
-           3600 )      ; Negative TTL
-
-   IN  NS   ns1.example.com.
-   IN  NS   ns2.example.com.
-
-@  IN  A    192.0.2.1
-www IN A    192.0.2.10
+```sh
+go build -o dnsscienced-compile ./cmd/dnsscienced-compile
+./dnsscienced-compile -input example.com.dnszone
 ```
 
-## Configuration
+See [Compiled Zones](docs/COMPILED_ZONES.md) and the zone-related sections of
+the [API Specifications](docs/API_SPECIFICATIONS.md).
 
-### Command Line Flags
+## Performance
 
-```
--udp string
-    UDP listen address (default ":53")
+The repository includes microbenchmarks for packet handling, cookies, buffers,
+workers, cache hits, zone parsing/compilation, DNSASM, and response writes.
+End-to-end and comparative network testing is performed with
+[DNSBlast](https://github.com/afterdarksys/dnsblast), a purpose-built Rust load
+generator maintained alongside DNSScienced. DNSBlast gives every target an
+independent concurrency pool, releases measured traffic through a shared start
+barrier, supports UDP and persistent TCP workers, excludes warmup traffic, and
+reports parsed-response QPS plus bounded HDR latency distributions.
 
--tcp string
-    TCP listen address (default ":53")
+Historical measurements on an Intel i9-9880H include a 1,761 ns/op recursive
+cache-hit microbenchmark (approximately 568k operations/second) and a 2.2x load
+improvement for the tested compiled-zone fixture. Separately, DNSScienced has
+been exercised at high end-to-end QPS using the specialized DNSBlast tooling.
+The earlier raw result artifact, exact hardware profile, and command line are
+not currently committed, so this README does not manufacture an exact release
+number from memory. Future published results should retain DNSBlast's JSON
+output with the DNSScienced and DNSBlast commits, configuration, traffic
+profile, hardware, kernel, latency distribution, loss rate, and CPU/NIC data.
 
--listeners int
-    Number of UDP listeners with SO_REUSEPORT (default: NumCPU)
-
--recursive
-    Enable recursive resolver (default: true)
-
--authoritative
-    Enable authoritative server (default: false)
-
--zone string
-    Zone file to load
-
--format string
-    Zone file format: dnszone or bind (default: "dnszone")
-
--stats
-    Print statistics periodically (default: true)
-```
-
-## Implementation Details
-
-### SO_REUSEPORT Multi-Listener
-
-The server creates multiple UDP listeners (default: one per CPU core) all bound to the same port. The kernel distributes incoming packets evenly across listeners for near-linear scaling.
-
-```go
-// Each listener runs in separate goroutine
-for i := 0; i < numCPU; i++ {
-    server := &dns.Server{
-        Addr: ":53",
-        Net: "udp",
-        ReusePort: true,  // SO_REUSEPORT
-    }
-    go server.ListenAndServe()
-}
+```sh
+go test -run '^$' -bench=. -benchmem ./internal/...
+go run ./tools/bench_throughput.go \
+  -target 127.0.0.1:5353 \
+  -workers 32 \
+  -domain example.com. \
+  -duration 30s
 ```
 
-### Security Components
+For controlled multi-server comparison, build DNSBlast in release mode and run
+the same deterministic workload against equivalent DNSScienced, BIND, and NSD
+targets:
 
-**Response Rate Limiting:**
-- Token bucket per (client-IP, query-type, response-category)
-- Configurable limits per category (response, error, NXDOMAIN)
-- Slip algorithm: 1 in N get TC bit, rest dropped
-- Exempt prefixes for trusted clients
+```sh
+git clone https://github.com/afterdarksys/dnsblast.git
+cd dnsblast
+cargo build --release
 
-**DNS Cookies:**
-- Client cookie: 8 bytes random
-- Server cookie: SipHash-2-4(client-cookie || client-IP || timestamp)
-- Validates client identity and prevents forgery
-- BIND 9 compatible implementation
-
-**Source Port Randomization:**
-- Crypto-secure random txid (16 bits)
-- Random source port from high ephemeral range (14.8 bits)
-- Combined: 30.8 bits entropy (requires ~37k queries for 50% collision)
-
-## Development Status
-
-### Completed (Phase 1-3)
-
-- ✅ DNS packet parser with security hardening
-- ✅ 256-shard concurrent cache
-- ✅ DNS cookies (RFC 7873/9018)
-- ✅ Worker pool for bounded concurrency
-- ✅ Crypto-secure randomization
-- ✅ Zero-allocation buffer pooling
-- ✅ Response Rate Limiting
-- ✅ Recursive resolver with iterative resolution
-- ✅ Zone file parser (.dnszone + BIND)
-- ✅ Authoritative server with validation
-- ✅ SO_REUSEPORT multi-listener architecture
-
-### Roadmap
-
-**Phase 4 - Performance & Scale:**
-- [ ] Benchmark suite
-- [ ] Profile-guided optimization
-- [ ] Reduce allocations (<5 per query)
-- [ ] Target: 1M+ queries/second
-
-**Phase 5 - Modern Transports:**
-- [ ] DNS over TLS (DoT) - RFC 7858
-- [ ] DNS over HTTPS (DoH) - RFC 8484
-- [ ] DNS over QUIC (DoQ) - RFC 9250
-
-**Phase 6 - Management:**
-- [ ] gRPC management API
-- [ ] Runtime configuration reload
-- [ ] Metrics export (Prometheus)
-- [ ] Health checks
-
-**Phase 7 - DNSSEC:**
-- [ ] Zone signing
-- [ ] Validation chain
-- [ ] Key management
-- [ ] Algorithm support (ECDSAP256SHA256, ED25519)
-
-## Testing
-
-```bash
-# Run all tests
-go test ./internal/...
-
-# Run with benchmarks
-go test -bench=. -benchmem ./internal/...
-
-# Run specific package
-go test -v ./internal/resolver/...
-
-# Fuzzing
-go test -fuzz=FuzzParser ./internal/packet/
+./target/release/dnsblast \
+  --server dnsscienced=192.0.2.10 \
+  --server bind=192.0.2.11 \
+  --server nsd=192.0.2.12 \
+  --names-file names.txt \
+  --type A,AAAA,MX,NS,SOA \
+  --duration 60s \
+  --warmup 10000 \
+  --concurrency 512 \
+  --workers 8 \
+  --output json \
+  --output-file dns-comparison.json
 ```
 
-**Test Coverage:**
-- 85+ tests across all packages
-- Comprehensive edge case coverage
-- Fuzzing for packet parser
-- Benchmark suite for performance tracking
+See [Benchmarks](docs/BENCHMARKS.md) and
+[Performance Tuning](docs/PERFORMANCE_TUNING.md).
 
-## Contributing
+## Architecture
 
-This is an active development project. Contributions welcome!
+```text
+                         +----------------------+
+UDP / TCP / DoT / DoH -->| network + protection |
+                         +----------+-----------+
+                                    |
+                     +--------------+--------------+
+                     |                             |
+             +-------v--------+            +-------v--------+
+             | authoritative  |            | recursive      |
+             | zones/transfers|            | resolver/cache |
+             +-------+--------+            +-------+--------+
+                     |                             |
+                     +--------------+--------------+
+                                    |
+                         +----------v-----------+
+                         | policy / RPZ / DNSSEC|
+                         +----------+-----------+
+                                    |
+                         +----------v-----------+
+                         | gRPC admin / metrics |
+                         +----------------------+
+```
+
+The server uses `miekg/dns` for standards-oriented DNS message and transport
+primitives while implementing its own resolver, zone lifecycle, security,
+policy, administrative, and operational layers. Optional DNSASM and Linux
+receive-batching paths target hot-path performance without replacing the
+portable implementation.
+
+See [Design](DESIGN.md), [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md),
+[Security](SECURITY.md), and [Implementation Roadmap](ROADMAP.md).
+
+## Documentation map
+
+- [Quick Start](docs/QUICKSTART.md)
+- [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
+- [Deployment Operations](docs/DEPLOYMENT_OPERATIONS.md)
+- [Carrier-Grade Roles](docs/CARRIER_GRADE_ROLES.md)
+- [Views](docs/VIEWS.md)
+- [Secondary Zones](docs/SECONDARY_ZONES.md)
+- [Catalog Zones](docs/CATALOG_ZONES.md)
+- [Dynamic Updates](docs/DYNAMIC_UPDATES.md)
+- [Resolver and Forwarding](docs/RESOLVER_FORWARDING.md)
+- [RPZ](docs/RPZ.md)
+- [RFC 5011 Trust Anchors](docs/RFC5011_TRUST_ANCHORS.md)
+- [Observability](docs/OBSERVABILITY.md)
+- [Admin CLI](docs/ADMIN_CLI.md)
+- [Testing Strategy](docs/TESTING_STRATEGY.md)
+- [Differential Conformance](docs/DIFFERENTIAL_CONFORMANCE.md)
+- [Experimental Features](docs/EXPERIMENTAL_FEATURES.md)
+
+## Development
+
+```sh
+# Full suite
+go test ./...
+
+# Race detector
+go test -race ./...
+
+# Benchmarks
+go test -run '^$' -bench=. -benchmem ./internal/...
+
+# One fuzz target example
+go test -fuzz=FuzzParser ./internal/packet
+
+# BIND/NSD authoritative comparison
+tests/differential/run.sh
+```
+
+## Project status
+
+The implemented code is materially ahead of several historical planning files
+retained in Git history. The root [Roadmap](ROADMAP.md) describes current work;
+`.planning/` contains milestone records and audits, including findings that may
+describe the repository at an earlier commit.
+
+Before calling a capability absent or complete, verify current source, tests,
+and the latest commit rather than relying on a superseded milestone audit.
 
 ## License
 
-Apache License 2.0
-
----
-
-**Built with Go** • Designed for performance and security
+MIT License. Copyright (c) 2026 After Dark Systems. See [LICENSE](LICENSE).

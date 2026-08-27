@@ -1,5 +1,12 @@
 # Changelog
 
+> **Maintenance note:** The original `Unreleased` section below documents the
+> early Phase 1–3 baseline and historical microbenchmarks. It is not a complete
+> list of capabilities at the current `main` branch. Tagged v1.1/v1.2 history,
+> `.planning/MILESTONES.md`, the Git log, and the current [README](README.md)
+> provide the later implementation record. A future release should consolidate
+> those sources into versioned release notes.
+
 All notable changes to DNSScienced will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -120,4 +127,4 @@ Future releases will follow this structure:
 
 ---
 
-[Unreleased]: https://github.com/dnsscience/dnsscienced/compare/HEAD
+[Unreleased]: https://github.com/afterdarksys/dnsscienced/compare/HEAD

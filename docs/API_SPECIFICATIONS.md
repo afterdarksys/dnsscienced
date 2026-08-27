@@ -1,5 +1,10 @@
 # DNSScienced API Specifications
 
+> **Mixed implementation/design reference:** Some interfaces in this document
+> are proposed and may not exist in the current build. Confirm availability in
+> source and generated gRPC definitions. Current capability boundaries are
+> summarized in the [README](../README.md).
+
 ## Overview
 
 This document specifies all internal and external APIs for DNSScienced, including:

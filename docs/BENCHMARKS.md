@@ -1,5 +1,18 @@
 # DNSScienced Benchmark Specifications
 
+> **Benchmark design and historical results:** This document includes proposed
+> benchmark harnesses, targets, and example configurations in addition to
+> measurements. A code block or target below is not evidence that the harness
+> is currently automated. See the [README performance section](../README.md#performance)
+> for the interpretation rules applied to public claims.
+
+Comparative wire-level load tests should use
+[DNSBlast](https://github.com/afterdarksys/dnsblast), the sibling Rust toolkit
+built for synchronized DNSScienced/BIND/NSD workloads, bounded HDR latency
+aggregation, deterministic query plans, and versioned JSON output. The small
+Go driver under `tools/bench_throughput.go` remains useful for local smoke
+measurements but is not the preferred comparative harness.
+
 ## Performance Targets
 
 ```

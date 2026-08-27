@@ -4,7 +4,7 @@ Get up and running with DNSScienced in minutes.
 
 ## Prerequisites
 
-- Go 1.22 or later
+- Go 1.25 or later
 - Linux, macOS, or Windows
 - Root/Administrator access (for binding to port 53)
 
@@ -14,7 +14,7 @@ Get up and running with DNSScienced in minutes.
 
 ```bash
 # Clone repository
-git clone https://github.com/dnsscience/dnsscienced.git
+git clone https://github.com/afterdarksys/dnsscienced.git
 cd dnsscienced
 
 # Build

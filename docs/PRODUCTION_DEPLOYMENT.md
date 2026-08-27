@@ -109,7 +109,7 @@ echo "vm.nr_hugepages = 2048" >> /etc/sysctl.conf
 
 ```bash
 # Clone repository
-git clone https://github.com/dnsscience/dnsscienced.git
+git clone https://github.com/afterdarksys/dnsscienced.git
 cd dnsscienced
 
 # Build binaries
@@ -727,6 +727,6 @@ dnsscienced-log --since 1h --blocked | grep RRL | awk '{print $2}' | sort | uniq
 
 ## Support
 
-- GitHub Issues: https://github.com/dnsscience/dnsscienced/issues
-- Documentation: https://github.com/dnsscience/dnsscienced/docs
+- GitHub Issues: https://github.com/afterdarksys/dnsscienced/issues
+- Documentation: https://github.com/afterdarksys/dnsscienced/docs
 - Security: security@dnsscienced.org

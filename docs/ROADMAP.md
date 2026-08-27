@@ -1,5 +1,10 @@
 # DNSScienced Project Roadmap
 
+> **Historical strategy document:** This roadmap preserves the original product
+> vision and version sequence. Much of its status data has been overtaken by the
+> implementation. Use the root [implementation roadmap](../ROADMAP.md) and
+> [README](../README.md) for current shipped/planned boundaries.
+
 ## Vision
 
 **DNS Science: DNS Data, Management, Analytics, and Security Experts**
@@ -484,11 +489,11 @@ LTS                 Yearly          Long-term support (3 years)
 ```
 COMPONENT                   LICENSE         OPEN SOURCE
 ─────────────────────────────────────────────────────────────────────────
-Core DNS engine             Apache 2.0      Yes
-Zone parsers                Apache 2.0      Yes
-DNSSEC implementation       Apache 2.0      Yes
-Web3 modules                Apache 2.0      Yes
-DIP (basic features)        Apache 2.0      Yes
+Core DNS engine             MIT             Yes
+Zone parsers                MIT             Yes
+DNSSEC implementation       MIT             Yes
+Web3 modules                MIT             Yes
+DIP (basic features)        MIT             Yes
 DIP (enterprise)            Commercial      No
 Service provider            Commercial      No
 DNSScience.io integration   Commercial      No

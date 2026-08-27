@@ -1,5 +1,12 @@
 # DNSScience Server Design Document
 
+> **Document status:** This is an architectural vision document and contains
+> target-state components as well as implemented components. It is not the
+> current capability matrix. See [README.md](README.md) for verified behavior
+> and [ROADMAP.md](ROADMAP.md) for remaining work. In particular, DoQ and
+> authoritative online signing must not be inferred as production capabilities
+> from diagrams in this document.
+
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)

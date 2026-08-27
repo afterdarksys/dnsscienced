@@ -1370,7 +1370,7 @@ version: '3.8'
 
 services:
   dnsscienced:
-    image: dnsscience/dnsscienced:latest
+    image: afterdarksys/dnsscienced:latest
     ports:
       - "53:53/udp"
       - "53:53/tcp"

@@ -235,7 +235,7 @@ sudo dnf install dnsscienced
 pkg install dnsscienced
 
 # From Source
-git clone https://github.com/dnsscience/dnsscienced.git
+git clone https://github.com/afterdarksys/dnsscienced.git
 cd dnsscienced
 make build
 sudo make install

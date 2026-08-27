@@ -1,5 +1,10 @@
 # DNSScienced Security Architecture
 
+> **Status note:** This document contains both implemented controls and older
+> roadmap material. The current capability boundary is maintained in the
+> [README](README.md); DoT and DoH are implemented, while DoQ remains
+> experimental.
+
 This document outlines the security features and protections built into DNSScienced.
 
 ## Critical Security Features Implemented

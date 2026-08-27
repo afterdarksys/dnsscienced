@@ -1,5 +1,10 @@
 # Experimental IETF Draft Features
 
+> **Experimental and design material:** Inclusion here does not mean a feature
+> is wired into the production server. DoQ and draft-oriented protocols remain
+> experimental unless a release explicitly promotes them. See the
+> [README](../README.md) for the verified baseline.
+
 ## Overview
 
 DNSScienced supports experimental and draft IETF protocols through a comprehensive configuration framework. These features are **disabled by default** to ensure production stability and can be selectively enabled based on deployment needs.
@@ -470,7 +475,7 @@ Help improve experimental feature support:
 ## Support
 
 For questions or issues with experimental features:
-- GitHub Issues: https://github.com/dnsscience/dnsscienced/issues
+- GitHub Issues: https://github.com/afterdarksys/dnsscienced/issues
 - Tag with: `experimental`
 - Provide: Config file, logs, DNS queries
 
