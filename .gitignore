@@ -18,11 +18,16 @@ go.work
 vendor/
 
 # DNSScienced binaries
+# Build these from source; they are never committed. deploy-zones.sh and
+# deploy-dns.sh expect a locally built copy — see the build steps in README.
 /dnsscienced
 /dnsscienced-admin
 /dnsscienced-compile
+/dnsscienced-compile-darwin
+/dnsscienced-compile-mac
 /dnsscienced-roothints
 /dnsscienced-log
+/dnsscienced-test
 /dnsscience-grpc
 /dnscraft
 
@@ -34,6 +39,7 @@ vendor/
 /cmd/dnsscienced-log/dnsscienced-log
 /cmd/dnsscience-grpc/dnsscience-grpc
 /tools/dnscraft/dnscraft
+/dnsasm/build/
 
 # Compiled zone files
 *.dzc
