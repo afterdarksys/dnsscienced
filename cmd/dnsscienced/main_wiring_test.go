@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/config"
-	"github.com/dnsscience/dnsscienced/internal/resolver"
-	"github.com/dnsscience/dnsscienced/internal/server"
+	"github.com/afterdarksys/dnsscienced/internal/config"
+	"github.com/afterdarksys/dnsscienced/internal/resolver"
+	"github.com/afterdarksys/dnsscienced/internal/server"
 )
 
 // TestMainWiring_SIGHUPInSource verifies the SIGHUP full config reload

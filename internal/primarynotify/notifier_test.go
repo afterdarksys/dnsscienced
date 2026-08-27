@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/tsig"
 	"github.com/miekg/dns"
 )
 

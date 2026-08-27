@@ -250,7 +250,7 @@ package conformance
 
 import (
     "testing"
-    "github.com/dnsscience/dnsscienced/pkg/dns"
+    "github.com/afterdarksys/dnsscienced/pkg/dns"
 )
 
 // TestRFC1035_4_1_1_HeaderFormat tests header format per RFC 1035 Section 4.1.1
@@ -538,7 +538,7 @@ package fuzz
 
 import (
     "testing"
-    "github.com/dnsscience/dnsscienced/pkg/dns"
+    "github.com/afterdarksys/dnsscienced/pkg/dns"
 )
 
 func FuzzMessageUnpack(f *testing.F) {

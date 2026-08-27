@@ -33,14 +33,14 @@ import (
     "net"
     "sync"
 
-    "github.com/dnsscience/dnsscienced/internal/dsync"
-    "github.com/dnsscience/dnsscienced/internal/zone"
+    "github.com/afterdarksys/dnsscienced/internal/dsync"
+    "github.com/afterdarksys/dnsscienced/internal/zone"
     "github.com/miekg/dns"
 )
 ```
 
 Key import notes:
-- Module path prefix: `github.com/dnsscience/dnsscienced/` (verified from `server.go` lines 12-26)
+- Module path prefix: `github.com/afterdarksys/dnsscienced/` (verified from `server.go` lines 12-26)
 - `dsync` already imported in `server.go` for DSYNC handler — same import path applies
 - No new external dependencies; `sync` is stdlib
 

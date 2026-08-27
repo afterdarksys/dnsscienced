@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

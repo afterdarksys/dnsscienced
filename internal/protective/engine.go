@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/ede"
-	"github.com/dnsscience/dnsscienced/internal/experimental"
+	"github.com/afterdarksys/dnsscienced/internal/ede"
+	"github.com/afterdarksys/dnsscienced/internal/experimental"
 	"github.com/miekg/dns"
 )
 

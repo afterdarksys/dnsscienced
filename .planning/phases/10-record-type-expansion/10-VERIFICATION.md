@@ -40,7 +40,7 @@ The prior `prior-incomplete` status was recorded on 2026-05-21 before Phase 10 P
 
 ```
 go test ./internal/zone/... -count=1
-ok  github.com/dnsscience/dnsscienced/internal/zone  0.403s
+ok  github.com/afterdarksys/dnsscienced/internal/zone  0.403s
 ```
 
 87 tests passing, 0 failures, 0 skips.

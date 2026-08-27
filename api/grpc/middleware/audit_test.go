@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
 )
 
 // stubAuthInfo implements credentials.AuthInfo for testing.

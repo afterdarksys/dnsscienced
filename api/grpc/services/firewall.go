@@ -6,8 +6,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/internal/firewalld"
 )
 
 // FirewallService implements pb.FirewallAdminServiceServer.

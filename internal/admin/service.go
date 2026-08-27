@@ -22,18 +22,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
-	"github.com/dnsscience/dnsscienced/internal/cache"
-	"github.com/dnsscience/dnsscienced/internal/catalog"
-	"github.com/dnsscience/dnsscienced/internal/eventbus"
-	"github.com/dnsscience/dnsscienced/internal/health"
-	"github.com/dnsscience/dnsscienced/internal/logging"
-	"github.com/dnsscience/dnsscienced/internal/reload"
-	"github.com/dnsscience/dnsscienced/internal/rrl"
-	"github.com/dnsscience/dnsscienced/internal/tsig"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	grpcserver "github.com/afterdarksys/dnsscienced/api/grpc/server"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/catalog"
+	"github.com/afterdarksys/dnsscienced/internal/eventbus"
+	"github.com/afterdarksys/dnsscienced/internal/health"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/reload"
+	"github.com/afterdarksys/dnsscienced/internal/rrl"
+	"github.com/afterdarksys/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 )
 
 // AdminSrvStats mirrors services.SrvStats — defined here to avoid import cycle.

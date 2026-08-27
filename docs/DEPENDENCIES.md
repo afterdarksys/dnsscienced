@@ -198,7 +198,7 @@ Cloud API           50-200ms    Full        Low           N/A
 ## Dependency Tree
 
 ```
-github.com/dnsscience/dnsscienced
+github.com/afterdarksys/dnsscienced
 ├── golang.org/x/crypto             (DNSSEC, TLS)
 ├── golang.org/x/net                (HTTP/2, DNS utils)
 ├── golang.org/x/sync               (Concurrency)

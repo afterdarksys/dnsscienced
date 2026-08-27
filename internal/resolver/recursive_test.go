@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/cache"
-	"github.com/dnsscience/dnsscienced/internal/cookie"
-	"github.com/dnsscience/dnsscienced/internal/engine"
-	"github.com/dnsscience/dnsscienced/internal/packet"
-	"github.com/dnsscience/dnsscienced/internal/rrl"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/cookie"
+	"github.com/afterdarksys/dnsscienced/internal/engine"
+	"github.com/afterdarksys/dnsscienced/internal/packet"
+	"github.com/afterdarksys/dnsscienced/internal/rrl"
 	"github.com/miekg/dns"
 )
 

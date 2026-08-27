@@ -77,9 +77,9 @@ $ go build ./...
 (no output — success)
 
 $ go test ./internal/server/... ./api/grpc/services/... ./api/grpc/registry/...
-ok  	github.com/dnsscience/dnsscienced/internal/server	0.446s
-ok  	github.com/dnsscience/dnsscienced/api/grpc/services	0.759s
-?   	github.com/dnsscience/dnsscienced/api/grpc/registry	[no test files]
+ok  	github.com/afterdarksys/dnsscienced/internal/server	0.446s
+ok  	github.com/afterdarksys/dnsscienced/api/grpc/services	0.759s
+?   	github.com/afterdarksys/dnsscienced/api/grpc/registry	[no test files]
 ```
 
 ## Must-Haves Checklist

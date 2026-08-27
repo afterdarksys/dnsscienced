@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
-	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/afterdarksys/dnsscienced/api/grpc/middleware"
+	"github.com/afterdarksys/dnsscienced/internal/config"
 )
 
 type Config struct {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
 	"github.com/miekg/dns"
 )
 

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dnsscience/dnsscienced/internal/ede"
+	"github.com/afterdarksys/dnsscienced/internal/ede"
 	"github.com/miekg/dns"
 )
 

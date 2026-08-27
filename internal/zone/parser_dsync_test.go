@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/afterdarksys/dnsscienced/internal/dsync"
 	"github.com/miekg/dns"
 )
 

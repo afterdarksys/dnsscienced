@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	"github.com/dnsscience/dnsscienced/internal/admin"
-	"github.com/dnsscience/dnsscienced/internal/catalog"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/internal/admin"
+	"github.com/afterdarksys/dnsscienced/internal/catalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"

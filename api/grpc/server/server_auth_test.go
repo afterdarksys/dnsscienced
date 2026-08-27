@@ -26,8 +26,8 @@ import (
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/middleware"
-	"github.com/dnsscience/dnsscienced/internal/config"
+	"github.com/afterdarksys/dnsscienced/api/grpc/middleware"
+	"github.com/afterdarksys/dnsscienced/internal/config"
 )
 
 // TestBuildCreds_MissingFiles verifies buildCreds returns an error when TLSCertFile or TLSKeyFile is empty.

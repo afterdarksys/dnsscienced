@@ -3,7 +3,7 @@ package catalog
 import (
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
 )
 
 const (

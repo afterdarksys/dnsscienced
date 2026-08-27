@@ -1556,7 +1556,7 @@ groups:
 package plugin
 
 import (
-    "github.com/dnsscience/dnsscienced/dns"
+    "github.com/afterdarksys/dnsscienced/dns"
 )
 
 // Plugin is the interface all plugins must implement
@@ -1625,7 +1625,7 @@ type CachePlugin interface {
 package main
 
 import (
-    "github.com/dnsscience/dnsscienced/plugin"
+    "github.com/afterdarksys/dnsscienced/plugin"
     "github.com/oschwald/geoip2-golang"
 )
 

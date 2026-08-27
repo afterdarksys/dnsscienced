@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"
-	"github.com/dnsscience/dnsscienced/internal/admin"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	grpcserver "github.com/afterdarksys/dnsscienced/api/grpc/server"
+	"github.com/afterdarksys/dnsscienced/internal/admin"
 	"google.golang.org/grpc/stats"
 )
 

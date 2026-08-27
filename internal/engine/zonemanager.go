@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
 )
 
 // ZoneManager implements ports.ZoneManager using in-memory storage.

@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/ede"
-	"github.com/dnsscience/dnsscienced/internal/transport"
-	"github.com/dnsscience/dnsscienced/internal/tsig"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/ede"
+	"github.com/afterdarksys/dnsscienced/internal/transport"
+	"github.com/afterdarksys/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

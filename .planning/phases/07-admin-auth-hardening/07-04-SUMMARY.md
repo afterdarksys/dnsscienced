@@ -85,7 +85,7 @@ requirements_satisfied: [ADMIN-CONN-01]
 
 ### internal/admin/service.go
 
-- Import added: `grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"`
+- Import added: `grpcserver "github.com/afterdarksys/dnsscienced/api/grpc/server"`
 - Import added: `"strconv"` for port parsing
 - `Service.connRegistry *grpcserver.ConnRegistry` field added
 - `NewService` signature extended with `connRegistry *grpcserver.ConnRegistry` as final parameter
@@ -94,7 +94,7 @@ requirements_satisfied: [ADMIN-CONN-01]
 
 ### api/grpc/registry/register.go
 
-- Import added: `grpcserver "github.com/dnsscience/dnsscienced/api/grpc/server"`
+- Import added: `grpcserver "github.com/afterdarksys/dnsscienced/api/grpc/server"`
 - `RegisterAll` signature extended with `connRegistry *grpcserver.ConnRegistry` parameter
 - `admin.NewService` call passes `connRegistry` as final argument
 

@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 )
 
 // LiveZoneManager implements ports.ZoneManager backed by a live SrvAdapter.

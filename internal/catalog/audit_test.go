@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
 )
 
 func TestLoggingAuditSinkWritesStructuredFields(t *testing.T) {

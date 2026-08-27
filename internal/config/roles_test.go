@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/internal/server"
+	"github.com/afterdarksys/dnsscienced/internal/server"
 )
 
 func TestAuthoritativeRoleAppliesSafeDefaults(t *testing.T) {

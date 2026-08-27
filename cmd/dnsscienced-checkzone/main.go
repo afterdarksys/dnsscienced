@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"gopkg.in/yaml.v3"
 )
 

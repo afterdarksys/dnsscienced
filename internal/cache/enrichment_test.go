@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 )
 
 func TestEnrichEntry(t *testing.T) {

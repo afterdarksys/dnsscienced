@@ -7,13 +7,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/cache"
-	"github.com/dnsscience/dnsscienced/internal/defensive"
-	"github.com/dnsscience/dnsscienced/internal/experimental"
-	"github.com/dnsscience/dnsscienced/internal/firewalld"
-	"github.com/dnsscience/dnsscienced/internal/logging"
-	"github.com/dnsscience/dnsscienced/internal/resolver"
-	"github.com/dnsscience/dnsscienced/internal/server"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/defensive"
+	"github.com/afterdarksys/dnsscienced/internal/experimental"
+	"github.com/afterdarksys/dnsscienced/internal/firewalld"
+	"github.com/afterdarksys/dnsscienced/internal/logging"
+	"github.com/afterdarksys/dnsscienced/internal/resolver"
+	"github.com/afterdarksys/dnsscienced/internal/server"
 	"gopkg.in/yaml.v3"
 )
 

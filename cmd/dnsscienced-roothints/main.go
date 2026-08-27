@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/roothints"
+	"github.com/afterdarksys/dnsscienced/internal/roothints"
 )
 
 var (

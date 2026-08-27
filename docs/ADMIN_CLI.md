@@ -465,7 +465,7 @@ For programmatic access, use the gRPC API directly:
 
 ```go
 import (
-    pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+    pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
     "google.golang.org/grpc"
 )
 

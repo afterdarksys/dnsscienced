@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 	"github.com/miekg/dns"
 )
 

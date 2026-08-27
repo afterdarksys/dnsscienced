@@ -32,7 +32,7 @@ syntax = "proto3";
 
 package dnsscience.v1;
 
-option go_package = "github.com/dnsscience/dnsscienced/api/grpc/proto/pb";
+option go_package = "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
@@ -102,8 +102,8 @@ import (
     "google.golang.org/grpc/codes"
     "google.golang.org/grpc/status"
 
-    pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-    "github.com/dnsscience/dnsscienced/internal/firewalld"
+    pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+    "github.com/afterdarksys/dnsscienced/internal/firewalld"
 )
 ```
 
@@ -192,7 +192,7 @@ func (NoopSrvAdapter) GetFirewall() *firewalld.Firewall   { return nil }
 
 **Imports extension** — add firewalld import alongside existing imports (lines 1-14):
 ```go
-"github.com/dnsscience/dnsscienced/internal/firewalld"
+"github.com/afterdarksys/dnsscienced/internal/firewalld"
 ```
 
 **RegisterAll conditional registration pattern** (modeled on lines 61-68, nil-safe guard):
@@ -232,7 +232,7 @@ type SrvAdapter interface {
 
 Also add the firewalld import at the top of management.go:
 ```go
-"github.com/dnsscience/dnsscienced/internal/firewalld"
+"github.com/afterdarksys/dnsscienced/internal/firewalld"
 ```
 
 ---
@@ -270,7 +270,7 @@ func (a *serverSrvAdapter) GetFirewall() *firewalld.Firewall { return a.s.GetFir
 
 Also add the firewalld import in main.go imports block:
 ```go
-"github.com/dnsscience/dnsscienced/internal/firewalld"
+"github.com/afterdarksys/dnsscienced/internal/firewalld"
 ```
 
 ---
@@ -311,8 +311,8 @@ import (
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 
-    pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-    "github.com/dnsscience/dnsscienced/internal/firewalld"
+    pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+    "github.com/afterdarksys/dnsscienced/internal/firewalld"
 )
 ```
 

@@ -3,7 +3,7 @@ package dsync_test
 import (
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/afterdarksys/dnsscienced/internal/dsync"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

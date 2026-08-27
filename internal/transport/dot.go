@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/pool"
+	"github.com/afterdarksys/dnsscienced/internal/pool"
 	"github.com/miekg/dns"
 )
 

@@ -299,7 +299,7 @@ This phase is additive code/config only — no renames, no data migration, no st
 
 ### Pitfall 3: Proto go_package for FirewallAdminService
 
-**What goes wrong:** If `admin.proto` uses `go_package = "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"`, generated stubs land in `pb/` alongside existing `admin.pb.go`. This is correct. However if someone adds a new `option go_package` for a sub-package, the import paths in `register.go` break.
+**What goes wrong:** If `admin.proto` uses `go_package = "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"`, generated stubs land in `pb/` alongside existing `admin.pb.go`. This is correct. However if someone adds a new `option go_package` for a sub-package, the import paths in `register.go` break.
 **How to avoid:** Keep `go_package` unchanged. The new `FirewallAdminService` stubs will be in the same `pb` package as `AdminService`.
 [VERIFIED: admin.proto line 5]
 

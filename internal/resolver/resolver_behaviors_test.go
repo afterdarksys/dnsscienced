@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/cache"
-	"github.com/dnsscience/dnsscienced/internal/packet"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/packet"
 	"github.com/miekg/dns"
 )
 

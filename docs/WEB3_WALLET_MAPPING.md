@@ -152,7 +152,7 @@ deny_namespaces:
 
 ### Parsing Wallet Mappings
 ```go
-import "github.com/dnsscience/dnsscienced/internal/web3wallet"
+import "github.com/afterdarksys/dnsscienced/internal/web3wallet"
 
 wallet, err := web3wallet.ParseWalletMapping("eip155:1:0x742d35...")
 if err != nil {

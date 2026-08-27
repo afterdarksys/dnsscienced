@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/experimental"
+	"github.com/afterdarksys/dnsscienced/internal/experimental"
 )
 
 // FeedUpdater manages automatic blocklist feed updates
