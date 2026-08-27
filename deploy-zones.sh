@@ -26,7 +26,11 @@ log()  { echo -e "${GREEN}[deploy]${NC} $1"; logger -t dnsscienced-deploy -p dae
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; logger -t dnsscienced-deploy -p daemon.warning "$1"; }
 error(){ echo -e "${RED}[error]${NC} $1"; logger -t dnsscienced-deploy -p daemon.error "$1"; exit 1; }
 
-[ -f "$COMPILE_BIN" ] || error "Compile binary not found: $COMPILE_BIN"
+# The compile binary is built locally and never committed, so a fresh clone
+# will not have it. Name it per-platform so a macOS and a Linux checkout can
+# share one tree.
+[ -f "$COMPILE_BIN" ] || error "Compile binary not found: $COMPILE_BIN
+        Build it first: go build -o $(basename "$COMPILE_BIN") ./cmd/dnsscienced-compile"
 
 # Determine which zones to deploy
 DEPLOY_ALL=0
