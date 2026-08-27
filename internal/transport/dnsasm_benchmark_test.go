@@ -4,8 +4,8 @@ import (
 	"net"
 	"testing"
 
-	dnsasm "github.com/dnsscience/dnsscienced/dnsasm/go"
-	"github.com/dnsscience/dnsscienced/internal/engine"
+	dnsasm "github.com/afterdarksys/dnsscienced/dnsasm/go"
+	"github.com/afterdarksys/dnsscienced/internal/engine"
 )
 
 // Sample DNS query packet for benchmarking

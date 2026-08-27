@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/ede"
-	"github.com/dnsscience/dnsscienced/internal/engine"
-	"github.com/dnsscience/dnsscienced/internal/resolver"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/ede"
+	"github.com/afterdarksys/dnsscienced/internal/engine"
+	"github.com/afterdarksys/dnsscienced/internal/resolver"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

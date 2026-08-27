@@ -63,7 +63,7 @@ linking dnsscienced.
 ## Go API
 
 ```go
-import dnsasm "github.com/dnsscience/dnsscienced/dnsasm/go"
+import dnsasm "github.com/afterdarksys/dnsscienced/dnsasm/go"
 
 var header dnsasm.Header
 if err := dnsasm.ParseHeaderInto(packet, &header); err != nil {

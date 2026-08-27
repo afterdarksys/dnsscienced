@@ -3,7 +3,7 @@
 ## Repository Layout
 
 ```
-github.com/dnsscience/dnsscienced/
+github.com/afterdarksys/dnsscienced/
 ├── cmd/                              # Command-line applications
 │   ├── dnsscience-authd/            # Authoritative DNS server
 │   │   └── main.go
@@ -628,7 +628,7 @@ release: clean test lint build
 ### go.mod
 
 ```go
-module github.com/dnsscience/dnsscienced
+module github.com/afterdarksys/dnsscienced
 
 go 1.22
 

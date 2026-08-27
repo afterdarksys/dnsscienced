@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/dsync"
+	"github.com/afterdarksys/dnsscienced/internal/dsync"
 	"github.com/stretchr/testify/assert"
 )
 

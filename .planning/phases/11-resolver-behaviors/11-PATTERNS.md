@@ -170,7 +170,7 @@ if err != nil {
 ```go
 "strings"
 
-"github.com/dnsscience/dnsscienced/internal/engine"
+"github.com/afterdarksys/dnsscienced/internal/engine"
 ```
 Note: `"strings"` may already be present; `engine` import is new but cycle-free (verified: engine does not import resolver).
 
@@ -604,14 +604,14 @@ import (
     "testing"
     "time"
 
-    "github.com/dnsscience/dnsscienced/internal/cache"
-    "github.com/dnsscience/dnsscienced/internal/cookie"
-    "github.com/dnsscience/dnsscienced/internal/rrl"
+    "github.com/afterdarksys/dnsscienced/internal/cache"
+    "github.com/afterdarksys/dnsscienced/internal/cookie"
+    "github.com/afterdarksys/dnsscienced/internal/rrl"
     "github.com/miekg/dns"
 )
 ```
 
-New test file adds: `"github.com/dnsscience/dnsscienced/internal/pool"` for stale-fallback tests that call `pool.GetMessage`.
+New test file adds: `"github.com/afterdarksys/dnsscienced/internal/pool"` for stale-fallback tests that call `pool.GetMessage`.
 
 **Config construction pattern** (`recursive_test.go` lines 16–26):
 ```go

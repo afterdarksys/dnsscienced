@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	"github.com/dnsscience/dnsscienced/internal/dsync"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/internal/dsync"
 )
 
 // newTestNotifier creates a DSYNCNotifier with zero propagation delay for fast tests.

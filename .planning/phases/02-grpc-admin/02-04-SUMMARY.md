@@ -91,7 +91,7 @@ None. T-02-07 (Elevation of Privilege) is mitigated by the nil-guard: FirewallAd
 - `api/grpc/registry/register.go` contains `if fw := srv.GetFirewall(); fw != nil` — confirmed
 - `api/grpc/registry/register.go` contains `services.NewFirewallService(fw)` — confirmed
 - `api/grpc/registry/register.go` contains `GetFirewall() *firewalld.Firewall` (NoopSrvAdapter) — confirmed
-- `api/grpc/registry/register.go` imports `github.com/dnsscience/dnsscienced/internal/firewalld` — confirmed
+- `api/grpc/registry/register.go` imports `github.com/afterdarksys/dnsscienced/internal/firewalld` — confirmed
 - Commit f552283 exists — confirmed
 - `go build ./...` exits 0 — confirmed
 - `go test ./api/grpc/services/ -run TestFirewallService` exits 0 (13 subtests pass) — confirmed

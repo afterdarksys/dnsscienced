@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

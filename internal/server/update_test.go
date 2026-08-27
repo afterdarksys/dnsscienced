@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/tsig"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

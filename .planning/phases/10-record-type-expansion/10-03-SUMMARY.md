@@ -51,7 +51,7 @@ Closed VERIFICATION.md gaps RRTYPE-01 and RRTYPE-02 by adding fixture entries an
 === RUN   TestRoundTrip_TLSA     --- PASS
 === RUN   TestRoundTrip_HTTPS    --- PASS
 === RUN   TestRoundTrip_SVCB     --- PASS
-ok  github.com/dnsscience/dnsscienced/internal/zone  0.389s
+ok  github.com/afterdarksys/dnsscienced/internal/zone  0.389s
 ```
 
 Full `go test ./internal/zone/...` suite: PASS (zero regressions).

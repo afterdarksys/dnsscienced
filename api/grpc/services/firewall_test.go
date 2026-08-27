@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	"github.com/dnsscience/dnsscienced/internal/firewalld"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/internal/firewalld"
 )
 
 // newTestFirewall creates a minimal *firewalld.Firewall for service tests.

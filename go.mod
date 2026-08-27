@@ -1,10 +1,10 @@
-module github.com/dnsscience/dnsscienced
+module github.com/afterdarksys/dnsscienced
 
 go 1.25.0
 
 require (
 	github.com/dchest/siphash v1.2.3
-	github.com/dnsscience/dnsscienced/dnsasm/go v0.0.0-00010101000000-000000000000
+	github.com/afterdarksys/dnsscienced/dnsasm/go v0.0.0-00010101000000-000000000000
 	github.com/miekg/dns v1.1.72
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.35.0
@@ -39,4 +39,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 )
 
-replace github.com/dnsscience/dnsscienced/dnsasm/go => ./dnsasm/go
+replace github.com/afterdarksys/dnsscienced/dnsasm/go => ./dnsasm/go

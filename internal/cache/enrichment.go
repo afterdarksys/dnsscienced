@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

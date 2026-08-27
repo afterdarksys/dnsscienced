@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	mgmtpb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	mgmtpb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb/mgmt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

@@ -125,7 +125,7 @@ experimental:
 ### Creating an Engine
 
 ```go
-import "github.com/dnsscience/dnsscienced/internal/protective"
+import "github.com/afterdarksys/dnsscienced/internal/protective"
 
 config := experimental.ProtectiveDNSConfig{
     Enabled:  true,

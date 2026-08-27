@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dnsscience/dnsscienced/internal/transport"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/transport"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

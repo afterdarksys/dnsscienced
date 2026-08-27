@@ -202,7 +202,7 @@ protoc --go_out=. --go-grpc_out=. api/grpc/proto/*.proto
 ### Update ads-httpproxy Proto Deps
 ```bash
 cd /Users/ryan/development/ads-httpproxy
-go get github.com/dnsscience/dnsscienced@latest
+go get github.com/afterdarksys/dnsscienced@latest
 go mod tidy
 ```
 

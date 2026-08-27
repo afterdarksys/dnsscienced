@@ -27,7 +27,7 @@ sudo make install
 ### Option 2: Go Install
 
 ```bash
-go install github.com/dnsscience/dnsscienced/cmd/...@latest
+go install github.com/afterdarksys/dnsscienced/cmd/...@latest
 ```
 
 ### Option 3: Docker

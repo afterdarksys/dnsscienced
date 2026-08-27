@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/rs/zerolog/log"
 )
 

@@ -1,3 +1,3 @@
-module github.com/dnsscience/dnsscienced/dnsasm/go
+module github.com/afterdarksys/dnsscienced/dnsasm/go
 
 go 1.22

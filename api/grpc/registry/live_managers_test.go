@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
 	"github.com/miekg/dns"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

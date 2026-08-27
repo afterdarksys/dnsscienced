@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

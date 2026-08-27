@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/mock"
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/api/grpc/mock"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
 	"google.golang.org/grpc/metadata"
 )
 

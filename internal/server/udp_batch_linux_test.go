@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	dnstsig "github.com/dnsscience/dnsscienced/internal/tsig"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	dnstsig "github.com/afterdarksys/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

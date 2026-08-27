@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 )
 
 var (

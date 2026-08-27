@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/internal/cookie"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	"github.com/afterdarksys/dnsscienced/internal/cookie"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 	"github.com/miekg/dns"
 )
 

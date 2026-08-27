@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/dnsscience/dnsscienced/internal/experimental"
+	"github.com/afterdarksys/dnsscienced/internal/experimental"
 	"github.com/miekg/dns"
 )
 

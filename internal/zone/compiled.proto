@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package zone;
 
-option go_package = "github.com/dnsscience/dnsscienced/internal/zone";
+option go_package = "github.com/afterdarksys/dnsscienced/internal/zone";
 
 import "google/protobuf/timestamp.proto";
 

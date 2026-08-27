@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	dnstsig "github.com/dnsscience/dnsscienced/internal/tsig"
+	dnstsig "github.com/afterdarksys/dnsscienced/internal/tsig"
 	"github.com/miekg/dns"
 )
 

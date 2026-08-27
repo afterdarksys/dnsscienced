@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dnsscience/dnsscienced/internal/engine"
+	"github.com/afterdarksys/dnsscienced/internal/engine"
 	"github.com/miekg/dns"
 )
 

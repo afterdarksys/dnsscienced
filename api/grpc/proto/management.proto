@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package dnsscienced;
 
-option go_package = "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt";
+option go_package = "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb/mgmt";
 
 // DNSScienced - High-performance authoritative DNS service
 // Provides zone and record management for gdns1/gdns2 infrastructure

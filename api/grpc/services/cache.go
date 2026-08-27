@@ -6,9 +6,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/dnsscience/dnsscienced/api/grpc/ports"
-	pb "github.com/dnsscience/dnsscienced/api/grpc/proto/pb"
-	"github.com/dnsscience/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/api/grpc/ports"
+	pb "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

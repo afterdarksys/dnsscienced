@@ -188,7 +188,7 @@ for iterations < r.cfg.MaxIterations {
 
 **Final hop detection:** `sendName == qname`. `ApplyQNAMEMinimization()` returns the full name unchanged when `currentZone` already covers `qname` (i.e., when we are at the authoritative zone). [VERIFIED: internal/engine/security.go:100-127]
 
-**Import:** `"github.com/dnsscience/dnsscienced/internal/engine"` — no cycle risk. `engine` does not import `resolver`; `resolver` does not currently import `engine`. [VERIFIED: grep of both packages]
+**Import:** `"github.com/afterdarksys/dnsscienced/internal/engine"` — no cycle risk. `engine` does not import `resolver`; `resolver` does not currently import `engine`. [VERIFIED: grep of both packages]
 
 ### Pattern 2: Serve-Stale Bug Fix — Remove !IsExpired() Guard
 

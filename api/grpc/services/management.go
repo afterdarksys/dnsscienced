@@ -15,13 +15,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	mgmt "github.com/dnsscience/dnsscienced/api/grpc/proto/pb/mgmt"
-	"github.com/dnsscience/dnsscienced/internal/admin"
-	"github.com/dnsscience/dnsscienced/internal/cache"
-	"github.com/dnsscience/dnsscienced/internal/firewalld"
-	"github.com/dnsscience/dnsscienced/internal/rrl"
-	"github.com/dnsscience/dnsscienced/internal/tsig"
-	"github.com/dnsscience/dnsscienced/internal/zone"
+	mgmt "github.com/afterdarksys/dnsscienced/api/grpc/proto/pb/mgmt"
+	"github.com/afterdarksys/dnsscienced/internal/admin"
+	"github.com/afterdarksys/dnsscienced/internal/cache"
+	"github.com/afterdarksys/dnsscienced/internal/firewalld"
+	"github.com/afterdarksys/dnsscienced/internal/rrl"
+	"github.com/afterdarksys/dnsscienced/internal/tsig"
+	"github.com/afterdarksys/dnsscienced/internal/zone"
 )
 
 // SrvAdapter is the minimal interface ManagementService needs from the DNS server.

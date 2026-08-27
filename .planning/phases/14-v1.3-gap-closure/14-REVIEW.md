@@ -65,7 +65,7 @@ func filterInBailiwick(rrs []dns.RR, zone string) []dns.RR {
 
 **Fix:** Remove the local `hashQuery` function and import/call `packet.HashQuery` instead:
 ```go
-import "github.com/dnsscience/dnsscienced/internal/packet"
+import "github.com/afterdarksys/dnsscienced/internal/packet"
 
 // Replace: cacheKey := hashQuery(question.Name, question.Qtype, question.Qclass)
 cacheKey := packet.HashQuery(question.Name, question.Qtype, question.Qclass)

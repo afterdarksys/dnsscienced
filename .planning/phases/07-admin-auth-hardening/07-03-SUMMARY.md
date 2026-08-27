@@ -66,7 +66,7 @@ requirements_satisfied: [ADMIN-AUDIT-01]
 **Imports added to middleware.go**
 - `google.golang.org/grpc/credentials`
 - `google.golang.org/grpc/peer`
-- `github.com/dnsscience/dnsscienced/internal/logging`
+- `github.com/afterdarksys/dnsscienced/internal/logging`
 
 ### api/grpc/middleware/audit_test.go
 
